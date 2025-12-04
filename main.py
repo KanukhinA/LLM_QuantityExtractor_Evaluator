@@ -3,11 +3,25 @@
 """
 import os
 import sys
+import logging
 from datetime import datetime
 from model_evaluator import ModelEvaluator
 import model_loaders as ml
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
 from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
+
+# Настройка логирования
+log_file = os.path.join(OUTPUT_DIR, "model_errors.log")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.ERROR,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
 
 
 def run_evaluation(model_config: dict, use_gemini: bool = True):
@@ -42,25 +56,19 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
     if result.get("status") == "error":
         print(f"Ошибка при оценке модели: {result.get('error')}")
         
-        # Сохраняем отчет об ошибке
-        import json
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name_safe = model_config["name"].replace("/", "_").replace("\\", "_")
-        error_path = os.path.join(OUTPUT_DIR, f"error_{model_name_safe}_{timestamp}.json")
+        # Записываем ошибку в log файл
+        error_msg = f"\n{'='*80}\n"
+        error_msg += f"ОШИБКА ЗАГРУЗКИ МОДЕЛИ\n"
+        error_msg += f"{'='*80}\n"
+        error_msg += f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        error_msg += f"Модель: {model_config['name']}\n"
+        error_msg += f"Ошибка: {result.get('error')}\n"
+        error_msg += f"\nГиперпараметры: {model_config.get('hyperparameters', {})}\n"
+        error_msg += f"\nПолный traceback:\n{result.get('error_traceback', 'Не указан')}\n"
+        error_msg += f"{'='*80}\n"
         
-        error_report = {
-            "timestamp": timestamp,
-            "model_name": model_config["name"],
-            "error": result.get("error"),
-            "error_traceback": result.get("error_traceback"),
-            "hyperparameters": model_config.get("hyperparameters", {})
-        }
-        
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        with open(error_path, 'w', encoding='utf-8') as f:
-            json.dump(error_report, f, ensure_ascii=False, indent=2)
-        
-        print(f"Отчет об ошибке сохранен: {error_path}")
+        logging.error(error_msg)
+        print(f"Ошибка записана в log файл: {log_file}")
         return result
     
     # Анализ через Gemini (если включен)
