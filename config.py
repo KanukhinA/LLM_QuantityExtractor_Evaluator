@@ -21,13 +21,22 @@ GROUND_TRUTH_PATH = None
 # Директория для результатов
 OUTPUT_DIR = "results"
 
-# HuggingFace token
-HF_TOKEN = os.environ.get("HF_TOKEN", "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")
-
-# Gemini API key
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyCMTsCnbXIAcwOqWNuyTGM-a7TdGpGUjno")
-#os.environ["GEMINI_API_KEY"] = "AIzaSyDUtC9E6388RYJde5hMC3jI8MDn6z4Tc5s"
-#os.environ["GEMINI_API_KEY"] = "AIzaSyCMTsCnbXIAcwOqWNuyTGM-a7TdGpGUjno"
+# Попытка загрузить ключи из config_secrets.py
+try:
+    from config_secrets import HF_TOKEN, GEMINI_API_KEY
+except ImportError:
+    # Если файл не найден, пробуем загрузить из переменных окружения
+    HF_TOKEN = os.environ.get("HF_TOKEN")
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    
+    if not HF_TOKEN:
+        raise ValueError(
+            "HF_TOKEN не установлен!\n"
+            "Создайте файл config_secrets.py на основе config_secrets.py.example и заполните свои ключи,\n"
+            "или установите переменную окружения:\n"
+            "  Windows: set HF_TOKEN=your_token_here\n"
+            "  Linux/Mac: export HF_TOKEN=your_token_here"
+        )
 
 # Настройки по умолчанию для генерации
 DEFAULT_MAX_NEW_TOKENS = 1024

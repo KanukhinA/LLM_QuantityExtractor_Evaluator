@@ -21,20 +21,31 @@
 pip install -r requirements.txt
 ```
 
-3. Установите переменные окружения:
+3. Настройте API ключи:
+
+Создайте файл `config_secrets.py` на основе примера:
 ```bash
-# Hugging Face token (для доступа к моделям)
-export HF_TOKEN="your_hf_token_here"
-
-# Gemini API key (для анализа ошибок)
-export GEMINI_API_KEY="your_gemini_api_key_here"
+cp config_secrets.py.example config_secrets.py
 ```
 
-Или создайте файл `.env`:
+Затем откройте `config_secrets.py` и заполните свои ключи:
+```python
+HF_TOKEN = "your_huggingface_token_here"
+GEMINI_API_KEY = "your_gemini_api_key_here"  # опционально
 ```
-HF_TOKEN=your_hf_token_here
-GEMINI_API_KEY=your_gemini_api_key_here
-```
+
+**Важно:**
+- `HF_TOKEN` - ОБЯЗАТЕЛЬНЫЙ. Без него программа не запустится.
+- `GEMINI_API_KEY` - опциональный. Без него будет пропущен анализ ошибок через Gemini API, но оценка моделей будет работать.
+- Файл `config_secrets.py` автоматически игнорируется git (добавлен в .gitignore) для безопасности.
+
+**Альтернатива:** Если не хотите использовать файл, можно установить переменные окружения:
+- Windows: `set HF_TOKEN=your_token_here`
+- Linux/Mac: `export HF_TOKEN=your_token_here`
+
+**Где получить ключи:**
+- Hugging Face Token: https://huggingface.co/settings/tokens
+- Gemini API Key: https://aistudio.google.com/app/apikey
 
 ## Структура проекта
 
@@ -103,7 +114,6 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name"
 
 - **google/gemma-2-2b-it** - Gemma 2.2B Instruct
 - **google/gemma-3-4b-it** - Gemma 3 4B Instruct (с квантизацией и без)
-- **meta-llama/Llama-3.1-8B-instruct** - Llama 3.1 8B (4-bit)
 - **Qwen/Qwen2.5-1.5B-Instruct** - Qwen 2.5 1.5B
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B
 - **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B
@@ -166,8 +176,10 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name"
 
 - `DATASET_PATH` - путь к датасету (Excel файл)
 - `GROUND_TRUTH_PATH` - путь к файлу с ground truth (опционально, используется колонка json_parsed из датасета)
-- `HF_TOKEN` - токен Hugging Face (по умолчанию)
-- `GEMINI_API_KEY` - ключ Gemini API (по умолчанию)
+
+**API ключи должны быть установлены через переменные окружения:**
+- `HF_TOKEN` - токен Hugging Face (ОБЯЗАТЕЛЬНЫЙ)
+- `GEMINI_API_KEY` - ключ Gemini API (опциональный, для анализа ошибок)
 
 ## Добавление новой модели
 

@@ -54,29 +54,6 @@ def load_ministral_3_3b_instruct_2512() -> Tuple[Any, Any]:
     )
     return model, tokenizer
     
-def load_llama_3_1_8b_4bit() -> Tuple[Any, Any]:
-    """Загрузка meta-llama/Llama-3.1-8B-instruct с 4-bit quantization"""
-    from transformers import BitsAndBytesConfig
-    
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16
-    )
-    
-    tokenizer = AutoTokenizer.from_pretrained(
-        "meta-llama/Llama-3.1-8B-instruct",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "meta-llama/Llama-3.1-8B-instruct",
-        device_map="auto",
-        quantization_config=quantization_config,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
-
-
 def load_qwen_2_5_1_5b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen2.5-1.5B-Instruct"""
     tokenizer = AutoTokenizer.from_pretrained(

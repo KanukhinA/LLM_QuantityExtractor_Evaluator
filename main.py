@@ -7,7 +7,8 @@ from datetime import datetime
 from model_evaluator import ModelEvaluator
 import model_loaders as ml
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
-from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
+from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR
+import os
 
 
 def run_evaluation(model_config: dict, use_gemini: bool = True):
@@ -40,20 +41,20 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
     )
     
     if result.get("status") == "error":
-        print(f"❌ Ошибка при оценке модели: {result.get('error')}")
+        print(f"Ошибка при оценке модели: {result.get('error')}")
         return result
     
     # Анализ через Gemini (если включен)
     if use_gemini:
         print(f"\n{'='*80}")
-        print(f"🤖 АНАЛИЗ ОШИБОК ЧЕРЕЗ GEMINI API")
+        print(f"АНАЛИЗ ОШИБОК ЧЕРЕЗ GEMINI API")
         print(f"{'='*80}")
         
         parsing_errors = result.get("parsing_errors", [])
         quality_metrics = result.get("quality_metrics", {})
         hyperparameters = result.get("hyperparameters", {})
         
-        print(f"📊 Статистика для анализа:")
+        print(f"Статистика для анализа:")
         print(f"   • Ошибок парсинга: {len(parsing_errors)}")
         if quality_metrics:
             mass_errors = len(quality_metrics.get('массовая доля', {}).get('ошибки', []))
@@ -63,10 +64,11 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
         print(f"   • Гиперпараметры: {len(hyperparameters)} параметров")
         print()
         
+        GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
         if not GEMINI_API_KEY:
-            print("⚠️ GEMINI_API_KEY не установлен, пропускаем анализ через Gemini")
+            print("GEMINI_API_KEY не установлен, пропускаем анализ через Gemini")
         else:
-            print("🔄 Отправка запроса к Gemini...")
+            print("Отправка запроса к Gemini...")
             prompt_full_text = result.get("prompt_full_text")
             gemini_analysis = analyze_errors_with_gemini(
                 model_name=model_config["name"],
@@ -78,7 +80,7 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
             )
             
             if gemini_analysis.get("status") == "success":
-                print("✅ Анализ от Gemini получен успешно!")
+                print("Анализ от Gemini получен успешно!")
                 print(f"\n{'─'*80}")
                 print("📝 АНАЛИЗ И РЕКОМЕНДАЦИИ:")
                 print(f"{'─'*80}")
@@ -114,12 +116,12 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
                 import json
                 with open(analysis_path, 'w', encoding='utf-8') as f:
                     json.dump(analysis_data, f, ensure_ascii=False, indent=2)
-                print(f"💾 Анализ сохранен в JSON: {analysis_path}\n")
+                print(f"Анализ сохранен в JSON: {analysis_path}\n")
             else:
-                print(f"❌ Не удалось получить анализ от Gemini")
+                print(f"Не удалось получить анализ от Gemini")
                 print(f"   Причина: {gemini_analysis.get('message', 'Unknown error')}\n")
     else:
-        print(f"\n⚠️ Анализ через Gemini API пропущен (API недоступен или отключен пользователем)\n")
+        print(f"\nАнализ через Gemini API пропущен (API недоступен или отключен пользователем)\n")
     
     return result
 
@@ -243,16 +245,24 @@ def main():
     """Главная функция"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
-    print(f"🔍 ПРОВЕРКА СИСТЕМЫ")
+    print(f"ПРОВЕРКА СИСТЕМЫ")
     print(f"{'='*80}")
-    print(f"🔍 Проверка работоспособности Gemini API...")
-    gemini_working, gemini_message = check_gemini_api(GEMINI_API_KEY)
-    print(f"   {gemini_message}\n")
+    # Получаем GEMINI_API_KEY из переменной окружения
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    
+    if GEMINI_API_KEY:
+        print(f"Проверка работоспособности Gemini API...")
+        gemini_working, gemini_message = check_gemini_api(GEMINI_API_KEY)
+        print(f"   {gemini_message}\n")
+    else:
+        print(f"GEMINI_API_KEY не установлен, пропускаем проверку API")
+        gemini_working = False
+        print()
     
     use_gemini = True
     if not gemini_working:
         print(f"{'='*80}")
-        print(f"⚠️  ВНИМАНИЕ: Gemini API недоступен")
+        print(f"ВНИМАНИЕ: Gemini API недоступен")
         print(f"{'='*80}")
         print(f"Оценка модели будет выполнена, но анализ ошибок через Gemini будет пропущен.")
         print(f"Вы можете продолжить без анализатора ошибок или исправить проблему и запустить заново.\n")
@@ -261,10 +271,10 @@ def main():
             response = input("Продолжить без анализатора ошибок? (y/n): ").strip().lower()
             if response in ['y', 'yes', 'да', 'д']:
                 use_gemini = False
-                print("✅ Продолжаем без анализатора ошибок...\n")
+                print("Продолжаем без анализатора ошибок...\n")
                 break
             elif response in ['n', 'no', 'нет', 'н']:
-                print("❌ Запуск отменён. Исправьте проблему с Gemini API и попробуйте снова.")
+                print("Запуск отменён. Исправьте проблему с Gemini API и попробуйте снова.")
                 return
             else:
                 print("Пожалуйста, введите 'y' (да) или 'n' (нет)")
@@ -280,18 +290,18 @@ def main():
     model_key = sys.argv[1]
     
     if model_key not in MODEL_CONFIGS:
-        print(f"❌ Модель '{model_key}' не найдена.")
+        print(f"Модель '{model_key}' не найдена.")
         print("Доступные модели:", ", ".join(MODEL_CONFIGS.keys()))
         return
     
     # Проверяем существование датасета
     if not os.path.exists(DATASET_PATH):
-        print(f"❌ Датасет не найден: {DATASET_PATH}")
+        print(f"Датасет не найден: {DATASET_PATH}")
         print("Убедитесь, что файл results_var3.xlsx находится в папке data/")
         return
     
     print(f"\n{'='*80}")
-    print(f"🚀 ЗАПУСК ОЦЕНКИ МОДЕЛИ")
+    print(f"ЗАПУСК ОЦЕНКИ МОДЕЛИ")
     print(f"{'='*80}")
     print(f"📌 Модель: {model_key}")
     print(f"📌 Полное название: {MODEL_CONFIGS[model_key]['name']}")
@@ -307,8 +317,8 @@ def main():
         print(f"\n{'='*80}")
         print(f"🎉 ФИНАЛЬНАЯ СВОДКА")
         print(f"{'='*80}")
-        print(f"✅ Оценка модели '{model_key}' завершена успешно!")
-        print(f"\n📊 Основные результаты:")
+        print(f"Оценка модели '{model_key}' завершена успешно!")
+        print(f"\nОсновные результаты:")
         print(f"   • Модель: {result.get('model_name', 'N/A')}")
         print(f"   • Время выполнения: {result.get('average_response_time_seconds', 0) * result.get('total_samples', 0) / 60:.2f} минут")
         print(f"   • Средняя скорость: {result.get('average_response_time_seconds', 0):.3f} сек/ответ")
