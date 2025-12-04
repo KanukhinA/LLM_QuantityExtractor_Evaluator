@@ -149,8 +149,18 @@ class ModelEvaluator:
         except Exception as e:
             import traceback
             error_details = str(e)
-            print(f"❌ ОШИБКА ЗАГРУЗКИ МОДЕЛИ: {error_details}")
-            print(f"   Детали ошибки сохранены в отчёте")
+            full_traceback = traceback.format_exc()
+            
+            print(f"\n{'='*80}")
+            print(f"ОШИБКА ЗАГРУЗКИ МОДЕЛИ")
+            print(f"{'='*80}")
+            print(f"Ошибка: {error_details}")
+            print(f"\nПолный traceback:")
+            print(f"{'─'*80}")
+            print(full_traceback)
+            print(f"{'─'*80}")
+            print(f"Детали ошибки также сохранены в отчёте")
+            print(f"{'='*80}\n")
             
             # Очищаем память после ошибки загрузки
             self.clear_memory()
@@ -158,7 +168,7 @@ class ModelEvaluator:
             return {
                 "status": "error",
                 "error": f"Ошибка загрузки модели: {error_details}",
-                "error_traceback": traceback.format_exc()
+                "error_traceback": full_traceback
             }
         
         # Информация о GPU после загрузки

@@ -41,6 +41,26 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
     
     if result.get("status") == "error":
         print(f"Ошибка при оценке модели: {result.get('error')}")
+        
+        # Сохраняем отчет об ошибке
+        import json
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_name_safe = model_config["name"].replace("/", "_").replace("\\", "_")
+        error_path = os.path.join(OUTPUT_DIR, f"error_{model_name_safe}_{timestamp}.json")
+        
+        error_report = {
+            "timestamp": timestamp,
+            "model_name": model_config["name"],
+            "error": result.get("error"),
+            "error_traceback": result.get("error_traceback"),
+            "hyperparameters": model_config.get("hyperparameters", {})
+        }
+        
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(error_path, 'w', encoding='utf-8') as f:
+            json.dump(error_report, f, ensure_ascii=False, indent=2)
+        
+        print(f"Отчет об ошибке сохранен: {error_path}")
         return result
     
     # Анализ через Gemini (если включен)

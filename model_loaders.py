@@ -3,9 +3,14 @@
 """
 import torch
 import os
+import warnings
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from typing import Tuple, Any
 from config import HF_TOKEN
+
+# Подавляем предупреждение о нераспознанных ключах в rope_parameters для yarn
+warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_parameters`.*")
+
 
 
 def load_gemma_2_2b() -> Tuple[Any, Any]:
@@ -23,35 +28,57 @@ def load_gemma_2_2b() -> Tuple[Any, Any]:
     return model, tokenizer
 
 def load_ministral_3_3b_reasoning_2512() -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "mistralai/Ministral-3-3B-Reasoning-2512",
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "mistralai/Ministral-3-3B-Reasoning-2512",
+    """
+    Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16
+    
+    ВАЖНО: 
+    - Требуется transformers>=4.50.0.dev0:
+      pip install git+https://github.com/huggingface/transformers
+    - Требуется mistral-common >= 1.8.6 для токенизатора:
+      pip install mistral-common --upgrade
+    """
+    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
+    
+    model_id = "mistralai/Ministral-3-3B-Reasoning-2512"
+    
+    # Используем MistralCommonBackend для токенизатора
+    tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
+    
+    # Загружаем модель в bfloat16
+    model = Mistral3ForConditionalGeneration.from_pretrained(
+        model_id,
         device_map="auto",
         dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True
+        token=HF_TOKEN
     )
+    
     return model, tokenizer
 
 def load_ministral_3_3b_instruct_2512() -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-3B-Instruct-2512"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "mistralai/Ministral-3-3B-Instruct-2512",
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "mistralai/Ministral-3-3B-Instruct-2512",
+    """
+    Загрузка mistralai/Ministral-3-3B-Instruct-2512 в bfloat16
+    
+    ВАЖНО: 
+    - Требуется transformers>=4.50.0.dev0:
+      pip install git+https://github.com/huggingface/transformers
+    - Требуется mistral-common >= 1.8.6 для токенизатора:
+      pip install mistral-common --upgrade
+    """
+    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
+    
+    model_id = "mistralai/Ministral-3-3B-Instruct-2512"
+    
+    # Используем MistralCommonBackend для токенизатора
+    tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
+    
+    # Загружаем модель в bfloat16
+    model = Mistral3ForConditionalGeneration.from_pretrained(
+        model_id,
         device_map="auto",
         dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True
+        token=HF_TOKEN
     )
+    
     return model, tokenizer
     
 def load_qwen_2_5_1_5b() -> Tuple[Any, Any]:
