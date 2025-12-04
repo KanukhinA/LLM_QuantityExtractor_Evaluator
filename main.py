@@ -7,8 +7,7 @@ from datetime import datetime
 from model_evaluator import ModelEvaluator
 import model_loaders as ml
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
-from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR
-import os
+from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
 
 
 def run_evaluation(model_config: dict, use_gemini: bool = True):
@@ -64,7 +63,6 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
         print(f"   • Гиперпараметры: {len(hyperparameters)} параметров")
         print()
         
-        GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
         if not GEMINI_API_KEY:
             print("GEMINI_API_KEY не установлен, пропускаем анализ через Gemini")
         else:
@@ -247,8 +245,7 @@ def main():
     print(f"\n{'='*80}")
     print(f"ПРОВЕРКА СИСТЕМЫ")
     print(f"{'='*80}")
-    # Получаем GEMINI_API_KEY из переменной окружения
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    # GEMINI_API_KEY загружается из config.py (который берет его из config_secrets.py или переменных окружения)
     
     if GEMINI_API_KEY:
         print(f"Проверка работоспособности Gemini API...")

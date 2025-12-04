@@ -2,10 +2,9 @@
 Скрипт для запуска оценки всех моделей подряд
 """
 import sys
-import os
 from main import MODEL_CONFIGS, run_evaluation
 from gemini_analyzer import check_gemini_api
-import os
+from config import GEMINI_API_KEY
 
 def run_all_models():
     """Запускает оценку всех моделей из конфигурации"""
@@ -13,8 +12,7 @@ def run_all_models():
     print(f"\n{'='*80}")
     print(f"ПРОВЕРКА СИСТЕМЫ")
     print(f"{'='*80}")
-    # Получаем GEMINI_API_KEY из переменной окружения
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    # GEMINI_API_KEY загружается из config.py (который берет его из config_secrets.py или переменных окружения)
     
     if GEMINI_API_KEY:
         print(f"Проверка работоспособности Gemini API...")

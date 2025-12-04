@@ -38,6 +38,10 @@ except ImportError:
             "  Linux/Mac: export HF_TOKEN=your_token_here"
         )
 
+# Нормализуем GEMINI_API_KEY (пустая строка = None)
+if GEMINI_API_KEY == "":
+    GEMINI_API_KEY = None
+
 # Настройки по умолчанию для генерации
 DEFAULT_MAX_NEW_TOKENS = 1024
 DEFAULT_NUM_RETRIES = 2
