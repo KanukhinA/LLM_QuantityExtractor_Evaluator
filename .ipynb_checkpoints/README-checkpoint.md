@@ -97,7 +97,7 @@ python run_all_models.py
 
 ### Переоценка результатов
 
-Если нужно пересчитать метрики качестMinistral-3-3B-Instruct-251ва из сохраненного CSV файла без повторного запуска модели:
+Если нужно пересчитать метрики качества из сохраненного CSV файла без повторного запуска модели:
 
 ```bash
 python reevaluate.py results/results_model_name_timestamp.csv
@@ -118,6 +118,7 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name"
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B
 - **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B
 - **mistralai/Ministral-3-3B-Reasoning-2512** - Ministral 3 3B Reasoning
+- **mistralai/Ministral-3-3B-Instruct-2512** - Ministral 3 3B Instruct
 - **AI4Chem/CHEMLLM-2b-1_5** - CHEMLLM 2B
 - **microsoft/Phi-3.5-mini-instruct** - Phi 3.5 Mini
 - **microsoft/Phi-4-mini-instruct** - Phi 4 Mini

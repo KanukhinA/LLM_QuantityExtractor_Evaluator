@@ -54,33 +54,6 @@ def load_ministral_3_3b_reasoning_2512() -> Tuple[Any, Any]:
     
     return model, tokenizer
 
-def load_ministral_3_3b_instruct_2512() -> Tuple[Any, Any]:
-    """
-    Загрузка mistralai/Ministral-3-3B-Instruct-2512 в bfloat16
-    
-    ВАЖНО: 
-    - Требуется transformers>=4.50.0.dev0:
-      pip install git+https://github.com/huggingface/transformers
-    - Требуется mistral-common >= 1.8.6 для токенизатора:
-      pip install mistral-common --upgrade
-    """
-    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
-    
-    model_id = "mistralai/Ministral-3-3B-Instruct-2512"
-    
-    # Используем MistralCommonBackend для токенизатора
-    tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
-    
-    # Загружаем модель в bfloat16
-    model = Mistral3ForConditionalGeneration.from_pretrained(
-        model_id,
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN
-    )
-    
-    return model, tokenizer
-    
 def load_qwen_2_5_1_5b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen2.5-1.5B-Instruct"""
     tokenizer = AutoTokenizer.from_pretrained(
@@ -274,6 +247,11 @@ def load_phi_3_5_mini_instruct() -> Tuple[Any, Any]:
         "microsoft/Phi-3.5-mini-instruct",
         token=HF_TOKEN
     )
+    # Устанавливаем pad_token, если его нет (для phi-3.5 pad_token может совпадать с eos_token)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    
     model = AutoModelForCausalLM.from_pretrained(
         "microsoft/Phi-3.5-mini-instruct",
         device_map="auto",
@@ -317,6 +295,71 @@ def generate_standard(model, tokenizer, prompt: str, max_new_tokens: int = 1024,
         "input_ids": input_ids,
         "max_new_tokens": max_new_tokens,
         "do_sample": False,
+        "use_cache": True,  # Включаем кэш по умолчанию
+    }
+    
+    # Добавляем eos_token_id, если он есть
+    if tokenizer.eos_token_id is not None:
+        generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
+    
+    # Добавляем repetition_penalty, если указан
+    if repetition_penalty is not None:
+        generate_kwargs["repetition_penalty"] = repetition_penalty
+    
+    with torch.no_grad():
+        try:
+            output_ids = model.generate(**generate_kwargs)
+        except AttributeError as e:
+            if "from_legacy_cache" in str(e):
+                # Если ошибка связана с кэшем, отключаем use_cache
+                generate_kwargs["use_cache"] = False
+                output_ids = model.generate(**generate_kwargs)
+            else:
+                raise
+    
+    # Декодируем только новые токены (игнорируя входные)
+    input_length = input_ids.shape[1]
+    generated_ids = output_ids[0][input_length:]
+    text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    
+    # Если декодирование новых токенов дало пустой результат, пробуем декодировать весь ответ
+    if not text.strip():
+        text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        # Убираем повтор prompt
+        if text.startswith(prompt):
+            text = text[len(prompt):].strip()
+    
+    return text.strip()
+
+
+def generate_phi_3_5(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
+    """
+    Функция генерации для Phi-3.5 моделей с отключенным кэшем для обхода ошибки DynamicCache
+    и явным указанием attention_mask для избежания предупреждений
+    
+    Args:
+        model: модель
+        tokenizer: токенизатор
+        prompt: промпт
+        max_new_tokens: максимальное количество новых токенов
+        repetition_penalty: штраф за повторения (если None, не используется)
+    """
+    # Токенизируем с получением attention_mask
+    encoded = tokenizer(
+        prompt, 
+        return_tensors="pt",
+        padding=True,
+        return_attention_mask=True
+    )
+    input_ids = encoded.input_ids.to(model.device)
+    attention_mask = encoded.attention_mask.to(model.device)
+    
+    generate_kwargs = {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,  # Явно передаем attention_mask
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "use_cache": False,  # Отключаем кэш для Phi-3.5, чтобы избежать ошибки DynamicCache.from_legacy_cache
     }
     
     # Добавляем eos_token_id, если он есть
