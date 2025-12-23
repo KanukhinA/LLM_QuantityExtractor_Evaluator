@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from model_evaluator import ModelEvaluator
 import model_loaders as ml
+import model_loaders_api as ml_api
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
 from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
 
@@ -24,7 +25,7 @@ logging.basicConfig(
 )
 
 
-def run_evaluation(model_config: dict, use_gemini: bool = True):
+def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = False):
     """
     Запускает оценку модели
     
@@ -33,8 +34,9 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
             - name: название модели
             - load_func: функция загрузки модели
             - generate_func: функция генерации
-            - hyperparameters: гиперпараметры
+            - hyperparameters: гиперпараметры (может содержать multi_agent_mode)
         use_gemini: использовать ли анализ через Gemini API
+        verbose: если True, выводит подробную информацию (текст и ответы) в консоль
     """
     evaluator = ModelEvaluator(
         dataset_path=DATASET_PATH,
@@ -46,11 +48,17 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
     evaluator.clear_memory()
     
     # Запускаем оценку
+    # Для API моделей используем больше попыток (10 вместо 2)
+    num_retries = 10 if model_config["hyperparameters"].get("api_model", False) else 2
     result = evaluator.evaluate_model(
         model_name=model_config["name"],
         load_model_func=model_config["load_func"],
         generate_func=model_config["generate_func"],
-        hyperparameters=model_config["hyperparameters"]
+        hyperparameters=model_config["hyperparameters"],
+        num_retries=num_retries,
+        verbose=verbose,  # Передаем флаг verbose
+        use_gemini_analysis=use_gemini,
+        gemini_api_key=GEMINI_API_KEY if use_gemini else None
     )
     
     if result.get("status") == "error":
@@ -91,63 +99,61 @@ def run_evaluation(model_config: dict, use_gemini: bool = True):
         print(f"   • Гиперпараметры: {len(hyperparameters)} параметров")
         print()
         
-        if not GEMINI_API_KEY:
-            print("GEMINI_API_KEY не установлен, пропускаем анализ через Gemini")
-        else:
-            print("Отправка запроса к Gemini...")
-            prompt_full_text = result.get("prompt_full_text")
-            gemini_analysis = analyze_errors_with_gemini(
-                model_name=model_config["name"],
-                parsing_errors=parsing_errors,
-                quality_metrics=quality_metrics or {},
-                hyperparameters=hyperparameters,
-                prompt_full_text=prompt_full_text,
-                gemini_api_key=GEMINI_API_KEY
-            )
+        # Анализ через Gemini теперь выполняется внутри evaluate_model
+        # Сохраняем анализ в JSON, если он был выполнен
+        gemini_analysis = result.get("gemini_analysis")
+        if gemini_analysis and gemini_analysis.get("status") == "success":
+            timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+            model_name_safe = model_config["name"].replace("/", "_").replace("\\", "_")
+            analysis_path = os.path.join(OUTPUT_DIR, f"gemini_analysis_{model_name_safe}_{timestamp}.json")
             
-            if gemini_analysis.get("status") == "success":
-                print("Анализ от Gemini получен успешно!")
-                print(f"\n{'─'*80}")
-                print("📝 АНАЛИЗ И РЕКОМЕНДАЦИИ:")
-                print(f"{'─'*80}")
-                analysis_text = gemini_analysis.get("analysis", "")
-                print(analysis_text)
-                print(f"{'─'*80}\n")
-                
-                # Сохраняем анализ в JSON
-                timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
-                model_name_safe = model_config["name"].replace("/", "_").replace("\\", "_")
-                analysis_path = os.path.join(OUTPUT_DIR, f"gemini_analysis_{model_name_safe}_{timestamp}.json")
-                
-                analysis_data = {
-                    "model_name": model_config["name"],
-                    "timestamp": timestamp,
-                    "analysis": analysis_text,
-                    "model_used": gemini_analysis.get("model_used", "gemini-2.5-flash"),
-                    "parsing_errors_count": len(parsing_errors),
-                    "quality_metrics_summary": {
-                        "массовая доля": {
-                            "precision": quality_metrics.get('массовая доля', {}).get('precision', 0) if quality_metrics else 0,
-                            "recall": quality_metrics.get('массовая доля', {}).get('recall', 0) if quality_metrics else 0,
-                            "f1": quality_metrics.get('массовая доля', {}).get('f1', 0) if quality_metrics else 0
-                        },
-                        "прочее": {
-                            "precision": quality_metrics.get('прочее', {}).get('precision', 0) if quality_metrics else 0,
-                            "recall": quality_metrics.get('прочее', {}).get('recall', 0) if quality_metrics else 0,
-                            "f1": quality_metrics.get('прочее', {}).get('f1', 0) if quality_metrics else 0
-                        }
-                    } if quality_metrics else None
-                }
-                
-                import json
-                with open(analysis_path, 'w', encoding='utf-8') as f:
-                    json.dump(analysis_data, f, ensure_ascii=False, indent=2)
-                print(f"Анализ сохранен в JSON: {analysis_path}\n")
-            else:
-                print(f"Не удалось получить анализ от Gemini")
-                print(f"   Причина: {gemini_analysis.get('message', 'Unknown error')}\n")
+            analysis_text = gemini_analysis.get("analysis", "")
+            
+            # Получаем дополнительную информацию из результата оценки
+            hyperparameters = result.get("hyperparameters", {})
+            gpu_info = result.get("gpu_info", {})
+            average_response_time = result.get("average_response_time_seconds", 0)
+            gpu_memory_during_inference = result.get("gpu_memory_during_inference_gb", 0)
+            api_model = result.get("api_model", False)
+            multi_agent_mode = result.get("multi_agent_mode")
+            
+            analysis_data = {
+                "model_name": model_config["name"],
+                "timestamp": timestamp,
+                "analysis": analysis_text,
+                "model_used": gemini_analysis.get("model_used", "gemini-2.5-flash"),
+                "parsing_errors_count": len(parsing_errors),
+                "hyperparameters": hyperparameters,
+                "system_info": {
+                    "api_model": api_model,
+                    "multi_agent_mode": multi_agent_mode,
+                    "gpu_info": gpu_info,
+                    "gpu_memory_during_inference_gb": gpu_memory_during_inference,
+                    "average_response_time_seconds": average_response_time
+                },
+                "quality_metrics_summary": {
+                    "массовая доля": {
+                        "accuracy": quality_metrics.get('массовая доля', {}).get('средняя_точность', 0) if quality_metrics else 0,
+                        "precision": quality_metrics.get('массовая доля', {}).get('precision', 0) if quality_metrics else 0,
+                        "recall": quality_metrics.get('массовая доля', {}).get('recall', 0) if quality_metrics else 0,
+                        "f1": quality_metrics.get('массовая доля', {}).get('f1', 0) if quality_metrics else 0
+                    },
+                    "прочее": {
+                        "accuracy": quality_metrics.get('прочее', {}).get('средняя_точность', 0) if quality_metrics else 0,
+                        "precision": quality_metrics.get('прочее', {}).get('precision', 0) if quality_metrics else 0,
+                        "recall": quality_metrics.get('прочее', {}).get('recall', 0) if quality_metrics else 0,
+                        "f1": quality_metrics.get('прочее', {}).get('f1', 0) if quality_metrics else 0
+                    }
+                } if quality_metrics else None
+            }
+            
+            import json
+            with open(analysis_path, 'w', encoding='utf-8') as f:
+                json.dump(analysis_data, f, ensure_ascii=False, indent=2)
+            print(f"💾 Анализ Gemini сохранен в JSON: {analysis_path}\n")
     else:
-        print(f"\nАнализ через Gemini API пропущен (API недоступен или отключен пользователем)\n")
+        if not use_gemini:
+            print(f"\nАнализ через Gemini API пропущен (отключен пользователем)\n")
     
     return result
 
@@ -194,6 +200,16 @@ MODEL_CONFIGS = {
             "dtype": "bfloat16"
         }
     },
+    "gemma-3-1b": {
+        "name": "google/gemma-3-1b-it",
+        "load_func": ml.load_gemma_3_1b,
+        "generate_func": ml.generate_gemma,
+        "hyperparameters": {
+            "max_new_tokens": 512,
+            "do_sample": False,
+            "torch_dtype": "bfloat16"
+        }
+    },
     "gemma-3-4b": {
         "name": "google/gemma-3-4b-it",
         "load_func": ml.load_gemma_3_4b,
@@ -202,6 +218,36 @@ MODEL_CONFIGS = {
             "max_new_tokens": 512,
             "do_sample": False,
             "torch_dtype": "bfloat16"
+        }
+    },
+    "gemma-3-4b-api": {
+        "name": "gemma-3-4b-it",
+        "load_func": ml_api.load_gemma_3_4b_api,
+        "generate_func": ml_api.generate_gemma_api,
+        "hyperparameters": {
+            "max_new_tokens": 512,
+            "model_name": "gemma-3-4b-it",
+            "api_model": True
+        }
+    },
+    "gemma-3-12b-api": {
+        "name": "gemma-3-12b-it",
+        "load_func": ml_api.load_gemma_3_12b_api,
+        "generate_func": ml_api.generate_gemma_api,
+        "hyperparameters": {
+            "max_new_tokens": 512,
+            "model_name": "gemma-3-12b-it",
+            "api_model": True
+        }
+    },
+    "gemma-3-27b-api": {
+        "name": "gemma-3-27b-it",
+        "load_func": ml_api.load_gemma_3_27b_api,
+        "generate_func": ml_api.generate_gemma_api,
+        "hyperparameters": {
+            "max_new_tokens": 512,
+            "model_name": "gemma-3-27b-it",
+            "api_model": True
         }
     },
     "Ministral-3-3B-Reasoning-2512": {
@@ -296,7 +342,14 @@ def main():
     
     # Теперь проверяем аргументы командной строки
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name>")
+        print("Использование: python main.py <model_name> [--multi-agent MODE]")
+        print("\nАргументы:")
+        print("  <model_name>     - ключ модели из конфигурации")
+        print("  --multi-agent     - (опционально) режим мультиагентного подхода")
+        print("                      Доступные режимы: simple_4agents")
+        print("\nПримеры:")
+        print("  python main.py qwen-2.5-3b")
+        print("  python main.py qwen-2.5-3b --multi-agent simple_4agents")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
@@ -309,6 +362,21 @@ def main():
         print("Доступные модели:", ", ".join(MODEL_CONFIGS.keys()))
         return
     
+    # Парсим аргументы командной строки для мультиагентного режима
+    multi_agent_mode = None
+    if len(sys.argv) > 2:
+        if "--multi-agent" in sys.argv:
+            idx = sys.argv.index("--multi-agent")
+            if idx + 1 < len(sys.argv):
+                multi_agent_mode = sys.argv[idx + 1]
+            else:
+                print("Ошибка: после --multi-agent должен быть указан режим (например, simple_4agents)")
+                return
+        else:
+            print(f"Неизвестный аргумент: {sys.argv[2]}")
+            print("Использование: python main.py <model_name> [--multi-agent MODE]")
+            return
+    
     # Проверяем существование датасета
     if not os.path.exists(DATASET_PATH):
         print(f"Датасет не найден: {DATASET_PATH}")
@@ -320,13 +388,22 @@ def main():
     print(f"{'='*80}")
     print(f"📌 Модель: {model_key}")
     print(f"📌 Полное название: {MODEL_CONFIGS[model_key]['name']}")
+    if multi_agent_mode:
+        print(f"📌 Режим: Мультиагентный ({multi_agent_mode})")
+    else:
+        print(f"📌 Режим: Одноагентный")
     print(f"📁 Датасет: {DATASET_PATH}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n")
     
-    config = MODEL_CONFIGS[model_key]
-    result = run_evaluation(config, use_gemini=use_gemini)
+    # Создаем копию конфигурации и добавляем multi_agent_mode если указан
+    import copy
+    config = copy.deepcopy(MODEL_CONFIGS[model_key])
+    if multi_agent_mode:
+        config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
+    
+    result = run_evaluation(config, use_gemini=use_gemini, verbose=True)  # Подробный вывод для main.py
     
     if result.get("status") != "error":
         print(f"\n{'='*80}")

@@ -302,7 +302,8 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
             "fp": mass_fp_total,
             "fn": mass_fn_total,
             "количество_сравнений": len(mass_dolya_scores),
-            "ошибки": all_mass_errors[:10]  # Первые 10 ошибок для примера
+            "ошибки": all_mass_errors[:10],  # Первые 10 ошибок для примера (в JSON)
+            "все_ошибки": all_mass_errors  # Все ошибки для сохранения в отдельный файл
         },
         "прочее": {
             "средняя_точность": avg_prochee,
@@ -313,7 +314,8 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
             "fp": prochee_fp_total,
             "fn": prochee_fn_total,
             "количество_сравнений": len(prochee_scores),
-            "ошибки": all_prochee_errors[:10]  # Первые 10 ошибок для примера
+            "ошибки": all_prochee_errors[:10],  # Первые 10 ошибок для примера (в JSON)
+            "все_ошибки": all_prochee_errors  # Все ошибки для сохранения в отдельный файл
         }
     }
 

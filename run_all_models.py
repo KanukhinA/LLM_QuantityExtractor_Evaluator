@@ -60,12 +60,13 @@ def run_all_models():
         
         try:
             config = MODEL_CONFIGS[model_key]
-            result = run_evaluation(config, use_gemini=use_gemini)
+            result = run_evaluation(config, use_gemini=use_gemini, verbose=False)  # Короткий вывод для run_all_models.py
             
             if result.get("status") != "error":
                 results_summary.append({
                     "model": model_key,
                     "status": "success",
+                    "multi_agent_mode": result.get("multi_agent_mode"),
                     "avg_speed": result.get("average_response_time_seconds"),
                     "parsing_error_rate": result.get("parsing_error_rate"),
                     "memory_gb": result.get("gpu_memory_during_inference_gb")
@@ -112,6 +113,8 @@ def run_all_models():
         print(f"УСПЕШНО ОЦЕНЕННЫЕ МОДЕЛИ:")
         for summary in successful:
             print(f"   • {summary['model']}")
+            mode = summary.get('multi_agent_mode') or 'Одноагентный'
+            print(f"     - Режим: {mode}")
             print(f"     - Скорость: {summary['avg_speed']:.3f} сек/ответ")
             print(f"     - Ошибки парсинга: {summary['parsing_error_rate']:.2%}")
             print(f"     - Память: {summary['memory_gb']:.2f} GB")

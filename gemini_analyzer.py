@@ -4,6 +4,7 @@
 import os
 import json
 import random
+import time
 from typing import Dict, Any, List, Tuple
 try:
     from google import genai
@@ -87,21 +88,17 @@ def analyze_errors_with_gemini(
             "message": "Библиотека google-genai не установлена. Установите: pip install google-genai"
         }
     
-    try:
-        # Инициализируем клиент с API ключом
-        client = genai.Client(api_key=gemini_api_key)
-        
-        # Формируем промпт для анализа
-        prompt_section = ""
-        if prompt_full_text:
-            # Обрезаем промпт для анализа, если он слишком длинный
-            prompt_preview = prompt_full_text[:2000] if len(prompt_full_text) > 2000 else prompt_full_text
-            prompt_section = f"""
+    # Формируем промпт для анализа (один раз, вне цикла попыток)
+    prompt_section = ""
+    if prompt_full_text:
+        # Обрезаем промпт для анализа, если он слишком длинный
+        prompt_preview = prompt_full_text[:2000] if len(prompt_full_text) > 2000 else prompt_full_text
+        prompt_section = f"""
 Использованный промпт (первые {len(prompt_preview)} символов из {len(prompt_full_text)}):
 {prompt_preview}
 """
-        
-        prompt = f"""
+    
+    prompt = f"""
 Ты — эксперт по оценке качества работы языковых моделей. Проанализируй результаты тестирования модели и дай рекомендации по улучшению.
 
 Модель: {model_name}
@@ -132,33 +129,69 @@ def analyze_errors_with_gemini(
 
 Ответь структурированно на русском языке.
 """
-        
-        # Используем новый API
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        
-        # Извлекаем текст ответа
-        # Пробуем разные способы извлечения текста
-        if hasattr(response, 'text'):
-            analysis_text = response.text
-        elif hasattr(response, 'candidates') and len(response.candidates) > 0:
-            # Альтернативный способ через candidates
-            analysis_text = response.candidates[0].content.parts[0].text
-        else:
-            # Если ничего не помогло, преобразуем в строку
-            analysis_text = str(response)
-        
-        return {
-            "status": "success",
-            "analysis": analysis_text,
-            "model_used": "gemini-2.5-flash"
-        }
     
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Ошибка при обращении к Gemini API: {str(e)}"
-        }
+    # Количество попыток
+    num_retries = 3
+    last_error = None
+    
+    for attempt in range(num_retries):
+        try:
+            # Инициализируем клиент с API ключом (на каждой попытке, на случай проблем с подключением)
+            client = genai.Client(api_key=gemini_api_key)
+            
+            # Используем новый API
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            
+            # Извлекаем текст ответа
+            # Пробуем разные способы извлечения текста
+            if hasattr(response, 'text'):
+                analysis_text = response.text
+            elif hasattr(response, 'candidates') and len(response.candidates) > 0:
+                # Альтернативный способ через candidates
+                analysis_text = response.candidates[0].content.parts[0].text
+            else:
+                # Если ничего не помогло, преобразуем в строку
+                analysis_text = str(response)
+            
+            return {
+                "status": "success",
+                "analysis": analysis_text,
+                "model_used": "gemini-2.5-flash"
+            }
+        
+        except Exception as e:
+            last_error = str(e)
+            error_str = last_error.lower()
+            
+            # Проверяем, является ли это ошибкой подключения (disconnected, connection, timeout и т.д.)
+            is_connection_error = (
+                "server disconnected" in error_str or
+                "connection" in error_str or
+                "timeout" in error_str or
+                "network" in error_str or
+                "socket" in error_str
+            )
+            
+            # Если это последняя попытка, возвращаем ошибку
+            if attempt == num_retries - 1:
+                return {
+                    "status": "error",
+                    "message": f"Ошибка при обращении к Gemini API после {num_retries} попыток. Последняя ошибка: {last_error}"
+                }
+            
+            # Если это ошибка подключения, делаем повторную попытку с задержкой
+            if is_connection_error:
+                delay = 2.0 * (attempt + 1)  # Экспоненциальная задержка: 2, 4, 6 секунд
+                print(f"   ⚠️ Ошибка подключения к Gemini API (попытка {attempt + 1}/{num_retries}): {last_error}")
+                print(f"   ⏳ Повторная попытка через {delay:.1f} секунд...")
+                time.sleep(delay)
+            else:
+                # Для других ошибок также делаем повторную попытку, но с меньшей задержкой
+                delay = 1.0 * (attempt + 1)
+                print(f"   ⚠️ Ошибка при обращении к Gemini API (попытка {attempt + 1}/{num_retries}): {last_error}")
+                print(f"   ⏳ Повторная попытка через {delay:.1f} секунд...")
+                time.sleep(delay)
 
