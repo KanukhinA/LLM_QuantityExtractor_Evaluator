@@ -54,8 +54,8 @@ def main():
             from datetime import datetime
             import json
             timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
-            model_name_safe = result.get("model_name", "unknown").replace("/", "_").replace("\\", "_")
-            analysis_path = os.path.join(output_dir, f"gemini_analysis_{model_name_safe}_{timestamp}_reevaluated.json")
+            from model_evaluator import sanitize_filename
+            model_name_safe = sanitize_filename(result.get("model_name", "unknown"))
             
             analysis_text = gemini_analysis.get("analysis", "")
             quality_metrics = result.get("quality_metrics", {})
@@ -63,9 +63,10 @@ def main():
             # Пытаемся загрузить гиперпараметры и системную информацию из исходного файла метрик
             hyperparameters = result.get("hyperparameters", {})
             system_info = None
+            multi_agent_mode = None
             
             # Ищем исходный файл метрик (без _reevaluated)
-            model_name_for_pattern = result.get("model_name", "unknown").replace("/", "_").replace("\\", "_")
+            model_name_for_pattern = sanitize_filename(result.get("model_name", "unknown"))
             metrics_file_pattern = os.path.join(os.path.dirname(results_csv_path), f"metrics_{model_name_for_pattern}_*.json")
             metrics_files = glob.glob(metrics_file_pattern)
             # Исключаем файлы с _reevaluated
@@ -127,6 +128,10 @@ def main():
                     }
                 } if quality_metrics else None
             }
+            
+            # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
+            multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
+            analysis_path = os.path.join(output_dir, f"gemini_analysis_{model_name_safe}{multi_agent_suffix}_{timestamp}_reevaluated.json")
             
             with open(analysis_path, 'w', encoding='utf-8') as f:
                 json.dump(analysis_data, f, ensure_ascii=False, indent=2)

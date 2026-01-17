@@ -7,6 +7,7 @@ import time
 import pandas as pd
 import json
 import copy
+import glob
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
 import os
@@ -15,6 +16,29 @@ from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_fr
 from metrics import calculate_quality_metrics
 from gpu_info import get_gpu_info, get_gpu_memory_usage
 from multi_agent_graph import process_with_multi_agent
+import re
+
+
+def sanitize_filename(name: str) -> str:
+    """
+    Санитизирует имя для использования в имени файла.
+    Заменяет все недопустимые символы на подчеркивания.
+    
+    Args:
+        name: исходное имя
+        
+    Returns:
+        безопасное имя для файла
+    """
+    # Недопустимые символы для имен файлов в Windows и Linux: < > : " / \ | ? *
+    # Также заменяем пробелы и другие проблемные символы
+    invalid_chars = r'[<>:"/\\|?*\s]'
+    sanitized = re.sub(invalid_chars, '_', name)
+    # Удаляем множественные подчеркивания
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Удаляем подчеркивания в начале и конце
+    sanitized = sanitized.strip('_')
+    return sanitized
 try:
     from gemini_analyzer import analyze_errors_with_gemini
 except ImportError:
@@ -265,8 +289,15 @@ class ModelEvaluator:
         
         # Создаем обертку для генератора для мультиагентного подхода
         if use_multi_agent:
-            from core.generators import StandardGenerator
-            generator = StandardGenerator(model, tokenizer)
+            if is_api_model:
+                # Для API моделей используем APIGenerator
+                from core.generators import APIGenerator
+                model_name = hyperparameters.get("model_name", "gemma-3-12b-it")
+                generator = APIGenerator(model, tokenizer, model_name=model_name)
+            else:
+                # Для локальных моделей используем StandardGenerator
+                from core.generators import StandardGenerator
+                generator = StandardGenerator(model, tokenizer)
         
         interrupted = False
         last_processed_index = -1
@@ -347,6 +378,9 @@ class ModelEvaluator:
                                 response_text = generate_func(model, tokenizer, prompt, max_new_tokens, model_name=hyperparameters["model_name"])
                             elif repetition_penalty is not None:
                                 response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
+                            elif "enable_thinking" in hyperparameters:
+                                # Для Qwen3 передаем enable_thinking из hyperparameters
+                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=hyperparameters.get("enable_thinking", True))
                             else:
                                 response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
                             elapsed = time.time() - start_time
@@ -567,6 +601,9 @@ class ModelEvaluator:
                                                 response_text = generate_func(model, tokenizer, prompt, max_new_tokens, model_name=hyperparameters["model_name"])
                                             elif repetition_penalty is not None:
                                                 response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
+                                            elif "enable_thinking" in hyperparameters:
+                                                # Для Qwen3 передаем enable_thinking из hyperparameters
+                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=hyperparameters.get("enable_thinking", True))
                                             else:
                                                 response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
                                             elapsed = time.time() - start_time
@@ -1018,11 +1055,15 @@ class ModelEvaluator:
     def _save_results(self, evaluation_result: Dict[str, Any], results: List[Dict[str, Any]]):
         """Сохраняет результаты в файлы"""
         timestamp = evaluation_result["timestamp"]
-        model_name_safe = evaluation_result["model_name"].replace("/", "_").replace("\\", "_")
+        model_name_safe = sanitize_filename(evaluation_result["model_name"])
+        
+        # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
+        multi_agent_mode = evaluation_result.get("multi_agent_mode")
+        multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
         
         # Сохраняем детальные результаты
         df_results = pd.DataFrame(results)
-        csv_path = os.path.join(self.output_dir, f"results_{model_name_safe}_{timestamp}.csv")
+        csv_path = os.path.join(self.output_dir, f"results_{model_name_safe}{multi_agent_suffix}_{timestamp}.csv")
         df_results.to_csv(csv_path, index=False, encoding='utf-8-sig')
         print(f"💾 Детальные результаты сохранены: {csv_path}")
         
@@ -1036,7 +1077,7 @@ class ModelEvaluator:
                     # Удаляем поле "все_ошибки" перед сохранением в JSON
                     quality_metrics_for_json[group].pop("все_ошибки", None)
         
-        metrics_path = os.path.join(self.output_dir, f"metrics_{model_name_safe}_{timestamp}.json")
+        metrics_path = os.path.join(self.output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}_{timestamp}.json")
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(evaluation_result_for_json, f, ensure_ascii=False, indent=2)
         print(f"💾 Метрики сохранены: {metrics_path}")
@@ -1051,7 +1092,7 @@ class ModelEvaluator:
         # Сохраняем ошибки качества в отдельный файл
         quality_metrics = evaluation_result.get("quality_metrics")
         if quality_metrics:
-            errors_path = os.path.join(self.output_dir, f"quality_errors_{model_name_safe}_{timestamp}.txt")
+            errors_path = os.path.join(self.output_dir, f"quality_errors_{model_name_safe}{multi_agent_suffix}_{timestamp}.txt")
             with open(errors_path, 'w', encoding='utf-8') as f:
                 f.write(f"Ошибки качества для модели: {evaluation_result['model_name']}\n")
                 f.write(f"Дата: {timestamp}\n")
@@ -1246,8 +1287,7 @@ class ModelEvaluator:
                     hyperparameters = {"reevaluated": True}
                     
                     # Пытаемся загрузить гиперпараметры из исходного файла метрик, если он существует
-                    metrics_file_pattern = f"metrics_{model_name.replace('/', '_').replace('\\\\', '_')}_*.json"
-                    import glob
+                    metrics_file_pattern = f"metrics_{sanitize_filename(model_name)}_*.json"
                     metrics_files = glob.glob(os.path.join(os.path.dirname(results_csv_path), metrics_file_pattern))
                     if metrics_files:
                         # Берем последний файл метрик
@@ -1315,8 +1355,24 @@ class ModelEvaluator:
         print(f"\n💾 СОХРАНЕНИЕ ОБНОВЛЕННЫХ РЕЗУЛЬТАТОВ...")
         os.makedirs(output_dir, exist_ok=True)
         
-        model_name_safe = model_name.replace("/", "_").replace("\\", "_")
-        metrics_path = os.path.join(output_dir, f"metrics_{model_name_safe}_{timestamp}_reevaluated.json")
+        model_name_safe = sanitize_filename(model_name)
+        
+        # Пытаемся найти исходный файл метрик для извлечения multi_agent_mode
+        multi_agent_mode = None
+        metrics_file_pattern = os.path.join(output_dir, f"metrics_{model_name_safe}_*.json")
+        metrics_files = glob.glob(metrics_file_pattern)
+        original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
+        if original_metrics_files:
+            try:
+                with open(original_metrics_files[-1], 'r', encoding='utf-8') as f:
+                    original_metrics = json.load(f)
+                multi_agent_mode = original_metrics.get("multi_agent_mode")
+            except Exception:
+                pass  # Если не удалось загрузить, просто пропускаем
+        
+        # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
+        multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
+        metrics_path = os.path.join(output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}_{timestamp}_reevaluated.json")
         
         # Создаем копию для сохранения в JSON без поля "все_ошибки" (чтобы не перегружать файл)
         evaluation_result_for_json = copy.deepcopy(evaluation_result)
@@ -1333,7 +1389,7 @@ class ModelEvaluator:
         
         # Сохраняем ошибки качества в отдельный файл
         if quality_metrics:
-            errors_path = os.path.join(output_dir, f"quality_errors_{model_name_safe}_{timestamp}_reevaluated.txt")
+            errors_path = os.path.join(output_dir, f"quality_errors_{model_name_safe}{multi_agent_suffix}_{timestamp}_reevaluated.txt")
             with open(errors_path, 'w', encoding='utf-8') as f:
                 f.write(f"Ошибки качества для модели: {model_name}\n")
                 f.write(f"Дата: {timestamp}\n")

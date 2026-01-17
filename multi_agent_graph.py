@@ -9,7 +9,10 @@ from prompt_config import (
     NUMERIC_FRAGMENTS_EXTRACTION_PROMPT,
     MASS_FRACTION_EXTRACTION_PROMPT,
     OTHER_PARAMETERS_EXTRACTION_PROMPT,
-    JSON_FORMATION_PROMPT
+    JSON_FORMATION_PROMPT,
+    FERTILIZER_EXTRACTION_PROMPT_TEMPLATE,
+    CRITIC_PROMPT,
+    CORRECTOR_PROMPT
 )
 from utils import extract_json_from_response, parse_json_safe, is_valid_json
 
@@ -70,6 +73,11 @@ class AgentState(TypedDict):
     error: str  # Ошибка (если есть)
     time: float  # Время выполнения
     generator: object  # Генератор для использования
+    # Поля для режима critic_3agents
+    prompt: str  # Исходный промпт
+    initial_response: str  # Первоначальный ответ агента 1
+    critic_analysis: str  # Анализ критика
+    corrected_response: str  # Исправленный ответ
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -157,8 +165,9 @@ def handle_agent_error(agent_num: int, error: Exception, elapsed: float,
     
     print(f"❌ Ошибка ({elapsed:.2f}с): {error_type}: {error_msg[:100]}")
     
+    title = f"🔍 ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ОБ ОШИБКЕ АГЕНТА {agent_num}"
+    
     debug_info = {
-        f"🔍 ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ОБ ОШИБКЕ АГЕНТА {agent_num}": "",
         "Тип ошибки": error_type,
         "Сообщение": error_msg
     }
@@ -171,7 +180,7 @@ def handle_agent_error(agent_num: int, error: Exception, elapsed: float,
     
     debug_info["Полный traceback"] = "\n".join(traceback.format_exc().split('\n'))
     
-    print_debug_info(**debug_info)
+    print_debug_info(title, **debug_info)
     
     return {
         "success": False,
@@ -224,8 +233,6 @@ def extract_numeric_fragments(state: AgentState) -> AgentState:
         # Проверяем на пустой ответ
         if not numeric_fragments or not numeric_fragments.strip():
             print(f"⚠️ ({elapsed:.2f}с) - ПУСТОЙ ОТВЕТ")
-            print_debug_info("⚠️  АГЕНТ 1 ВЕРНУЛ ПУСТОЙ ОТВЕТ", 
-                           Исходный_текст=text, Промпт_агента_1=prompt)
             return {
                 **state,
                 "numeric_fragments": "",
@@ -294,8 +301,6 @@ def extract_mass_fractions(state: AgentState) -> AgentState:
         # Проверяем на пустой ответ
         if not mass_fractions or not mass_fractions.strip() or "не найдено" in mass_fractions.lower():
             print(f"⚠️ ({elapsed:.2f}с) - ПУСТОЙ ОТВЕТ")
-            print_debug_info("⚠️  АГЕНТ 2 ВЕРНУЛ ПУСТОЙ ОТВЕТ",
-                           Числовые_фрагменты=numeric_fragments, Промпт_агента_2=prompt)
             return {**state, "mass_fractions": "", "time": state.get("time", 0.0) + elapsed}
         
         print(f"✓ ({elapsed:.2f}с)")
@@ -350,8 +355,6 @@ def extract_other_parameters(state: AgentState) -> AgentState:
         # Проверяем на пустой ответ
         if not other_parameters or not other_parameters.strip() or "не найдено" in other_parameters.lower():
             print(f"⚠️ ({elapsed:.2f}с) - ПУСТОЙ ОТВЕТ")
-            print_debug_info("⚠️  АГЕНТ 3 ВЕРНУЛ ПУСТОЙ ОТВЕТ",
-                           Числовые_фрагменты=numeric_fragments, Промпт_агента_3=prompt)
             return {**state, "other_parameters": "", "time": state.get("time", 0.0) + elapsed}
         
         print(f"✓ ({elapsed:.2f}с)")
@@ -385,14 +388,15 @@ def form_json(state: AgentState) -> AgentState:
         }
     
     try:
-        # Ограничиваем длину контекста для агента 4, чтобы избежать переполнения
-        # Берем первые 500 символов от каждого источника
-        mass_fractions_limited = mass_fractions[:500] if len(mass_fractions) > 500 else mass_fractions
-        other_parameters_limited = other_parameters[:500] if len(other_parameters) > 500 else other_parameters
+        # Если данные пустые, указываем это явно
+        if not mass_fractions or not mass_fractions.strip():
+            mass_fractions = "(массовые доли не найдены)"
+        if not other_parameters or not other_parameters.strip():
+            other_parameters = "(прочие параметры не найдены)"
         
         prompt = JSON_FORMATION_PROMPT.format(
-            mass_fractions=mass_fractions_limited,
-            other_parameters=other_parameters_limited
+            mass_fractions=mass_fractions,
+            other_parameters=other_parameters
         )
         
         response, elapsed, _ = run_agent_generation(generator, prompt, 4, 1024)
@@ -483,6 +487,212 @@ def should_continue_after_agent3(state: AgentState) -> str:
     return "continue"
 
 
+# ========== ФУНКЦИИ ДЛЯ РЕЖИМА CRITIC_3AGENTS ==========
+
+def generate_initial_response(state: AgentState) -> AgentState:
+    """
+    Агент 1: Генерация первоначального ответа на основе промпта
+    """
+    print("   🤖 [Агент 1/3] Генерация ответа...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    text = state.get("text", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {
+            **state,
+            "success": False,
+            "error": "Generator not provided",
+            "time": 0.0
+        }
+    
+    try:
+        # Используем тот же промпт, что и для одноагентного подхода
+        from utils import build_prompt3
+        prompt = build_prompt3(text)
+        
+        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        
+        # Извлекаем JSON из ответа, если есть
+        json_part = extract_json_from_response(response)
+        
+        print(f"✅ ({elapsed:.2f}с)")
+        print_agent_response(1, response, prompt)
+        
+        return {
+            **state,
+            "prompt": prompt,
+            "initial_response": response,
+            "json_result": json_part if json_part else response,
+            "time": elapsed
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = time.time() - time.time()  # 0, так как ошибка произошла до завершения
+        error_info = handle_agent_error(1, e, elapsed, context_data={"Исходный текст": text[:200]})
+        return {
+            **state,
+            **error_info
+        }
+
+
+def critique_response(state: AgentState) -> AgentState:
+    """
+    Агент 2: Критик - анализ ответа на соответствие промпту
+    """
+    print("   🤖 [Агент 2/3] Анализ ответа (критик)...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    prompt = state.get("prompt", "")
+    initial_response = state.get("initial_response", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {
+            **state,
+            "success": False,
+            "error": "Generator not provided",
+            "time": 0.0
+        }
+    
+    if not prompt or not initial_response:
+        print("❌ Ошибка: Отсутствует промпт или ответ")
+        return {
+            **state,
+            "success": False,
+            "error": "Missing prompt or response",
+            "time": 0.0
+        }
+    
+    try:
+        critic_prompt = CRITIC_PROMPT.format(prompt=prompt, response=initial_response)
+        response, elapsed, _ = run_agent_generation(generator, critic_prompt, 2, 512)
+        
+        # Извлекаем JSON из ответа критика
+        critic_json = extract_json_from_response(response)
+        if not critic_json:
+            critic_json = response
+        
+        print(f"✅ ({elapsed:.2f}с)")
+        print_agent_response(2, response, critic_prompt)
+        
+        return {
+            **state,
+            "critic_analysis": response,
+            "time": state.get("time", 0.0) + elapsed
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = time.time() - time.time()
+        error_info = handle_agent_error(2, e, elapsed, context_data={"Промпт": prompt[:200], "Ответ": initial_response[:200]})
+        return {
+            **state,
+            **error_info
+        }
+
+
+def correct_response(state: AgentState) -> AgentState:
+    """
+    Агент 3: Исправитель - устранение найденных ошибок
+    """
+    print("   🤖 [Агент 3/3] Исправление ошибок...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    prompt = state.get("prompt", "")
+    initial_response = state.get("initial_response", "")
+    critic_analysis = state.get("critic_analysis", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {
+            **state,
+            "success": False,
+            "error": "Generator not provided",
+            "time": 0.0
+        }
+    
+    if not prompt or not initial_response:
+        print("❌ Ошибка: Отсутствует промпт или ответ")
+        return {
+            **state,
+            "success": False,
+            "error": "Missing prompt or response",
+            "time": 0.0
+        }
+    
+    try:
+        # Проверяем, есть ли ошибки в анализе критика
+        try:
+            critic_json = parse_json_safe(critic_analysis)
+            has_errors = critic_json.get("найдены_ошибки", True)
+            
+            # Если ошибок нет, возвращаем исходный ответ
+            if not has_errors:
+                print(f"✅ Ошибок не найдено, возвращаем исходный ответ")
+                json_part = extract_json_from_response(initial_response)
+                parsed_json = parse_json_safe(json_part if json_part else initial_response)
+                
+                return {
+                    **state,
+                    "corrected_response": initial_response,
+                    "json_result": json_part if json_part else initial_response,
+                    "json_parsed": parsed_json,
+                    "is_valid": is_valid_json(json_part if json_part else initial_response),
+                    "success": True,
+                    "time": state.get("time", 0.0)
+                }
+        except:
+            # Если не удалось распарсить анализ критика, все равно пытаемся исправить
+            pass
+        
+        # Если есть ошибки, исправляем
+        corrector_prompt = CORRECTOR_PROMPT.format(
+            prompt=prompt,
+            original_response=initial_response,
+            critic_analysis=critic_analysis
+        )
+        
+        response, elapsed, _ = run_agent_generation(generator, corrector_prompt, 3, 512)
+        
+        # Извлекаем JSON из исправленного ответа
+        json_part = extract_json_from_response(response)
+        if not json_part:
+            json_part = response
+        
+        # Парсим JSON
+        parsed_json = parse_json_safe(json_part)
+        
+        print(f"✅ ({elapsed:.2f}с)")
+        print_agent_response(3, response, corrector_prompt)
+        
+        return {
+            **state,
+            "corrected_response": response,
+            "json_result": json_part,
+            "json_result_raw": response,
+            "json_parsed": parsed_json,
+            "is_valid": is_valid_json(json_part),
+            "success": True,
+            "time": state.get("time", 0.0) + elapsed
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = time.time() - time.time()
+        error_info = handle_agent_error(3, e, elapsed, context_data={
+            "Промпт": prompt[:200],
+            "Исходный ответ": initial_response[:200],
+            "Анализ критика": critic_analysis[:200]
+        })
+        return {
+            **state,
+            **error_info
+        }
+
+
 def create_simple_4agents_graph():
     """
     Создает граф LangGraph для мультиагентной обработки с 4 агентами:
@@ -531,6 +741,31 @@ def create_simple_4agents_graph():
     return workflow.compile()
 
 
+def create_critic_3agents_graph():
+    """
+    Создает граф LangGraph для мультиагентной обработки с 3 агентами:
+    1. Генератор - создает первоначальный ответ на основе промпта
+    2. Критик - анализирует ответ на соответствие промпту
+    3. Исправитель - устраняет найденные ошибки
+    """
+    workflow = StateGraph(AgentState)
+    
+    # Добавляем узлы
+    workflow.add_node("generate_initial_response", generate_initial_response)
+    workflow.add_node("critique_response", critique_response)
+    workflow.add_node("correct_response", correct_response)
+    
+    # Определяем граф
+    workflow.set_entry_point("generate_initial_response")
+    
+    # Последовательное выполнение: генератор -> критик -> исправитель
+    workflow.add_edge("generate_initial_response", "critique_response")
+    workflow.add_edge("critique_response", "correct_response")
+    workflow.add_edge("correct_response", END)
+    
+    return workflow.compile()
+
+
 def create_multi_agent_graph(mode: str = "simple_4agents"):
     """
     Создает граф LangGraph для мультиагентной обработки
@@ -538,12 +773,15 @@ def create_multi_agent_graph(mode: str = "simple_4agents"):
     Args:
         mode: режим мультиагентного подхода
             - "simple_4agents": 4 агента (извлечение числовых фрагментов, массовые доли, прочие параметры, JSON)
+            - "critic_3agents": 3 агента (генератор, критик, исправитель)
     
     Returns:
         Скомпилированный граф
     """
     if mode == "simple_4agents":
         return create_simple_4agents_graph()
+    elif mode == "critic_3agents":
+        return create_critic_3agents_graph()
     else:
         raise ValueError(f"Неизвестный режим мультиагентного подхода: {mode}")
 

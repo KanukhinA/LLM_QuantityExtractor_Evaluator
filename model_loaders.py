@@ -114,6 +114,22 @@ def load_qwen_2_5_4b() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
+def load_qwen_3_8b() -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3-8B с автоматическим выбором dtype"""
+    tokenizer = AutoTokenizer.from_pretrained(
+        "Qwen/Qwen3-8B",
+        token=HF_TOKEN
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        "Qwen/Qwen3-8B",
+        torch_dtype="auto",
+        device_map="auto",
+        token=HF_TOKEN,
+        trust_remote_code=True
+    )
+    return model, tokenizer
+
+
 def load_gemma_3_4b_4bit() -> Tuple[Any, Any]:
     """Загрузка google/gemma-3-4b-it с 4-bit quantization"""
     from transformers import BitsAndBytesConfig
@@ -596,6 +612,63 @@ def generate_qwen(model, tokenizer, prompt: str, max_new_tokens: int = 512, repe
     for s in ["Human:", "Example"]:
         if s in text:
             text = text.split(s)[0].strip()
+    
+    return text.strip()
+
+
+def generate_qwen_3(model, tokenizer, prompt: str, max_new_tokens: int = 32768, repetition_penalty: float = None, enable_thinking: bool = True) -> str:
+    """
+    Функция генерации для Qwen3 с поддержкой thinking mode
+    
+    Args:
+        model: модель
+        tokenizer: токенизатор
+        prompt: промпт
+        max_new_tokens: максимальное количество новых токенов (по умолчанию 32768 для Qwen3)
+        repetition_penalty: штраф за повторения (если None, не используется)
+        enable_thinking: включить thinking mode (по умолчанию True)
+    """
+    # Подготавливаем сообщения для chat template
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    
+    # Применяем chat template с thinking mode
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=enable_thinking
+    )
+    
+    # Токенизируем
+    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    
+    # Параметры генерации
+    generate_kwargs = {
+        **model_inputs,
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+    }
+    
+    # Добавляем eos_token_id, если он есть
+    if tokenizer.eos_token_id is not None:
+        generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
+    
+    # Добавляем repetition_penalty, если указан
+    if repetition_penalty is not None:
+        generate_kwargs["repetition_penalty"] = repetition_penalty
+    
+    # Генерируем
+    with torch.no_grad():
+        generated_ids = model.generate(**generate_kwargs)
+    
+    # Извлекаем только новые токены (ответ модели)
+    input_length = model_inputs["input_ids"].shape[1]
+    output_ids = generated_ids[0][input_length:].tolist()
+    
+    # Декодируем ответ
+    text = tokenizer.decode(output_ids, skip_special_tokens=True)
     
     return text.strip()
 

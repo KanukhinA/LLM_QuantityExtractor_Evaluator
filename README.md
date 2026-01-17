@@ -72,14 +72,18 @@ cp config_secrets.py.example config_secrets.py
 ```python
 HF_TOKEN = "your_huggingface_token_here"
 GEMINI_API_KEY = "your_gemini_api_key_here"  # опционально
+OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 ```
 
 **Важно:**
 - `HF_TOKEN` - ОБЯЗАТЕЛЬНЫЙ. Без него программа не запустится (нужен для загрузки моделей с Hugging Face).
 - `GEMINI_API_KEY` - опциональный, но рекомендуется для:
   - Анализа ошибок через Gemini API (автоматические рекомендации по улучшению)
-  - Запуска API моделей (gemma-3-4b-api, gemma-3-12b-api, gemma-3-27b-api)
+  - Запуска API моделей Gemma 3 (gemma-3-4b-api, gemma-3-12b-api, gemma-3-27b-api)
   - Без ключа будет пропущен анализ ошибок, но локальные модели будут работать
+- `OPENAI_API_KEY` - опциональный, требуется для:
+  - Запуска моделей через OpenRouter API (deepseek-r1t-chimera-api, mistral-small-3.1-24b-api)
+  - Получите ключ на https://openrouter.ai/
 - Файл `config_secrets.py` автоматически игнорируется git (добавлен в .gitignore) для безопасности.
 
 **Альтернатива:** Если не хотите использовать файл, можно установить переменные окружения:
@@ -90,6 +94,8 @@ GEMINI_API_KEY = "your_gemini_api_key_here"  # опционально
 - Hugging Face Token: https://huggingface.co/settings/tokens
 - Google Generative AI API Key (Gemini API Key): https://aistudio.google.com/app/apikey
   - Используется для анализа ошибок и для запуска API моделей Gemma 3
+- OpenRouter API Key: https://openrouter.ai/keys
+  - Используется для запуска моделей через OpenRouter API (например, deepseek-r1t-chimera-api, mistral-small-3.1-24b-api)
 
 ## Структура проекта
 
@@ -145,6 +151,7 @@ python main.py qwen-2.5-3b --multi-agent simple_4agents
 
 **Доступные режимы мультиагентного подхода:**
 - `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
+- `critic_3agents` - 3 агента: генератор (создает первоначальный ответ), критик (анализирует ответ на соответствие промпту), исправитель (устраняет найденные ошибки) (вдохновлено подходом из Reddit: 3agents)
 
 **Примеры запуска:**
 
@@ -154,6 +161,7 @@ python main.py qwen-2.5-3b
 
 # Мультиагентный режим
 python main.py qwen-2.5-3b --multi-agent simple_4agents
+python main.py qwen-2.5-3b --multi-agent critic_3agents
 ```
 
 Доступные модели можно посмотреть, запустив `main.py` без аргументов.
@@ -270,6 +278,7 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 - **Qwen/Qwen2.5-1.5B-Instruct** - Qwen 2.5 1.5B (ключ: `qwen-2.5-1.5b`)
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B (ключ: `qwen-2.5-3b`)
 - **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B (ключ: `qwen-2.5-4b`)
+- **Qwen/Qwen3-8B** - Qwen 3 8B (ключ: `qwen-3-8b`) - поддерживает thinking mode
 - **mistralai/Ministral-3-3B-Reasoning-2512** - Ministral 3 3B Reasoning (ключ: `Ministral-3-3B-Reasoning-2512`)
 - **AI4Chem/CHEMLLM-2b-1_5** - CHEMLLM 2B (ключ: `CHEMLLM-2b-1_5`)
 - **microsoft/Phi-3.5-mini-instruct** - Phi 3.5 Mini (ключ: `Phi-3.5-mini-instruct`)
@@ -279,15 +288,23 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 ### API модели (через Google Generative AI API)
 
 **Требования:**
-- Требуется `GEMINI_API_KEY` в `config_secrets.py` или переменных окружения
-- Библиотека `google-genai` должна быть установлена
+- Для моделей Gemma 3 требуется `GEMINI_API_KEY` в `config_secrets.py` или переменных окружения
+- Для моделей через OpenRouter требуется `OPENAI_API_KEY` в `config_secrets.py` или переменных окружения
+- Библиотека `google-genai` должна быть установлена для моделей Gemma 3
+- Библиотека `openai` должна быть установлена для моделей через OpenRouter
 - Модели работают через API, не требуют локальной GPU
 - Автоматическая обработка rate limits с повторными попытками (до 10 попыток)
 
 **Доступные API модели:**
+
+*Через Google Generative AI API:*
 - **gemma-3-4b-it** (ключ: `gemma-3-4b-api`) - Gemma 3 4B через API
 - **gemma-3-12b-it** (ключ: `gemma-3-12b-api`) - Gemma 3 12B через API
 - **gemma-3-27b-it** (ключ: `gemma-3-27b-api`) - Gemma 3 27B через API
+
+*Через OpenRouter API:*
+- **deepseek-r1t-chimera** (ключ: `deepseek-r1t-chimera-api`) - DeepSeek R1T Chimera через OpenRouter API (free tier)
+- **mistral-small-3.1-24b-instruct** (ключ: `mistral-small-3.1-24b-api`) - Mistral Small 3.1 24B Instruct через OpenRouter API (free tier)
 
 **Особенности API моделей:**
 - Не используют локальную GPU память
@@ -298,8 +315,15 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 
 **Пример запуска API модели:**
 ```bash
+# Модели через Google Generative AI API
 python main.py gemma-3-4b-api
 python main.py gemma-3-12b-api --multi-agent simple_4agents
+
+# Модели через OpenRouter API
+python main.py deepseek-r1t-chimera-api
+python main.py deepseek-r1t-chimera-api --multi-agent simple_4agents
+python main.py mistral-small-3.1-24b-api
+python main.py mistral-small-3.1-24b-api --multi-agent simple_4agents
 ```
 
 ## Метрики оценки
@@ -382,7 +406,8 @@ python main.py gemma-3-12b-api --multi-agent simple_4agents
 **API ключи должны быть установлены через переменные окружения или файл `config_secrets.py`:**
 
 - `HF_TOKEN` - токен Hugging Face (ОБЯЗАТЕЛЬНЫЙ)
-- `GEMINI_API_KEY` - ключ Gemini API (опциональный, для анализа ошибок)
+- `GEMINI_API_KEY` - ключ Gemini API (опциональный, для анализа ошибок и моделей Gemma 3 через API)
+- `OPENAI_API_KEY` - ключ OpenRouter API (опциональный, для моделей через OpenRouter API)
 
 **Приоритет загрузки ключей:**
 1. Файл `config_secrets.py` (если существует)
@@ -518,10 +543,14 @@ python main.py qwen-2.5-3b
 python main.py gemma-2-2b
 python main.py Phi-3.5-mini-instruct
 
-# API модели (требуется GEMINI_API_KEY)
+# API модели через Google Generative AI (требуется GEMINI_API_KEY)
 python main.py gemma-3-4b-api
 python main.py gemma-3-12b-api
 python main.py gemma-3-27b-api
+
+# API модели через OpenRouter (требуется OPENAI_API_KEY)
+python main.py deepseek-r1t-chimera-api
+python main.py mistral-small-3.1-24b-api
 ```
 
 **Примечание:** При запуске через `main.py` используется подробный вывод (verbose=True), который показывает исходный текст и ответ модели на каждом этапе. Это полезно для отладки и детального анализа работы модели.
@@ -540,18 +569,26 @@ python main.py <model_key> --multi-agent <mode>
 
 **Доступные режимы:**
 - `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
+- `critic_3agents` - 3 агента: генератор (создает первоначальный ответ), критик (анализирует ответ на соответствие промпту), исправитель (устраняет найденные ошибки) (вдохновлено подходом из Reddit: 3agents)
 
 **Примеры:**
 ```bash
 # Локальные модели
 python main.py qwen-2.5-3b --multi-agent simple_4agents
+python main.py qwen-2.5-3b --multi-agent critic_3agents
 python main.py gemma-2-2b --multi-agent simple_4agents
 python main.py Phi-3.5-mini-instruct --multi-agent simple_4agents
 
-# API модели
+# API модели через Google Generative AI
 python main.py gemma-3-4b-api --multi-agent simple_4agents
 python main.py gemma-3-12b-api --multi-agent simple_4agents
 python main.py gemma-3-27b-api --multi-agent simple_4agents
+
+# API модели через OpenRouter
+python main.py deepseek-r1t-chimera-api --multi-agent simple_4agents
+python main.py deepseek-r1t-chimera-api --multi-agent critic_3agents
+python main.py mistral-small-3.1-24b-api --multi-agent simple_4agents
+python main.py mistral-small-3.1-24b-api --multi-agent critic_3agents
 ```
 
 ### 3. Оценка всех моделей подряд

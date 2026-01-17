@@ -104,8 +104,12 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
         gemini_analysis = result.get("gemini_analysis")
         if gemini_analysis and gemini_analysis.get("status") == "success":
             timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
-            model_name_safe = model_config["name"].replace("/", "_").replace("\\", "_")
-            analysis_path = os.path.join(OUTPUT_DIR, f"gemini_analysis_{model_name_safe}_{timestamp}.json")
+            from model_evaluator import sanitize_filename
+            model_name_safe = sanitize_filename(model_config["name"])
+            # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
+            multi_agent_mode = result.get("multi_agent_mode")
+            multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
+            analysis_path = os.path.join(OUTPUT_DIR, f"gemini_analysis_{model_name_safe}{multi_agent_suffix}_{timestamp}.json")
             
             analysis_text = gemini_analysis.get("analysis", "")
             
@@ -200,6 +204,17 @@ MODEL_CONFIGS = {
             "dtype": "bfloat16"
         }
     },
+    "qwen-3-8b": {
+        "name": "Qwen/Qwen3-8B",
+        "load_func": ml.load_qwen_3_8b,
+        "generate_func": ml.generate_qwen_3,
+        "hyperparameters": {
+            "max_new_tokens": 32768,
+            "do_sample": False,
+            "torch_dtype": "auto",
+            "enable_thinking": True
+        }
+    },
     "gemma-3-1b": {
         "name": "google/gemma-3-1b-it",
         "load_func": ml.load_gemma_3_1b,
@@ -247,6 +262,26 @@ MODEL_CONFIGS = {
         "hyperparameters": {
             "max_new_tokens": 512,
             "model_name": "gemma-3-27b-it",
+            "api_model": True
+        }
+    },
+    "deepseek-r1t-chimera-api": {
+        "name": "tngtech/deepseek-r1t-chimera:free",
+        "load_func": ml_api.load_deepseek_r1t_chimera_api,
+        "generate_func": ml_api.generate_openrouter_api,
+        "hyperparameters": {
+            "max_new_tokens": 512,
+            "model_name": "tngtech/deepseek-r1t-chimera:free",
+            "api_model": True
+        }
+    },
+    "mistral-small-3.1-24b-api": {
+        "name": "mistralai/mistral-small-3.1-24b-instruct:free",
+        "load_func": ml_api.load_mistral_small_3_1_24b_api,
+        "generate_func": ml_api.generate_openrouter_api,
+        "hyperparameters": {
+            "max_new_tokens": 512,
+            "model_name": "mistralai/mistral-small-3.1-24b-instruct:free",
             "api_model": True
         }
     },
@@ -346,10 +381,11 @@ def main():
         print("\nАргументы:")
         print("  <model_name>     - ключ модели из конфигурации")
         print("  --multi-agent     - (опционально) режим мультиагентного подхода")
-        print("                      Доступные режимы: simple_4agents")
+        print("                      Доступные режимы: simple_4agents, critic_3agents")
         print("\nПримеры:")
         print("  python main.py qwen-2.5-3b")
         print("  python main.py qwen-2.5-3b --multi-agent simple_4agents")
+        print("  python main.py qwen-2.5-3b --multi-agent critic_3agents")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")

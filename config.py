@@ -94,14 +94,21 @@ OUTPUT_DIR = "results"
 # Загрузка ключей с приоритетом файла config_secrets.py
 HF_TOKEN = None
 GEMINI_API_KEY = None
+OPENAI_API_KEY = None
 
 # Приоритет 1: Пытаемся загрузить из config_secrets.py
 try:
-    from config_secrets import HF_TOKEN as _hf_token, GEMINI_API_KEY as _gemini_key
+    from config_secrets import (
+        HF_TOKEN as _hf_token, 
+        GEMINI_API_KEY as _gemini_key,
+        OPENAI_API_KEY as _openai_key
+    )
     if _hf_token and _hf_token.strip():
         HF_TOKEN = _hf_token.strip()
     if _gemini_key and _gemini_key.strip():
         GEMINI_API_KEY = _gemini_key.strip()
+    if _openai_key and _openai_key.strip():
+        OPENAI_API_KEY = _openai_key.strip()
 except ImportError:
     # Файл config_secrets.py не найден - это нормально, используем переменные окружения
     pass
@@ -121,6 +128,11 @@ if not GEMINI_API_KEY:
     if GEMINI_API_KEY:
         GEMINI_API_KEY = GEMINI_API_KEY.strip()
 
+if not OPENAI_API_KEY:
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+    if OPENAI_API_KEY:
+        OPENAI_API_KEY = OPENAI_API_KEY.strip()
+
 # Проверка обязательного HF_TOKEN
 if not HF_TOKEN:
     raise ValueError(
@@ -134,6 +146,10 @@ if not HF_TOKEN:
 # Нормализуем GEMINI_API_KEY (пустая строка = None)
 if GEMINI_API_KEY == "":
     GEMINI_API_KEY = None
+
+# Нормализуем OPENAI_API_KEY (пустая строка = None)
+if OPENAI_API_KEY == "":
+    OPENAI_API_KEY = None
 
 # Настройки по умолчанию для генерации
 DEFAULT_MAX_NEW_TOKENS = 1024

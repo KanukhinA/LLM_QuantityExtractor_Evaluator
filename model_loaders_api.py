@@ -1,11 +1,11 @@
 """
-Функции для работы с API моделями (Gemma 3 через Google Generative AI API)
+Функции для работы с API моделями (Gemma 3 через Google Generative AI API и OpenRouter API)
 """
 import os
 import time
 import re
 from typing import Tuple, Any, Optional
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, OPENAI_API_KEY
 
 # Импорт для API моделей
 try:
@@ -14,6 +14,14 @@ try:
 except ImportError:
     genai = None
     GENAI_AVAILABLE = False
+
+# Импорт для OpenRouter API
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OpenAI = None
+    OPENAI_AVAILABLE = False
 
 
 # ============================================================================
@@ -213,6 +221,175 @@ def generate_gemma_api(
                     delay = delay * 1.1
                     print(f"   ⚠️ Rate limit (429). API требует ожидания {delay:.1f} секунд. Ожидание перед попыткой {attempt + 2}/10...")
                 
+                time.sleep(delay)
+            else:
+                # Для других ошибок используем меньшую задержку
+                delay = 0.5 * (attempt + 1)
+                time.sleep(delay)
+    
+    # Если дошли сюда, все попытки провалились
+    raise Exception(f"Не удалось получить ответ после 10 попыток. Последняя ошибка: {last_error}")
+
+
+# ============================================================================
+# API модели через OpenRouter
+# ============================================================================
+
+def load_deepseek_r1t_chimera_api() -> Tuple[Optional[Any], Optional[Any]]:
+    """Загрузка deepseek-r1t-chimera через OpenRouter API (возвращает клиент API вместо модели)"""
+    if not OPENAI_AVAILABLE:
+        raise ImportError("Библиотека openai не установлена. Установите: pip install openai")
+    
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY не установлен. Установите переменную окружения или в config_secrets.py")
+    
+    print(f"   Инициализация OpenRouter API клиента для deepseek-r1t-chimera...")
+    try:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENAI_API_KEY,
+        )
+        print(f"   ✓ OpenRouter API клиент инициализирован")
+        return client, None
+    except Exception as e:
+        print(f"   ❌ Ошибка инициализации OpenRouter API клиента: {e}")
+        raise
+
+
+def load_mistral_small_3_1_24b_api() -> Tuple[Optional[Any], Optional[Any]]:
+    """Загрузка mistral-small-3.1-24b-instruct через OpenRouter API (возвращает клиент API вместо модели)"""
+    if not OPENAI_AVAILABLE:
+        raise ImportError("Библиотека openai не установлена. Установите: pip install openai")
+    
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY не установлен. Установите переменную окружения или в config_secrets.py")
+    
+    print(f"   Инициализация OpenRouter API клиента для mistral-small-3.1-24b-instruct...")
+    try:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENAI_API_KEY,
+        )
+        print(f"   ✓ OpenRouter API клиент инициализирован")
+        return client, None
+    except Exception as e:
+        print(f"   ❌ Ошибка инициализации OpenRouter API клиента: {e}")
+        raise
+
+
+def generate_openrouter_api(
+    client, 
+    tokenizer, 
+    prompt: str, 
+    max_new_tokens: int = 1024, 
+    model_name: str = "tngtech/deepseek-r1t-chimera:free",
+    repetition_penalty: float = None
+) -> str:
+    """
+    Функция генерации для моделей через OpenRouter API с retry логикой до 10 попыток
+    
+    Args:
+        client: клиент API (OpenAI)
+        tokenizer: не используется, но нужен для совместимости сигнатуры (должен быть None для API моделей)
+        prompt: промпт
+        max_new_tokens: максимальное количество новых токенов
+        model_name: имя модели API
+        repetition_penalty: штраф за повторения (если None, не используется)
+    
+    Returns:
+        сгенерированный текст
+    """
+    # Защита: убеждаемся, что tokenizer не используется для API моделей
+    if tokenizer is not None:
+        import warnings
+        warnings.warn("tokenizer передан в generate_openrouter_api, но не используется для API моделей. Убедитесь, что для API моделей tokenizer=None.")
+    # Параметры для разных попыток (до 10 попыток с разными параметрами)
+    retry_configs = [
+        {"temperature": 0.0, "top_p": None},  # Попытка 1: детерминированная
+        {"temperature": 0.1, "top_p": None},  # Попытка 2: немного случайности
+        {"temperature": 0.0, "top_p": 0.95},    # Попытка 3: с top_p
+        {"temperature": 0.2, "top_p": 0.9},    # Попытка 4: более высокая температура
+        {"temperature": 0.0, "top_p": 0.99}, # Попытка 5: только top_p
+        {"temperature": 0.15, "top_p": None},  # Попытка 6: средняя температура
+        {"temperature": 0.0, "top_p": 0.9},  # Попытка 7: низкая температура с top_p
+        {"temperature": 0.1, "top_p": 0.95},   # Попытка 8: комбинация параметров
+        {"temperature": 0.05, "top_p": None}, # Попытка 9: очень низкая температура
+        {"temperature": 0.0, "top_p": 1.0},  # Попытка 10: детерминированная с top_p=1.0
+    ]
+    
+    last_error = None
+    
+    for attempt in range(10):
+        config = retry_configs[attempt]
+        
+        try:
+            # Формируем параметры запроса
+            messages = [
+                {"role": "user", "content": prompt}
+            ]
+            
+            generation_params = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": max_new_tokens,
+                "temperature": config["temperature"],
+            }
+            
+            # Добавляем опциональные параметры
+            if config["top_p"] is not None:
+                generation_params["top_p"] = config["top_p"]
+            
+            if repetition_penalty is not None:
+                generation_params["frequency_penalty"] = repetition_penalty
+            
+            # Выполняем запрос к API
+            response = client.chat.completions.create(
+                **generation_params,
+                extra_headers={
+                    "HTTP-Referer": "https://github.com",  # Optional
+                    "X-Title": "SmallLLMEvaluator",  # Optional
+                }
+            )
+            
+            # Извлекаем текст ответа
+            if response.choices and len(response.choices) > 0:
+                text = response.choices[0].message.content
+            else:
+                text = ""
+            
+            # Если получили текст, возвращаем его
+            if text and text.strip():
+                return text.strip()
+            else:
+                # Пустой ответ - пробуем следующую попытку
+                last_error = "Пустой ответ от API"
+                continue
+                
+        except Exception as e:
+            last_error = str(e)
+            print(last_error)  # Выводим ошибку в консоль полностью (как для других API моделей)
+            error_str = str(e).lower()
+            
+            # Проверяем, является ли это ошибкой 404 (модель не найдена)
+            if "404" in error_str or "not found" in error_str or "model not found" in error_str:
+                raise Exception(f"Модель не найдена (404): {last_error}")
+            
+            # Проверяем, является ли это ошибкой 429 (rate limit)
+            is_rate_limit = (
+                "429" in error_str or 
+                "rate limit" in error_str or
+                "quota exceeded" in error_str or
+                "too many requests" in error_str
+            )
+            
+            # Если это последняя попытка, пробрасываем исключение
+            if attempt == 9:
+                raise Exception(f"Ошибка после 10 попыток. Последняя ошибка: {last_error}")
+            
+            # Для rate limit ошибок используем экспоненциальную задержку
+            if is_rate_limit:
+                delay = min(5.0 * (2 ** attempt), 60.0)  # Максимум 60 секунд
+                print(f"   ⚠️ Rate limit (429). Ожидание {delay:.1f} секунд перед попыткой {attempt + 2}/10...")
                 time.sleep(delay)
             else:
                 # Для других ошибок используем меньшую задержку
