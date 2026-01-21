@@ -787,35 +787,14 @@ class ModelEvaluator:
         # Подготавливаем примеры промптов для вывода и сохранения
         example_text = self.texts[0] if self.texts else "Пример текста"
         
+        workflow_description = ""  # Инициализируем для использования в выводе
+        workflow_prompts = None  # Сохраняем для повторного использования
         if use_multi_agent:
-            from prompt_config import (
-                NUMERIC_FRAGMENTS_EXTRACTION_PROMPT,
-                MASS_FRACTION_EXTRACTION_PROMPT,
-                OTHER_PARAMETERS_EXTRACTION_PROMPT,
-                JSON_FORMATION_PROMPT
-            )
-            full_prompt_example = f"""МУЛЬТИАГЕНТНЫЙ РЕЖИМ: {multi_agent_mode}
-
-{'='*80}
-ПРОМПТ 1: ИЗВЛЕЧЕНИЕ ЧИСЛОВЫХ ФРАГМЕНТОВ
-{'='*80}
-{NUMERIC_FRAGMENTS_EXTRACTION_PROMPT.format(text=example_text)}
-
-{'='*80}
-ПРОМПТ 2: ИЗВЛЕЧЕНИЕ МАССОВЫХ ДОЛЕЙ
-{'='*80}
-{MASS_FRACTION_EXTRACTION_PROMPT.format(numeric_fragments="[Пример числовых фрагментов из предыдущего шага]")}
-
-{'='*80}
-ПРОМПТ 3: ИЗВЛЕЧЕНИЕ ПРОЧИХ ПАРАМЕТРОВ
-{'='*80}
-{OTHER_PARAMETERS_EXTRACTION_PROMPT.format(numeric_fragments="[Пример числовых фрагментов из предыдущего шага]")}
-
-{'='*80}
-ПРОМПТ 4: ФОРМИРОВАНИЕ JSON
-{'='*80}
-{JSON_FORMATION_PROMPT.format(mass_fractions="[Пример массовых долей из предыдущего шага]", other_parameters="[Пример прочих параметров из предыдущего шага]")}
-"""
+            # Используем систему конфигурации workflow для получения промптов
+            from workflow_config import get_workflow_prompts
+            workflow_prompts = get_workflow_prompts(multi_agent_mode, example_text)
+            full_prompt_example = workflow_prompts["full_prompt_example"]
+            workflow_description = workflow_prompts.get("description", "")
         else:
             full_prompt_example = prompt_template(example_text)
         
@@ -824,7 +803,7 @@ class ModelEvaluator:
         if use_multi_agent:
             print(f"   • Режим: Мультиагентный ({multi_agent_mode})")
             print(f"   • Используются специализированные промпты из prompt_config.py")
-            print(f"   • Агенты: извлечение числовых фрагментов → массовые доли → прочие параметры → формирование JSON")
+            print(f"   • Агенты: {workflow_description}")
             print(f"   • Полный текст всех промптов (пример с первым текстом):")
             print(f"{'─'*80}")
             # Выводим промпты с отступами для читаемости
@@ -882,31 +861,61 @@ class ModelEvaluator:
         if self.ground_truths and len(self.ground_truths) == len(results):
             try:
                 print(f"🎯 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА...")
-                predictions = [r["json_parsed"] for r in results]
-                quality_metrics = calculate_quality_metrics(predictions, self.ground_truths)
+                # Фильтруем и нормализуем predictions: должны быть словарями
+                predictions = []
+                for r in results:
+                    json_parsed = r.get("json_parsed", {})
+                    # Если это список, пропускаем или преобразуем в словарь
+                    if isinstance(json_parsed, list):
+                        # Если список пустой или содержит не словари, используем пустой словарь
+                        predictions.append({})
+                    elif isinstance(json_parsed, dict):
+                        predictions.append(json_parsed)
+                    else:
+                        predictions.append({})
                 
-                mass_dolya = quality_metrics.get('массовая доля', {})
-                prochee = quality_metrics.get('прочее', {})
+                # Также проверяем ground_truths
+                ground_truths_normalized = []
+                for gt in self.ground_truths:
+                    if isinstance(gt, list):
+                        ground_truths_normalized.append({})
+                    elif isinstance(gt, dict):
+                        ground_truths_normalized.append(gt)
+                    else:
+                        ground_truths_normalized.append({})
                 
-                print(f"   ✅ Метрики качества вычислены:")
-                print(f"   📊 Группа 'массовая доля':")
-                print(f"      • Точность (Accuracy): {mass_dolya.get('средняя_точность', 0):.2%}")
-                print(f"      • Precision: {mass_dolya.get('precision', 0):.2%}")
-                print(f"      • Recall: {mass_dolya.get('recall', 0):.2%}")
-                print(f"      • F1-score: {mass_dolya.get('f1', 0):.2%}")
-                print(f"      • TP: {mass_dolya.get('tp', 0)}, FP: {mass_dolya.get('fp', 0)}, FN: {mass_dolya.get('fn', 0)}")
-                print(f"      • Количество сравнений: {mass_dolya.get('количество_сравнений', 0)}")
-                print(f"      • Примеры ошибок: {len(mass_dolya.get('ошибки', []))}")
-                print(f"   📊 Группа 'прочее':")
-                print(f"      • Точность (Accuracy): {prochee.get('средняя_точность', 0):.2%}")
-                print(f"      • Precision: {prochee.get('precision', 0):.2%}")
-                print(f"      • Recall: {prochee.get('recall', 0):.2%}")
-                print(f"      • F1-score: {prochee.get('f1', 0):.2%}")
-                print(f"      • TP: {prochee.get('tp', 0)}, FP: {prochee.get('fp', 0)}, FN: {prochee.get('fn', 0)}")
-                print(f"      • Количество сравнений: {prochee.get('количество_сравнений', 0)}")
-                print(f"      • Примеры ошибок: {len(prochee.get('ошибки', []))}")
+                quality_metrics = calculate_quality_metrics(predictions, ground_truths_normalized)
+                
+                # Проверяем, что quality_metrics - это словарь
+                if not isinstance(quality_metrics, dict):
+                    print(f"   ⚠️ Ошибка: calculate_quality_metrics вернула не словарь, а {type(quality_metrics)}")
+                    quality_metrics = None
+                else:
+                    mass_dolya = quality_metrics.get('массовая доля', {})
+                    prochee = quality_metrics.get('прочее', {})
+                    
+                    print(f"   ✅ Метрики качества вычислены:")
+                    print(f"   📊 Группа 'массовая доля':")
+                    print(f"      • Точность (Accuracy): {mass_dolya.get('средняя_точность', 0):.2%}")
+                    print(f"      • Precision: {mass_dolya.get('precision', 0):.2%}")
+                    print(f"      • Recall: {mass_dolya.get('recall', 0):.2%}")
+                    print(f"      • F1-score: {mass_dolya.get('f1', 0):.2%}")
+                    print(f"      • TP: {mass_dolya.get('tp', 0)}, FP: {mass_dolya.get('fp', 0)}, FN: {mass_dolya.get('fn', 0)}")
+                    print(f"      • Количество сравнений: {mass_dolya.get('количество_сравнений', 0)}")
+                    print(f"      • Примеры ошибок: {len(mass_dolya.get('ошибки', []))}")
+                    print(f"   📊 Группа 'прочее':")
+                    print(f"      • Точность (Accuracy): {prochee.get('средняя_точность', 0):.2%}")
+                    print(f"      • Precision: {prochee.get('precision', 0):.2%}")
+                    print(f"      • Recall: {prochee.get('recall', 0):.2%}")
+                    print(f"      • F1-score: {prochee.get('f1', 0):.2%}")
+                    print(f"      • TP: {prochee.get('tp', 0)}, FP: {prochee.get('fp', 0)}, FN: {prochee.get('fn', 0)}")
+                    print(f"      • Количество сравнений: {prochee.get('количество_сравнений', 0)}")
+                    print(f"      • Примеры ошибок: {len(prochee.get('ошибки', []))}")
             except Exception as e:
                 print(f"   ⚠️ Ошибка при вычислении метрик качества: {e}")
+                import traceback
+                if verbose:
+                    traceback.print_exc()
         else:
             print(f"   ⚠️ Ground truth не загружен или не совпадает по размеру с результатами")
             if not self.ground_truths:
@@ -918,7 +927,6 @@ class ModelEvaluator:
         # Анализ через Gemini API (если включен)
         gemini_analysis = None
         if use_gemini_analysis and analyze_errors_with_gemini is not None:
-            import os
             if gemini_api_key is None:
                 gemini_api_key = os.environ.get("GEMINI_API_KEY")
             
@@ -964,33 +972,14 @@ class ModelEvaluator:
         
         # Формируем дополнительную информацию о промптах для сохранения в отчёт
         if use_multi_agent:
-            from prompt_config import (
-                NUMERIC_FRAGMENTS_EXTRACTION_PROMPT,
-                MASS_FRACTION_EXTRACTION_PROMPT,
-                OTHER_PARAMETERS_EXTRACTION_PROMPT,
-                JSON_FORMATION_PROMPT
-            )
-            # full_prompt_example уже создан выше, добавляем структурированную информацию
-            prompt_info = {
-                "mode": multi_agent_mode,
-                "prompts_used": [
-                    "NUMERIC_FRAGMENTS_EXTRACTION_PROMPT",
-                    "MASS_FRACTION_EXTRACTION_PROMPT",
-                    "OTHER_PARAMETERS_EXTRACTION_PROMPT",
-                    "JSON_FORMATION_PROMPT"
-                ],
-                "example_numeric_fragments_prompt": NUMERIC_FRAGMENTS_EXTRACTION_PROMPT.format(text=example_text),
-                "example_mass_fractions_prompt": MASS_FRACTION_EXTRACTION_PROMPT.format(numeric_fragments="[Пример числовых фрагментов]"),
-                "example_other_parameters_prompt": OTHER_PARAMETERS_EXTRACTION_PROMPT.format(numeric_fragments="[Пример числовых фрагментов]"),
-                "example_json_formation_prompt": JSON_FORMATION_PROMPT.format(mass_fractions="[Пример массовых долей]", other_parameters="[Пример прочих параметров]")
-            }
+            # Используем уже полученные workflow_prompts (избегаем дублирования вызова)
+            prompt_info = workflow_prompts["prompt_info"]
         else:
             # Для одноагентного режима full_prompt_example уже создан выше
             prompt_info = None
         
         # Формируем итоговый результат
         # Создаем копию гиперпараметров для сохранения (чтобы гарантировать сохранение всех значений)
-        import copy
         hyperparameters_to_save = copy.deepcopy(hyperparameters)
         
         evaluation_result = {

@@ -152,6 +152,7 @@ python main.py qwen-2.5-3b --multi-agent simple_4agents
 **Доступные режимы мультиагентного подхода:**
 - `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
 - `critic_3agents` - 3 агента: генератор (создает первоначальный ответ), критик (анализирует ответ на соответствие промпту), исправитель (устраняет найденные ошибки) (вдохновлено подходом из Reddit: 3agents)
+- `qa_workflow` - 6 агентов: извлечение питательных веществ → массовые доли для каждого вещества → стандарт → марка → количества → сборка JSON (QA-подход с вопросами-ответами)
 
 **Примеры запуска:**
 
@@ -162,28 +163,10 @@ python main.py qwen-2.5-3b
 # Мультиагентный режим
 python main.py qwen-2.5-3b --multi-agent simple_4agents
 python main.py qwen-2.5-3b --multi-agent critic_3agents
+python main.py qwen-2.5-3b --multi-agent qa_workflow
 ```
 
 Доступные модели можно посмотреть, запустив `main.py` без аргументов.
-
-### Выбор подхода (одноагентный/мультиагентный)
-
-Подход задается через аргумент командной строки `--multi-agent`.
-
-**Одноагентный подход (по умолчанию):**
-- Запуск без флага `--multi-agent`:
-```bash
-python main.py qwen-2.5-3b
-```
-
-**Мультиагентный подход:**
-- Запуск с флагом `--multi-agent`:
-```bash
-python main.py qwen-2.5-3b --multi-agent simple_4agents
-```
-
-**Доступные режимы мультиагентного подхода:**
-- `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
 
 ### Сравнение подходов
 
@@ -193,12 +176,17 @@ python main.py qwen-2.5-3b --multi-agent simple_4agents
 - Подходит для простых задач
 - Использует единый промпт `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`
 
-**Мультиагентный подход (`simple_4agents`):**
+**Мультиагентный подход:**
 - Более точное извлечение данных за счет специализации
 - Разделение ответственности между агентами
-- Больше запросов к модели (4 запроса вместо 1)
+- Больше запросов к модели (зависит от режима: 3-4 запроса вместо 1)
 - Больше использование памяти и времени
 - Использует специализированные промпты для каждого этапа
+
+**Режимы:**
+- `simple_4agents` - 4 запроса к модели (извлечение числовых фрагментов → массовые доли → прочие параметры → формирование JSON)
+- `critic_3agents` - 3 запроса к модели (генератор → критик → исправитель)
+- `qa_workflow` - минимум 4 запроса (nutrients, standard, grade, quantities), максимум зависит от количества найденных питательных веществ (4 + N запросов, где N - количество веществ)
 
 **Информация о режиме сохраняется в метриках:**
 - Поле `multi_agent_mode` в JSON метриках содержит используемый режим (или `null` для одноагентного)
@@ -324,6 +312,7 @@ python main.py deepseek-r1t-chimera-api
 python main.py deepseek-r1t-chimera-api --multi-agent simple_4agents
 python main.py mistral-small-3.1-24b-api
 python main.py mistral-small-3.1-24b-api --multi-agent simple_4agents
+python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 ```
 
 ## Метрики оценки
@@ -455,11 +444,6 @@ def generate_your_model(model, tokenizer, prompt: str, max_new_tokens: int = 102
 python main.py your-model-key --multi-agent simple_4agents
 ```
 
-**Примечание:** 
-- Мультиагентный подход автоматически использует `StandardGenerator` из `core.generators`, который работает с большинством моделей
-- Режим работы задается через аргумент командной строки `--multi-agent`
-- Информация о режиме сохраняется в метриках (поле `multi_agent_mode`)
-
 ## Требования
 
 ### Основные требования
@@ -487,13 +471,30 @@ python main.py your-model-key --multi-agent simple_4agents
 
 Все промпты находятся в `prompt_config.py`:
 
+**Для одноагентного подхода:**
 - **`FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`** - основной промпт для одноагентного подхода
+
+**Для режима `simple_4agents`:**
 - **`NUMERIC_FRAGMENTS_EXTRACTION_PROMPT`** - промпт для агента извлечения числовых фрагментов
 - **`MASS_FRACTION_EXTRACTION_PROMPT`** - промпт для агента извлечения массовых долей
 - **`OTHER_PARAMETERS_EXTRACTION_PROMPT`** - промпт для агента извлечения прочих параметров
 - **`JSON_FORMATION_PROMPT`** - промпт для агента формирования JSON
 
+**Для режима `critic_3agents`:**
+- **`FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`** - промпт для агента-генератора (первоначальный ответ)
+- **`CRITIC_PROMPT`** - промпт для агента-критика (анализ ответа)
+- **`CORRECTOR_PROMPT`** - промпт для агента-исправителя (устранение ошибок)
+
+**Для режима `qa_workflow`:**
+- **`QA_NUTRIENTS_PROMPT`** - промпт для извлечения списка питательных веществ
+- **`QA_NUTRIENT_PROMPT`** - промпт для извлечения массовой доли конкретного вещества (используется для каждого вещества)
+- **`QA_STANDARD_PROMPT`** - промпт для извлечения стандарта (ГОСТ, ТУ и т.д.)
+- **`QA_GRADE_PROMPT`** - промпт для извлечения марки удобрения
+- **`QA_QUANTITY_PROMPT`** - промпт для извлечения количеств (массы, объемы, количество упаковок)
+
 ### Поток данных в мультиагентном подходе
+
+#### Режим `simple_4agents`:
 
 ```
 Исходный текст
@@ -509,6 +510,58 @@ python main.py your-model-key --multi-agent simple_4agents
                                             [Агент 3: Формирование JSON]
                                                       ↓
                                                  Финальный JSON
+```
+
+#### Режим `critic_3agents`:
+
+```
+Исходный текст + промпт
+    ↓
+[Агент 1: Генератор - создание первоначального ответа]
+    ↓
+Первоначальный ответ
+    ↓
+[Агент 2: Критик - анализ ответа на соответствие промпту]
+    ↓
+Анализ ошибок
+    ↓
+[Агент 3: Исправитель - устранение найденных ошибок]
+    ↓
+Исправленный JSON
+```
+
+#### Режим `qa_workflow`:
+
+```
+Исходный текст
+    ↓
+[Агент 1: Извлечение питательных веществ]
+    ↓
+Список веществ (N, P2O5, K2O, S, ...)
+    ↓
+[Агент 2: Извлечение массовых долей]
+    ├─→ Запрос для N
+    ├─→ Запрос для P2O5
+    ├─→ Запрос для K2O
+    └─→ ... (для каждого вещества)
+    ↓
+Массовые доли для всех веществ
+    ↓
+[Агент 3: Извлечение стандарта]
+    ↓
+Стандарт (ГОСТ, ТУ и т.д.)
+    ↓
+[Агент 4: Извлечение марки]
+    ↓
+Марка удобрения
+    ↓
+[Агент 5: Извлечение количеств]
+    ↓
+Количества (массы, объемы, упаковки)
+    ↓
+[Агент 6: Сборка финального JSON]
+    ↓
+Финальный JSON
 ```
 
 ### Формат данных
@@ -528,111 +581,7 @@ python main.py your-model-key --multi-agent simple_4agents
 }
 ```
 
-## Все варианты запуска
-
-### 1. Оценка одной модели (одноагентный режим)
-
-```bash
-python main.py <model_key>
-```
-
-**Примеры:**
-```bash
-# Локальные модели
-python main.py qwen-2.5-3b
-python main.py gemma-2-2b
-python main.py Phi-3.5-mini-instruct
-
-# API модели через Google Generative AI (требуется GEMINI_API_KEY)
-python main.py gemma-3-4b-api
-python main.py gemma-3-12b-api
-python main.py gemma-3-27b-api
-
-# API модели через OpenRouter (требуется OPENAI_API_KEY)
-python main.py deepseek-r1t-chimera-api
-python main.py mistral-small-3.1-24b-api
-```
-
-**Примечание:** При запуске через `main.py` используется подробный вывод (verbose=True), который показывает исходный текст и ответ модели на каждом этапе. Это полезно для отладки и детального анализа работы модели.
-
-**Список доступных моделей:**
-```bash
-python main.py
-```
-(запуск без аргументов покажет список всех доступных моделей)
-
-### 2. Оценка одной модели (мультиагентный режим)
-
-```bash
-python main.py <model_key> --multi-agent <mode>
-```
-
-**Доступные режимы:**
-- `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
-- `critic_3agents` - 3 агента: генератор (создает первоначальный ответ), критик (анализирует ответ на соответствие промпту), исправитель (устраняет найденные ошибки) (вдохновлено подходом из Reddit: 3agents)
-
-**Примеры:**
-```bash
-# Локальные модели
-python main.py qwen-2.5-3b --multi-agent simple_4agents
-python main.py qwen-2.5-3b --multi-agent critic_3agents
-python main.py gemma-2-2b --multi-agent simple_4agents
-python main.py Phi-3.5-mini-instruct --multi-agent simple_4agents
-
-# API модели через Google Generative AI
-python main.py gemma-3-4b-api --multi-agent simple_4agents
-python main.py gemma-3-12b-api --multi-agent simple_4agents
-python main.py gemma-3-27b-api --multi-agent simple_4agents
-
-# API модели через OpenRouter
-python main.py deepseek-r1t-chimera-api --multi-agent simple_4agents
-python main.py deepseek-r1t-chimera-api --multi-agent critic_3agents
-python main.py mistral-small-3.1-24b-api --multi-agent simple_4agents
-python main.py mistral-small-3.1-24b-api --multi-agent critic_3agents
-```
-
-### 3. Оценка всех моделей подряд
-
-```bash
-python run_all_models.py
-```
-
-Скрипт автоматически:
-- Проверит доступность Gemini API
-- Запустит оценку для каждой модели из конфигурации
-- Пропустит модели, которые не удалось загрузить
-- Сохранит результаты для каждой модели
-- Выведет итоговую сводку
-
-**Примечания:**
-- Все модели будут запущены в одноагентном режиме. Для мультиагентного режима используйте `main.py` с флагом `--multi-agent`.
-- При запуске через `run_all_models.py` используется короткий вывод (verbose=False), который показывает только счетчик итераций, ошибки и краткую статистику.
-
-### 4. Переоценка результатов из сохраненного CSV
-
-```bash
-python reevaluate.py <path_to_csv> [model_name] [--gemini]
-```
-
-**Примеры:**
-```bash
-# Переоценка с автоматическим определением модели
-python reevaluate.py results/results_qwen-2.5-3b_20240115_103000.csv
-
-# Переоценка с указанием модели
-python reevaluate.py results/results_qwen-2.5-3b_20240115_103000.csv "Qwen/Qwen2.5-3B-Instruct"
-
-# Переоценка с анализом через Gemini API
-python reevaluate.py results/results_qwen-2.5-3b_20240115_103000.csv "Qwen/Qwen2.5-3B-Instruct" --gemini
-```
-
-**Примечания:**
-- Переоценка позволяет пересчитать метрики качества без повторного запуска модели
-- Флаг `--gemini` включает анализ ошибок через Gemini API с рекомендациями по улучшению
-- Для использования `--gemini` необходим `GEMINI_API_KEY` в `config_secrets.py`
-- Анализ от Gemini сохраняется в отдельный JSON файл: `gemini_analysis_{model_name}_{timestamp}_reevaluated.json`
-
-### 5. Справка по использованию
+## Справка по использованию
 
 ```bash
 # Показать справку по main.py
@@ -647,7 +596,7 @@ python reevaluate.py
 | Команда | Описание | Режим | Gemini анализ |
 |---------|----------|-------|---------------|
 | `python main.py <model_key>` | Оценка одной модели | Одноагентный | По умолчанию |
-| `python main.py <model_key> --multi-agent simple_4agents` | Оценка одной модели | Мультиагентный | По умолчанию |
+| `python main.py <model_key> --multi-agent <mode>` | Оценка одной модели | Мультиагентный | По умолчанию |
 | `python run_all_models.py` | Оценка всех моделей | Одноагентный | По умолчанию |
 | `python reevaluate.py <csv_file>` | Переоценка результатов | - | Отключен |
 | `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | Включен |

@@ -325,6 +325,16 @@ MODEL_CONFIGS = {
             "dtype": "bfloat16"
         }
     },
+    "t5gemma-2-1b-1b": {
+        "name": "google/t5gemma-2-1b-1b",
+        "load_func": ml.load_t5gemma_2_1b_1b,
+        "generate_func": ml.generate_t5,
+        "hyperparameters": {
+            "max_new_tokens": 1024,
+            "do_sample": False,
+            "dtype": "bfloat16"
+        }
+    },
     "mistral-7b-v0.3-bnb-4bit": {
         "name": "unsloth/mistral-7b-v0.3-bnb-4bit",
         "load_func": ml.load_mistral_7b_v0_3_bnb_4bit,

@@ -113,12 +113,6 @@ def analyze_errors_with_gemini(
 Ошибки парсинга JSON (5 случайных примеров из {len(parsing_errors)}):
 {chr(10).join(random.sample(parsing_errors, min(5, len(parsing_errors))) if len(parsing_errors) > 5 else (parsing_errors if parsing_errors else ['Ошибок парсинга не обнаружено']))}
 
-Ошибки качества (примеры из группы "массовая доля"):
-{chr(10).join(quality_metrics.get('массовая доля', {}).get('ошибки', [])[:5])}
-
-Ошибки качества (примеры из группы "прочее"):
-{chr(10).join(quality_metrics.get('прочее', {}).get('ошибки', [])[:5])}
-
 Проанализируй:
 1. Характерные ошибки модели
 2. Причины ошибок парсинга JSON

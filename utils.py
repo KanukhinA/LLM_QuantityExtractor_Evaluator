@@ -6,14 +6,14 @@ import re
 import ast
 import codecs
 from typing import Dict, Any
-from prompt_config import FERTILIZER_EXTRACTION_PROMPT_TEMPLATE
+from prompt_config import FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE
 
 
 def build_prompt3(text: str) -> str:
     """
     Генерация промпта для конкретного текста
     """
-    return FERTILIZER_EXTRACTION_PROMPT_TEMPLATE.format(text=text)
+    return FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE.format(text=text)
 
 
 def _extract_json_like(s: str) -> str:
@@ -75,9 +75,25 @@ def _balance_and_close(s: str) -> str:
     in_string = False
     escape = False
 
-    for ch in s:
+    for i, ch in enumerate(s):
+        # Обрабатываем escape-последовательности
+        if ch == "\\" and not escape:
+            escape = True
+            continue
+        elif escape:
+            # Если это экранированная кавычка, не переключаем состояние строки
+            if ch == '"':
+                escape = False
+                continue
+            # Если это другой escape-символ, просто сбрасываем флаг
+            escape = False
+        
+        # Переключаем состояние строки только на неэкранированных кавычках
         if ch == '"' and not escape:
             in_string = not in_string
+            continue
+        
+        # Считаем скобки только вне строк
         if not in_string:
             if ch == "{":
                 depth_obj += 1
@@ -89,10 +105,6 @@ def _balance_and_close(s: str) -> str:
             elif ch == "]":
                 if depth_arr > 0:
                     depth_arr -= 1
-        if ch == "\\" and not escape:
-            escape = True
-        else:
-            escape = False
 
     # Если строка обрывается внутри незавершенной строки, закрываем её
     if in_string:
@@ -123,10 +135,10 @@ def _balance_and_close(s: str) -> str:
     return s
 
 
-def parse_json_safe(s: str) -> Dict[str, Any]:
+def parse_json_safe(s: str) -> Any:
     """
     Умный парсер JSON с автопочинкой и автодозакрытием скобок.
-    Возвращает dict (успешно распарсенный объект) или {}.
+    Возвращает dict (успешно распарсенный объект), list или {}.
     """
     if not isinstance(s, str) or not s.strip():
         return {}
@@ -135,29 +147,32 @@ def parse_json_safe(s: str) -> Dict[str, Any]:
     if not fragment:
         return {}
 
-    # Обработка escape-последовательностей \n, \t, \r (буквальные \n должны стать настоящими переносами)
-    # Заменяем escape-последовательности только вне строк JSON (не между кавычками)
+    # Обработка escape-последовательностей
     s_clean = fragment
     try:
-        # ВАЖНО: Сначала заменяем буквальные \" на обычные " (до обработки других escape-последовательностей)
-        # Это нужно для случаев, когда модель выводит экранированные кавычки в структуре JSON
-        # В валидном JSON кавычки внутри строк должны быть экранированы правильно,
-        # а в структуре JSON (ключи, разделители) должны быть обычные "
-        # Используем простой replace - он работает надежно (проверено в тестах)
-        s_clean = s_clean.replace('\\"', '"')
-        # Теперь заменяем все \n, \t, \r на настоящие символы
-        # Это безопасно, так как в JSON форматировании (вне строк) буквальные \n не должны быть
-        # А внутри строк они должны быть экранированы как \\n, что мы не трогаем
+        # ВАЖНО: НЕ заменяем \" на " - это сломает строки с экранированными кавычками внутри!
+        # В валидном JSON кавычки внутри строк должны оставаться экранированными как \"
+        # Например: "значение": "ТОВАРНЫЙ ЗНАК \"БУЙСКИЕ УДОБРЕНИЯ\"" - это валидный JSON
+        # Если заменить \" на ", получится невалидный JSON: "значение": "ТОВАРНЫЙ ЗНАК "БУЙСКИЕ УДОБРЕНИЯ""
+        
+        # Заменяем буквальные \n, \t, \r на настоящие символы (для форматирования JSON)
+        # В валидном JSON внутри строк они должны быть экранированы как \\n (двойной слэш)
+        # Но модели иногда выводят буквальные \n в форматировании JSON (вне строк)
+        # Заменяем их аккуратно: заменяем только одиночные \n, \t, \r (не \\n)
+        # Используем регулярное выражение для замены только одиночных escape-последовательностей
+        # Но это сложно, поэтому просто заменяем все \n, \t, \r (в валидном JSON внутри строк должны быть \\n)
         s_clean = s_clean.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
     except Exception:
         pass
     
     s_clean = s_clean.replace("\r", "").strip()
 
-    # замены типографских кавычек и двойных кавычек
+    # замены типографских кавычек на обычные (безопасно, так как типографские кавычки не валидны в JSON)
     s_clean = s_clean.replace(""", '"').replace(""", '"').replace("‚", "'").replace("'", "'")
-    # Заменяем двойные кавычки "" на одинарные "
-    s_clean = s_clean.replace('""', '"')
+    
+    # НЕ заменяем двойные кавычки "" на одинарные " - это может сломать валидный JSON
+    # В валидном JSON не должно быть двойных кавычек подряд, но если они есть в строке,
+    # то они должны быть экранированы как \"
 
     # нормализуем None/null
     s_clean = re.sub(r"\bNone\b", "null", s_clean)
@@ -178,7 +193,7 @@ def parse_json_safe(s: str) -> Dict[str, Any]:
     # Попытка парсинга
     try:
         parsed = json.loads(s_clean)
-        if isinstance(parsed, dict):
+        if isinstance(parsed, (dict, list)):
             return parsed
         return {}
     except json.JSONDecodeError:
@@ -188,7 +203,7 @@ def parse_json_safe(s: str) -> Dict[str, Any]:
     s_eval = re.sub(r"\bnull\b", "None", s_clean)
     try:
         data = ast.literal_eval(s_eval)
-        if isinstance(data, dict):
+        if isinstance(data, (dict, list)):
             return data
         return {}
     except Exception:
@@ -223,12 +238,18 @@ def extract_json_from_response(response_text: str) -> str:
     
     # Предварительная обработка: заменяем буквальные \n, \t, \r на настоящие символы
     # Это нужно для правильной работы регулярных выражений
-    # Но делаем это аккуратно, чтобы не сломать строки внутри JSON
+    # ВАЖНО: НЕ заменяем \" на " - это сломает строки с экранированными кавычками!
+    # В валидном JSON внутри строк кавычки должны быть экранированы как \"
     try:
-        # Заменяем escape-последовательности вне строк JSON
-        # Простой подход: заменяем все \n на переносы строк
-        # В валидном JSON внутри строк должны быть \\n, а не \n
-        response_text = response_text.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+        # Заменяем только \n, \t, \r (не трогаем \")
+        # В валидном JSON внутри строк должны быть \\n (двойной слэш), а не \n
+        # Но модели иногда выводят буквальные \n в форматировании JSON (вне строк)
+        # Простой подход: заменяем все \n, \t, \r, но это может сломать строки с этими символами
+        # Более безопасно: не заменять вообще, но тогда модели, которые выводят буквальные \n, не будут работать
+        # Компромисс: заменяем только если они не экранированы двойным слэшем
+        # Но это сложно определить без парсинга, поэтому оставляем как есть
+        # Стандартный JSON парсер должен справиться с буквальными \n в форматировании
+        pass
     except Exception:
         pass
     
@@ -264,17 +285,29 @@ def extract_json_from_response(response_text: str) -> str:
                 if extracted:
                     return extracted
             
-            # Если нет markdown блоков, ищем последний JSON объект
-            # Ищем все вхождения открывающих фигурных скобок
+            # Если нет markdown блоков, ищем последний JSON объект или массив
+            # Ищем все вхождения открывающих фигурных скобок (для объектов)
             brace_positions = []
+            bracket_positions = []  # Для массивов
+            
             for i, char in enumerate(json_part):
                 if char == '{':
                     brace_positions.append(i)
+                elif char == '[':
+                    bracket_positions.append(i)
             
-            if brace_positions:
-                # Берем текст от последней открывающей скобки
-                last_brace_idx = brace_positions[-1]
-                extracted = json_part[last_brace_idx:].strip()
+            # Берем последний JSON (объект или массив)
+            last_obj_idx = brace_positions[-1] if brace_positions else -1
+            last_arr_idx = bracket_positions[-1] if bracket_positions else -1
+            
+            if last_obj_idx > last_arr_idx:
+                # Последний JSON - объект
+                extracted = json_part[last_obj_idx:].strip()
+                if extracted:
+                    return extracted
+            elif last_arr_idx != -1:
+                # Последний JSON - массив
+                extracted = json_part[last_arr_idx:].strip()
                 if extracted:
                     return extracted
             
@@ -290,16 +323,28 @@ def extract_json_from_response(response_text: str) -> str:
         if extracted:
             return extracted
     
-    # 3. Ищем последний JSON объект в тексте (от последней открывающей скобки)
-    brace_positions = []
+    # 3. Ищем последний JSON объект или массив в тексте
+    brace_positions = []  # Для объектов
+    bracket_positions = []  # Для массивов
+    
     for i, char in enumerate(response_text):
         if char == '{':
             brace_positions.append(i)
+        elif char == '[':
+            bracket_positions.append(i)
     
-    if brace_positions:
-        # Берем текст от последней открывающей скобки
-        last_brace_idx = brace_positions[-1]
-        extracted = response_text[last_brace_idx:].strip()
+    # Берем последний JSON (объект или массив)
+    last_obj_idx = brace_positions[-1] if brace_positions else -1
+    last_arr_idx = bracket_positions[-1] if bracket_positions else -1
+    
+    if last_obj_idx > last_arr_idx:
+        # Последний JSON - объект
+        extracted = response_text[last_obj_idx:].strip()
+        if extracted:
+            return extracted
+    elif last_arr_idx != -1:
+        # Последний JSON - массив
+        extracted = response_text[last_arr_idx:].strip()
         if extracted:
             return extracted
     

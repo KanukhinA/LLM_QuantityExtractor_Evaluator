@@ -5,7 +5,7 @@ import torch
 import os
 import warnings
 import time
-from transformers import AutoTokenizer, AutoModelForCausalLM, Gemma3ForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, Gemma3ForCausalLM, AutoProcessor, AutoModelForSeq2SeqLM, AutoModelForImageTextToText, T5ForConditionalGeneration, T5Tokenizer
 from typing import Tuple, Any, Optional
 from config import HF_TOKEN, GEMINI_API_KEY
 
@@ -463,6 +463,73 @@ def load_phi_4_mini_instruct() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
+def load_t5gemma_2_1b_1b() -> Tuple[Any, Any]:
+    """
+    Загрузка google/t5gemma-2-1b-1b (мультимодальная модель Image-Text-to-Text)
+    
+    Модель поддерживает работу с текстом и изображениями, но для текстовых задач
+    можно использовать только текстовый ввод.
+    
+    См. документацию: https://huggingface.co/google/t5gemma-2-1b-1b
+    """
+    model_id = "google/t5gemma-2-1b-1b"
+    
+    print(f"   Загрузка процессора {model_id}...")
+    print(f"   ⚠️ Примечание: Модель использует XET для хранения файлов, загрузка может занять время")
+    try:
+        processor = AutoProcessor.from_pretrained(
+            model_id,
+            token=HF_TOKEN,
+            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
+            resume_download=True
+        )
+        print(f"   ✓ Процессор загружен")
+    except Exception as e:
+        error_msg = str(e)
+        print(f"   ❌ Ошибка загрузки процессора: {error_msg}")
+        if "XET" in error_msg or "xet" in error_msg.lower() or "getaddrinfo failed" in error_msg:
+            print(f"   💡 Проблема с XET сервисом или сетью:")
+            print(f"      - Проверьте интернет-соединение")
+            print(f"      - Убедитесь, что вы приняли лицензию модели на https://huggingface.co/{model_id}")
+            print(f"      - Попробуйте позже или используйте альтернативную T5 модель")
+        raise
+    
+    print(f"   Загрузка модели {model_id}...")
+    print(f"   ⚠️ Это может занять некоторое время из-за размера модели (~2B параметров)")
+    try:
+        # Используем AutoModelForImageTextToText для T5Gemma 2 моделей
+        model = AutoModelForImageTextToText.from_pretrained(
+            model_id,
+            device_map="auto",
+            dtype=torch.bfloat16,
+            token=HF_TOKEN,
+            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
+            resume_download=True
+        )
+        print(f"   ✓ Модель загружена")
+    except Exception as e:
+        error_msg = str(e)
+        print(f"   ❌ Ошибка загрузки модели: {error_msg}")
+        if "XET" in error_msg or "xet" in error_msg.lower() or "getaddrinfo failed" in error_msg:
+            print(f"   💡 Проблема с XET сервисом или сетью:")
+            print(f"      - Проверьте интернет-соединение")
+            print(f"      - Убедитесь, что вы приняли лицензию модели на https://huggingface.co/{model_id}")
+            print(f"      - Модель использует XET (Git LFS расширение), что может требовать дополнительной настройки")
+            print(f"      - Попробуйте позже или используйте альтернативную T5 модель:")
+            print(f"        * google/t5-v1_1-base")
+            print(f"        * google/flan-t5-base")
+            print(f"        * google/flan-t5-small")
+        elif "pytorch_model.bin" in error_msg:
+            print(f"   💡 Модель не найдена или не загружена полностью:")
+            print(f"      - Убедитесь, что вы приняли лицензию модели на https://huggingface.co/{model_id}")
+            print(f"      - Проверьте, что HF_TOKEN установлен правильно")
+            print(f"      - Попробуйте увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
+        raise
+    
+    # Для T5Gemma моделей возвращаем processor как tokenizer (processor содержит tokenizer)
+    return model, processor
+
+
 def generate_standard(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
     """
     Стандартная функция генерации для большинства моделей
@@ -612,6 +679,110 @@ def generate_qwen(model, tokenizer, prompt: str, max_new_tokens: int = 512, repe
     for s in ["Human:", "Example"]:
         if s in text:
             text = text.split(s)[0].strip()
+    
+    return text.strip()
+
+
+def generate_t5(model, tokenizer_or_processor, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
+    """
+    Функция генерации для T5/Seq2Seq моделей
+    Поддерживает как processor (AutoProcessor), так и tokenizer (T5Tokenizer)
+    
+    Args:
+        model: модель (AutoModelForImageTextToText, AutoModelForSeq2SeqLM или T5ForConditionalGeneration)
+        tokenizer_or_processor: процессор (AutoProcessor) или токенизатор (T5Tokenizer)
+        prompt: промпт
+        max_new_tokens: максимальное количество новых токенов
+        repetition_penalty: штраф за повторения (если None, не используется)
+    """
+    # Определяем, это processor или tokenizer
+    # Для T5Gemma processor требует явный параметр text= для текстового ввода
+    
+    input_ids = None
+    decoder = None
+    
+    try:
+        # Пробуем использовать как processor (если это AutoProcessor для T5Gemma)
+        # Для T5Gemma нужно использовать text= параметр
+        if hasattr(tokenizer_or_processor, '__call__'):
+            # Пробуем с явным text= параметром (для T5Gemma)
+            try:
+                inputs = tokenizer_or_processor(text=prompt, return_tensors="pt")
+                if inputs is not None and isinstance(inputs, dict) and 'input_ids' in inputs:
+                    input_ids = inputs['input_ids'].to(model.device)
+                    decoder = tokenizer_or_processor
+            except (TypeError, ValueError):
+                # Если не сработало с text=, пробуем без него
+                try:
+                    inputs = tokenizer_or_processor(prompt, return_tensors="pt")
+                    if inputs is not None and isinstance(inputs, dict) and 'input_ids' in inputs:
+                        input_ids = inputs['input_ids'].to(model.device)
+                        decoder = tokenizer_or_processor
+                except Exception:
+                    pass
+        
+        # Если processor не сработал, используем как tokenizer
+        if input_ids is None:
+            # Проверяем, есть ли у объекта атрибут tokenizer (processor может содержать tokenizer)
+            if hasattr(tokenizer_or_processor, 'tokenizer'):
+                actual_tokenizer = tokenizer_or_processor.tokenizer
+            else:
+                actual_tokenizer = tokenizer_or_processor
+            
+            input_ids = actual_tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+            decoder = actual_tokenizer
+            
+    except Exception as e:
+        # Если все не сработало, пробуем последний вариант
+        try:
+            if hasattr(tokenizer_or_processor, 'tokenizer'):
+                actual_tokenizer = tokenizer_or_processor.tokenizer
+            else:
+                actual_tokenizer = tokenizer_or_processor
+            input_ids = actual_tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+            decoder = actual_tokenizer
+        except Exception as e2:
+            raise RuntimeError(f"Не удалось обработать промпт с processor/tokenizer: {e2}") from e2
+    
+    if input_ids is None:
+        raise RuntimeError("Не удалось получить input_ids из processor/tokenizer")
+    
+    generate_kwargs = {
+        "input_ids": input_ids,
+        "max_length": input_ids.shape[1] + max_new_tokens,  # T5 использует max_length вместо max_new_tokens
+        "do_sample": False,
+    }
+    
+    # Добавляем decoder_start_token_id для T5 моделей
+    if decoder is not None:
+        if hasattr(decoder, 'pad_token_id') and decoder.pad_token_id is not None:
+            generate_kwargs["decoder_start_token_id"] = decoder.pad_token_id
+        elif hasattr(decoder, 'tokenizer') and hasattr(decoder.tokenizer, 'pad_token_id'):
+            if decoder.tokenizer.pad_token_id is not None:
+                generate_kwargs["decoder_start_token_id"] = decoder.tokenizer.pad_token_id
+    
+    with torch.no_grad():
+        output_ids = model.generate(**generate_kwargs)
+    
+    # Декодируем ответ
+    if decoder is None:
+        raise RuntimeError("Decoder не определен для декодирования ответа")
+    
+    # Проверяем, что output_ids не None и не пустой
+    if output_ids is None or len(output_ids) == 0:
+        raise RuntimeError("Модель не сгенерировала ответ")
+    
+    # Для processor может потребоваться использовать tokenizer для декодирования
+    if hasattr(decoder, 'decode'):
+        text = decoder.decode(output_ids[0], skip_special_tokens=True)
+    elif hasattr(decoder, 'tokenizer') and hasattr(decoder.tokenizer, 'decode'):
+        text = decoder.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    else:
+        raise RuntimeError(f"Decoder {type(decoder)} не имеет метода decode")
+    
+    # Убираем повтор prompt, если он есть
+    if text.startswith(prompt):
+        text = text[len(prompt):].strip()
     
     return text.strip()
 

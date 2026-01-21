@@ -10,9 +10,14 @@ from prompt_config import (
     MASS_FRACTION_EXTRACTION_PROMPT,
     OTHER_PARAMETERS_EXTRACTION_PROMPT,
     JSON_FORMATION_PROMPT,
-    FERTILIZER_EXTRACTION_PROMPT_TEMPLATE,
+    FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE,
     CRITIC_PROMPT,
-    CORRECTOR_PROMPT
+    CORRECTOR_PROMPT,
+    QA_NUTRIENTS_PROMPT,
+    QA_NUTRIENT_PROMPT,
+    QA_STANDARD_PROMPT,
+    QA_GRADE_PROMPT,
+    QA_QUANTITY_PROMPT
 )
 from utils import extract_json_from_response, parse_json_safe, is_valid_json
 
@@ -78,6 +83,12 @@ class AgentState(TypedDict):
     initial_response: str  # Первоначальный ответ агента 1
     critic_analysis: str  # Анализ критика
     corrected_response: str  # Исправленный ответ
+    # Поля для режима qa_workflow
+    nutrients: list  # Список питательных веществ
+    nutrient_values: dict  # Словарь {вещество: значение} для массовых долей
+    standard: str  # Стандарт
+    grade: str  # Марка
+    quantities: list  # Список количеств
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -693,6 +704,459 @@ def correct_response(state: AgentState) -> AgentState:
         }
 
 
+# ========== ФУНКЦИИ АГЕНТОВ ДЛЯ QA WORKFLOW ==========
+
+def extract_nutrients(state: AgentState) -> AgentState:
+    """
+    Агент 1: Извлечение списка питательных веществ из текста
+    """
+    print("   🤖 [QA Агент 1/6] Извлечение питательных веществ...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    text = state.get("text", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {
+            **state,
+            "success": False,
+            "error": "Generator not provided",
+            "time": 0.0
+        }
+    
+    try:
+        prompt = QA_NUTRIENTS_PROMPT.format(text=text)
+        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        
+        # Извлекаем JSON из ответа
+        json_str = extract_json_from_response(response)
+        nutrients = []
+        
+        if json_str:
+            try:
+                parsed = parse_json_safe(json_str)
+                if isinstance(parsed, list):
+                    nutrients = parsed
+                elif isinstance(parsed, dict) and "значение" in parsed:
+                    nutrients = parsed["значение"] if isinstance(parsed["значение"], list) else []
+            except:
+                pass
+        
+        print_agent_response(1, response, prompt)
+        
+        if not nutrients:
+            print(f"⚠️ ({elapsed:.2f}с) - ПИТАТЕЛЬНЫЕ ВЕЩЕСТВА НЕ НАЙДЕНЫ")
+            nutrients = []
+        
+        print(f"✓ ({elapsed:.2f}с) - Найдено веществ: {len(nutrients)}")
+        return {
+            **state,
+            "nutrients": nutrients,
+            "nutrient_values": {},
+            "time": state.get("time", 0.0) + elapsed,
+            "success": True
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_result = handle_agent_error(1, e, elapsed,
+                                         response if 'response' in locals() else None,
+                                         {"Исходный_текст": text})
+        return {**state, "nutrients": [], "nutrient_values": {}, **error_result}
+
+
+def extract_all_nutrient_values(state: AgentState) -> AgentState:
+    """
+    Агент 2: Извлечение массовых долей для всех найденных питательных веществ
+    """
+    generator = state.get("generator")
+    text = state.get("text", "")
+    nutrients = state.get("nutrients", [])
+    nutrient_values = state.get("nutrient_values", {})
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {**state, "success": False, "error": "Generator not provided"}
+    
+    if not nutrients:
+        print("   ⏭️  [QA Агент 2/6] Пропущено (питательные вещества не найдены)")
+        return {**state, "nutrient_values": {}}
+    
+    print(f"   🤖 [QA Агент 2/6] Извлечение массовых долей для {len(nutrients)} веществ...")
+    
+    total_elapsed = 0.0
+    processed_count = 0
+    
+    for i, substance in enumerate(nutrients, 1):
+        if not isinstance(substance, str):
+            continue
+        
+        try:
+            print(f"   [{i}/{len(nutrients)}] Обработка вещества: {substance}...", end=" ", flush=True)
+            prompt = QA_NUTRIENT_PROMPT.format(text=text, substance=substance)
+            response, elapsed, _ = run_agent_generation(generator, prompt, 2, 256)
+            total_elapsed += elapsed
+            
+            # Извлекаем JSON из ответа
+            json_str = extract_json_from_response(response)
+            value = None
+            
+            if json_str:
+                try:
+                    parsed = parse_json_safe(json_str)
+                    # Формат: {"вещество": "N", "массовая доля": 20}
+                    if isinstance(parsed, dict) and "массовая доля" in parsed:
+                        value = parsed["массовая доля"]
+                except Exception as parse_err:
+                    print(f"⚠️ Ошибка парсинга: {parse_err}")
+            
+            nutrient_values[substance] = value
+            processed_count += 1
+            
+            # Выводим промпт и ответ для первого вещества, для остальных только краткую информацию
+            if i == 1:
+                print_agent_response(2, f"[Вещество {i}/{len(nutrients)}: {substance}]\n{response}", prompt)
+            else:
+                # Для остальных веществ выводим только результат
+                if value is not None:
+                    print(f"✓ значение: {value}")
+                else:
+                    print(f"⚠️ не найдено")
+            
+        except KeyboardInterrupt:
+            print(f"\n   ⚠️  Прервано пользователем при обработке вещества {substance}")
+            nutrient_values[substance] = None
+            raise
+        except Exception as e:
+            nutrient_values[substance] = None
+            print(f"❌ Ошибка: {e}")
+            # Продолжаем обработку остальных веществ даже при ошибке
+    
+    print(f"   ✓ Обработано веществ: {processed_count}/{len(nutrients)} ({total_elapsed:.2f}с)")
+    return {
+        **state,
+        "nutrient_values": nutrient_values,
+        "time": state.get("time", 0.0) + total_elapsed
+    }
+
+
+def extract_standard(state: AgentState) -> AgentState:
+    """
+    Агент 3: Извлечение стандарта
+    """
+    print("   🤖 [QA Агент 3/6] Извлечение стандарта...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    text = state.get("text", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {**state, "success": False, "error": "Generator not provided"}
+    
+    try:
+        prompt = QA_STANDARD_PROMPT.format(text=text)
+        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 256)
+        
+        # Извлекаем JSON из ответа
+        json_str = extract_json_from_response(response)
+        standard = None
+        
+        if json_str:
+            try:
+                parsed = parse_json_safe(json_str)
+                # Формат: {"параметр": "стандарт", "значение": "ТУ..."}
+                if isinstance(parsed, dict) and "параметр" in parsed and parsed["параметр"] == "стандарт" and "значение" in parsed:
+                    standard = parsed["значение"]
+            except:
+                pass
+        
+        print_agent_response(3, response, prompt)
+        
+        if standard is None:
+            print(f"⚠️ ({elapsed:.2f}с) - СТАНДАРТ НЕ НАЙДЕН")
+        else:
+            print(f"✓ ({elapsed:.2f}с)")
+        
+        return {
+            **state,
+            "standard": standard,
+            "time": state.get("time", 0.0) + elapsed
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_result = handle_agent_error(3, e, elapsed,
+                                         response if 'response' in locals() else None,
+                                         {"Исходный_текст": text})
+        return {**state, "standard": None, **error_result}
+
+
+def extract_grade(state: AgentState) -> AgentState:
+    """
+    Агент 4: Извлечение марки
+    """
+    print("   🤖 [QA Агент 4/6] Извлечение марки...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    text = state.get("text", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {**state, "success": False, "error": "Generator not provided"}
+    
+    try:
+        prompt = QA_GRADE_PROMPT.format(text=text)
+        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 256)
+        
+        # Извлекаем JSON из ответа
+        json_str = extract_json_from_response(response)
+        grade = None
+        
+        if json_str:
+            try:
+                parsed = parse_json_safe(json_str)
+                # Формат: {"параметр": "марка", "значение": "N7-P20-K30-S3"}
+                if isinstance(parsed, dict) and "параметр" in parsed and parsed["параметр"] == "марка" and "значение" in parsed:
+                    grade = parsed["значение"]
+            except:
+                pass
+        
+        print_agent_response(4, response, prompt)
+        
+        if grade is None:
+            print(f"⚠️ ({elapsed:.2f}с) - МАРКА НЕ НАЙДЕНА")
+        else:
+            print(f"✓ ({elapsed:.2f}с)")
+        
+        return {
+            **state,
+            "grade": grade,
+            "time": state.get("time", 0.0) + elapsed
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_result = handle_agent_error(4, e, elapsed,
+                                         response if 'response' in locals() else None,
+                                         {"Исходный_текст": text})
+        return {**state, "grade": None, **error_result}
+
+
+def extract_quantities(state: AgentState) -> AgentState:
+    """
+    Агент 5: Извлечение количеств (может быть несколько)
+    """
+    print("   🤖 [QA Агент 5/6] Извлечение количеств...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    text = state.get("text", "")
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {**state, "success": False, "error": "Generator not provided"}
+    
+    try:
+        prompt = QA_QUANTITY_PROMPT.format(text=text)
+        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        
+        # Извлекаем JSON из ответа
+        json_str = extract_json_from_response(response)
+        quantities = []
+        
+        if json_str:
+            try:
+                parsed = parse_json_safe(json_str)
+                if isinstance(parsed, dict):
+                    # Формат: {"параметр": "масса нетто единицы", "масса": 50, "единица": "кг"}
+                    # или {"параметр": "количество мешков", "количество": 1000, "единица": "шт"}
+                    if "параметр" in parsed:
+                        # Проверяем, что есть хотя бы одно значение (масса, количество или объем)
+                        if ("масса" in parsed and parsed["масса"] is not None) or \
+                           ("количество" in parsed and parsed["количество"] is not None) or \
+                           ("объем" in parsed and parsed["объем"] is not None):
+                            quantities.append(parsed)
+                elif isinstance(parsed, list):
+                    # Если это список объектов
+                    quantities = parsed
+            except:
+                pass
+        
+        print_agent_response(5, response, prompt)
+        
+        if not quantities:
+            print(f"⚠️ ({elapsed:.2f}с) - КОЛИЧЕСТВА НЕ НАЙДЕНЫ")
+        else:
+            print(f"✓ ({elapsed:.2f}с) - Найдено количеств: {len(quantities)}")
+        
+        return {
+            **state,
+            "quantities": quantities,
+            "time": state.get("time", 0.0) + elapsed
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_result = handle_agent_error(5, e, elapsed,
+                                         response if 'response' in locals() else None,
+                                         {"Исходный_текст": text})
+        return {**state, "quantities": [], **error_result}
+
+
+def assemble_qa_json(state: AgentState) -> AgentState:
+    """
+    Агент 6: Сборка финального JSON из всех извлеченных данных
+    """
+    print("   🤖 [QA Агент 6/6] Сборка финального JSON...", end=" ", flush=True)
+    
+    generator = state.get("generator")
+    nutrients = state.get("nutrients", [])
+    nutrient_values = state.get("nutrient_values", {})
+    standard = state.get("standard")
+    grade = state.get("grade")
+    quantities = state.get("quantities", [])
+    
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {**state, "success": False, "error": "Generator not provided"}
+    
+    try:
+        # Формируем массовые доли
+        mass_fractions = []
+        for substance in nutrients:
+            if isinstance(substance, str) and substance in nutrient_values:
+                value = nutrient_values[substance]
+                if value is not None:
+                    mass_fractions.append({
+                        "вещество": substance,
+                        "массовая доля": value
+                    })
+        
+        # Формируем прочие параметры
+        other_params = []
+        
+        # Добавляем количества
+        for qty in quantities:
+            if isinstance(qty, dict) and "параметр" in qty:
+                param_name = qty["параметр"]
+                
+                # Если есть поле "масса"
+                if "масса" in qty and qty["масса"] is not None:
+                    other_params.append({
+                        "параметр": param_name,
+                        "масса": qty["масса"],
+                        "единица": qty.get("единица")
+                    })
+                # Если есть поле "количество"
+                elif "количество" in qty and qty["количество"] is not None:
+                    other_params.append({
+                        "параметр": param_name,
+                        "количество": qty["количество"],
+                        "единица": qty.get("единица")
+                    })
+                # Если есть поле "объем"
+                elif "объем" in qty and qty["объем"] is not None:
+                    other_params.append({
+                        "параметр": param_name,
+                        "объем": qty["объем"],
+                        "единица": qty.get("единица")
+                    })
+                # Если есть поле "значение" (для стандарта и марки)
+                elif "значение" in qty:
+                    other_params.append({
+                        "параметр": param_name,
+                        "значение": qty["значение"]
+                    })
+        
+        # Добавляем стандарт
+        if standard:
+            other_params.append({
+                "параметр": "стандарт",
+                "значение": standard
+            })
+        
+        # Добавляем марку
+        if grade:
+            other_params.append({
+                "параметр": "марка",
+                "значение": grade
+            })
+        
+        # Формируем финальный JSON
+        result_json = {
+            "массовая доля": mass_fractions,
+            "прочее": other_params
+        }
+        
+        json_str = json.dumps(result_json, ensure_ascii=False, indent=2)
+        
+        # Проверяем валидность
+        is_valid = is_valid_json(json_str)
+        
+        print(f"✓")
+        
+        # Выводим результирующий JSON
+        print(f"\n   📄 Результирующий JSON:")
+        print(f"   {'─'*76}")
+        # Выводим JSON с отступами для читаемости
+        for line in json_str.split('\n'):
+            print(f"   {line}")
+        print(f"   {'─'*76}\n")
+        
+        return {
+            **state,
+            "json_result": json_str,
+            "json_result_raw": json_str,
+            "json_parsed": result_json,
+            "is_valid": is_valid,
+            "success": True,
+            "error": None
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_result = handle_agent_error(6, e, elapsed, None, {})
+        return {**state, "json_result": "", "json_parsed": {}, "is_valid": False, **error_result}
+
+
+def create_qa_workflow_graph():
+    """
+    Создает граф LangGraph для QA workflow:
+    1. Извлечение питательных веществ
+    2. Извлечение массовых долей для каждого вещества
+    3. Извлечение стандарта
+    4. Извлечение марки
+    5. Извлечение количеств
+    6. Сборка финального JSON
+    """
+    workflow = StateGraph(AgentState)
+    
+    # Добавляем узлы
+    workflow.add_node("extract_nutrients", extract_nutrients)
+    workflow.add_node("extract_all_nutrient_values", extract_all_nutrient_values)
+    workflow.add_node("extract_standard", extract_standard)
+    workflow.add_node("extract_grade", extract_grade)
+    workflow.add_node("extract_quantities", extract_quantities)
+    workflow.add_node("assemble_qa_json", assemble_qa_json)
+    
+    # Определяем граф
+    workflow.set_entry_point("extract_nutrients")
+    
+    # Последовательное выполнение всех агентов
+    workflow.add_edge("extract_nutrients", "extract_all_nutrient_values")
+    workflow.add_edge("extract_all_nutrient_values", "extract_standard")
+    workflow.add_edge("extract_standard", "extract_grade")
+    workflow.add_edge("extract_grade", "extract_quantities")
+    workflow.add_edge("extract_quantities", "assemble_qa_json")
+    workflow.add_edge("assemble_qa_json", END)
+    
+    return workflow.compile()
+
+
 def create_simple_4agents_graph():
     """
     Создает граф LangGraph для мультиагентной обработки с 4 агентами:
@@ -772,18 +1236,30 @@ def create_multi_agent_graph(mode: str = "simple_4agents"):
     
     Args:
         mode: режим мультиагентного подхода
-            - "simple_4agents": 4 агента (извлечение числовых фрагментов, массовые доли, прочие параметры, JSON)
-            - "critic_3agents": 3 агента (генератор, критик, исправитель)
     
     Returns:
         Скомпилированный граф
+    
+    Raises:
+        ValueError: если режим не найден или функция создания графа не найдена
     """
-    if mode == "simple_4agents":
-        return create_simple_4agents_graph()
-    elif mode == "critic_3agents":
-        return create_critic_3agents_graph()
-    else:
-        raise ValueError(f"Неизвестный режим мультиагентного подхода: {mode}")
+    from workflow_config import get_workflow_config
+    
+    # Получаем конфигурацию workflow
+    config = get_workflow_config(mode)
+    graph_creator_name = config.get("graph_creator")
+    
+    if not graph_creator_name:
+        raise ValueError(f"Для режима {mode} не указана функция создания графа")
+    
+    # Получаем функцию создания графа по имени
+    graph_creator = globals().get(graph_creator_name)
+    
+    if graph_creator is None:
+        raise ValueError(f"Функция {graph_creator_name} не найдена в multi_agent_graph.py для режима {mode}")
+    
+    # Вызываем функцию создания графа
+    return graph_creator()
 
 
 def process_with_multi_agent(
@@ -806,6 +1282,7 @@ def process_with_multi_agent(
     """
     graph = create_multi_agent_graph(mode=multi_agent_mode)
     
+    # Инициализируем базовое состояние
     initial_state: AgentState = {
         "text": text,
         "numeric_fragments": "",
@@ -819,7 +1296,18 @@ def process_with_multi_agent(
         "success": False,
         "error": None,
         "time": 0.0,
-        "generator": generator
+        "generator": generator,
+        # Поля для critic_3agents
+        "prompt": "",
+        "initial_response": "",
+        "critic_analysis": "",
+        "corrected_response": "",
+        # Поля для qa_workflow
+        "nutrients": [],
+        "nutrient_values": {},
+        "standard": None,
+        "grade": None,
+        "quantities": []
     }
     
     try:
