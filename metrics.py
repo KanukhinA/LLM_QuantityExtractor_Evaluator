@@ -47,12 +47,20 @@ def normalize_value(value: Any) -> Any:
     return value
 
 
-def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) -> Tuple[float, int, List[str], Dict[str, float]]:
+def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any], 
+                       text_index: int = None, text: str = None, response: str = None) -> Tuple[float, int, List[Dict[str, Any]], Dict[str, float]]:
     """
     Сравнивает группу "массовая доля" между предсказанием и истинным значением.
     
+    Args:
+        predicted: предсказанный JSON
+        ground_truth: истинный JSON
+        text_index: индекс текста (для ошибок)
+        text: исходный текст (для ошибок)
+        response: ответ модели (для ошибок)
+    
     Returns:
-        (score, total_items, errors, metrics): точность, общее количество элементов, список ошибок, метрики (precision, recall, f1)
+        (score, total_items, errors, metrics): точность, общее количество элементов, список ошибок (словари), метрики (precision, recall, f1)
     """
     pred_mass = predicted.get("массовая доля", [])
     true_mass = ground_truth.get("массовая доля", [])
@@ -62,54 +70,142 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) 
     if not isinstance(true_mass, list):
         true_mass = []
     
-    # Создаем словари для быстрого поиска по веществу
-    pred_dict = {}
+    # Нормализуем и фильтруем записи
+    pred_entries = []
     for item in pred_mass:
         if isinstance(item, dict) and "вещество" in item:
             substance = item.get("вещество", "")
-            pred_dict[substance] = normalize_value(item.get("массовая доля"))
+            value = normalize_value(item.get("массовая доля"))
+            pred_entries.append((substance, value))
     
-    true_dict = {}
+    true_entries = []
     for item in true_mass:
         if isinstance(item, dict) and "вещество" in item:
             substance = item.get("вещество", "")
-            true_dict[substance] = normalize_value(item.get("массовая доля"))
+            value = normalize_value(item.get("массовая доля"))
+            true_entries.append((substance, value))
     
-    # Вычисляем метрики
-    all_substances = set(list(pred_dict.keys()) + list(true_dict.keys()))
+    # Сопоставляем записи (greedy matching)
+    # Стратегия: для каждой записи из ground truth ищем лучшее совпадение среди всех предсказаний
+    # Это позволяет правильно обрабатывать случаи, когда в предсказании несколько записей с одним веществом
+    matched_pred_indices = set()
+    matched_true_indices = set()
     tp = 0  # True Positive: правильно извлечено
-    fp = 0  # False Positive: извлечено, но неправильно
-    fn = 0  # False Negative: не извлечено, но должно было быть
+    
+    # Проходим по всем записям из ground truth и ищем совпадения в предсказаниях
+    for true_idx, (true_subst, true_val) in enumerate(true_entries):
+        if true_idx in matched_true_indices:
+            continue
+        
+        # Нормализуем значения для сравнения
+        true_val_norm = normalize_none_lists(true_val)
+        
+        # Ищем совпадение в предсказаниях (только среди несопоставленных)
+        best_match_idx = None
+        for pred_idx, (pred_subst, pred_val) in enumerate(pred_entries):
+            if pred_idx in matched_pred_indices:
+                continue
+            
+            # Проверяем совпадение вещества
+            if pred_subst != true_subst:
+                continue
+            
+            # Нормализуем значения для сравнения
+            pred_val_norm = normalize_none_lists(pred_val)
+            
+            # Проверяем совпадение: вещество и значение должны совпадать
+            if pred_val_norm == true_val_norm:
+                # Нашли точное совпадение
+                best_match_idx = pred_idx
+                break
+        
+        if best_match_idx is not None:
+            # Нашли совпадение
+            matched_pred_indices.add(best_match_idx)
+            matched_true_indices.add(true_idx)
+            tp += 1
+    
+    # FP: записи из предсказания, которые не были сопоставлены
+    fp = len(pred_entries) - len(matched_pred_indices)
+    
+    # FN: записи из ground truth, которые не были сопоставлены
+    # НО: если для вещества есть хотя бы одно несопоставленное предсказание, это FP, а не FN
+    # FN учитывается только для веществ, которые вообще не были предсказаны
+    substances_with_predictions = set(pred_subst for pred_idx, (pred_subst, pred_val) in enumerate(pred_entries) 
+                                     if pred_idx not in matched_pred_indices)
+    
+    fn = 0
+    for true_idx, (true_subst, true_val) in enumerate(true_entries):
+        if true_idx not in matched_true_indices:
+            # FN учитывается только если для этого вещества нет несопоставленных предсказаний
+            # (т.е. модель вообще не пыталась извлечь это вещество)
+            if true_subst not in substances_with_predictions:
+                fn += 1
+    
+    # Формируем список ошибок (в виде словарей)
     errors = []
     
-    for substance in all_substances:
-        pred_val = pred_dict.get(substance)
-        true_val = true_dict.get(substance)
-        
-        # Нормализуем значения перед сравнением (чтобы [None, None] == None == [None])
-        pred_val_normalized = normalize_none_lists(pred_val)
-        true_val_normalized = normalize_none_lists(true_val)
-        
-        # Определяем, есть ли значение в предсказании и в истине
-        pred_exists = pred_val is not None
-        true_exists = true_val is not None
-        
-        if pred_val_normalized == true_val_normalized:
-            if pred_exists and true_exists:
-                tp += 1  # Правильно извлечено
-        else:
-            if pred_exists and true_exists:
-                fp += 1  # Извлечено, но неправильно
-                errors.append(f"Вещество {substance}: предсказано {pred_val}, истина {true_val}")
-            elif pred_exists and not true_exists:
-                fp += 1  # Извлечено, но не должно было быть
-                errors.append(f"Вещество {substance}: предсказано {pred_val}, истина отсутствует")
-            elif not pred_exists and true_exists:
-                fn += 1  # Не извлечено, но должно было быть
-                errors.append(f"Вещество {substance}: предсказано отсутствует, истина {true_val}")
+    # Создаем словарь для быстрого поиска ground truth по веществу (только несопоставленные)
+    # Для каждого вещества храним список значений из ground truth
+    true_by_substance = {}  # {substance: [true_val, ...]}
+    for true_idx, (true_subst, true_val) in enumerate(true_entries):
+        if true_idx not in matched_true_indices:
+            if true_subst not in true_by_substance:
+                true_by_substance[true_subst] = []
+            true_by_substance[true_subst].append(true_val)
+    
+    # Создаем словарь несопоставленных предсказаний по веществу
+    fp_by_substance = {}  # {substance: [pred_val, ...]}
+    for pred_idx, (pred_subst, pred_val) in enumerate(pred_entries):
+        if pred_idx not in matched_pred_indices:
+            if pred_subst not in fp_by_substance:
+                fp_by_substance[pred_subst] = []
+            fp_by_substance[pred_subst].append(pred_val)
+    
+    # FP ошибки: несопоставленные предсказания
+    # Если для вещества есть ground truth, показываем его в ошибке
+    for pred_idx, (pred_subst, pred_val) in enumerate(pred_entries):
+        if pred_idx not in matched_pred_indices:
+            # Проверяем, есть ли для этого вещества несопоставленная запись в ground truth
+            if pred_subst in true_by_substance and true_by_substance[pred_subst]:
+                # Есть ground truth для этого вещества - показываем первое доступное значение
+                # (одно и то же значение может быть показано для нескольких FP ошибок)
+                true_val = true_by_substance[pred_subst][0]
+                error_msg = f"Вещество {pred_subst}: предсказано {pred_val}, истина {true_val}"
+            else:
+                # Нет ground truth для этого вещества
+                error_msg = f"Вещество {pred_subst}: предсказано {pred_val}, истина отсутствует"
+            
+            error_dict = {"error": error_msg}
+            if text_index is not None:
+                error_dict["text_index"] = text_index
+            if text is not None:
+                error_dict["text"] = text
+            if response is not None:
+                error_dict["response"] = response
+            errors.append(error_dict)
+    
+    # FN ошибки: оставшиеся несопоставленные ground truth
+    # Показываем только те, для которых НЕТ несопоставленных предсказаний
+    # (если есть несопоставленные предсказания, ground truth уже была показана в FP ошибках)
+    for true_idx, (true_subst, true_val) in enumerate(true_entries):
+        if true_idx not in matched_true_indices:
+            # Показываем FN только если для этого вещества нет несопоставленных предсказаний
+            if true_subst not in fp_by_substance:
+                error_dict = {
+                    "error": f"Вещество {true_subst}: предсказано отсутствует, истина {true_val}"
+                }
+                if text_index is not None:
+                    error_dict["text_index"] = text_index
+                if text is not None:
+                    error_dict["text"] = text
+                if response is not None:
+                    error_dict["response"] = response
+                errors.append(error_dict)
     
     # Вычисляем метрики
-    total = len(all_substances)
+    # total - это общее количество уникальных записей (TP + FP + FN)
+    total = tp + fp + fn
     score = tp / total if total > 0 else 0.0
     
     # Precision = TP / (TP + FP) - доля правильных среди всех извлеченных
@@ -133,12 +229,20 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) 
     return score, total, errors, metrics
 
 
-def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) -> Tuple[float, int, List[str], Dict[str, float]]:
+def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
+                   text_index: int = None, text: str = None, response: str = None) -> Tuple[float, int, List[Dict[str, Any]], Dict[str, float]]:
     """
     Сравнивает группу "прочее" между предсказанием и истинным значением.
     
+    Args:
+        predicted: предсказанный JSON
+        ground_truth: истинный JSON
+        text_index: индекс текста (для ошибок)
+        text: исходный текст (для ошибок)
+        response: ответ модели (для ошибок)
+    
     Returns:
-        (score, total_items, errors, metrics): точность, общее количество элементов, список ошибок, метрики (precision, recall, f1)
+        (score, total_items, errors, metrics): точность, общее количество элементов, список ошибок (словари), метрики (precision, recall, f1)
     """
     pred_prochee = predicted.get("прочее", [])
     true_prochee = ground_truth.get("прочее", [])
@@ -148,8 +252,9 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) -> 
     if not isinstance(true_prochee, list):
         true_prochee = []
     
-    # Создаем словари для быстрого поиска по параметру
-    pred_dict = {}
+    # Нормализуем и фильтруем записи
+    # Для "прочее" запись состоит из (параметр, значение, единица)
+    pred_entries = []
     for item in pred_prochee:
         if isinstance(item, dict) and "параметр" in item:
             param = item.get("параметр", "")
@@ -159,10 +264,12 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) -> 
                 if key in item:
                     value = normalize_value(item[key])
                     break
+            # Извлекаем единицу, если есть
+            unit = item.get("единица", None)
             if value is not None:
-                pred_dict[param] = value
+                pred_entries.append((param, value, unit))
     
-    true_dict = {}
+    true_entries = []
     for item in true_prochee:
         if isinstance(item, dict) and "параметр" in item:
             param = item.get("параметр", "")
@@ -171,44 +278,123 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) -> 
                 if key in item:
                     value = normalize_value(item[key])
                     break
+            # Извлекаем единицу, если есть
+            unit = item.get("единица", None)
             if value is not None:
-                true_dict[param] = value
+                true_entries.append((param, value, unit))
     
-    # Вычисляем метрики
-    all_params = set(list(pred_dict.keys()) + list(true_dict.keys()))
+    # Сопоставляем записи (greedy matching)
+    # Каждая запись - это (параметр, значение, единица)
+    # Сопоставляем записи, где параметр, значение и единица совпадают
+    matched_pred_indices = set()
+    matched_true_indices = set()
     tp = 0  # True Positive: правильно извлечено
-    fp = 0  # False Positive: извлечено, но неправильно
-    fn = 0  # False Negative: не извлечено, но должно было быть
+    
+    # Проходим по всем предсказаниям и ищем совпадения в ground truth
+    for pred_idx, (pred_param, pred_val, pred_unit) in enumerate(pred_entries):
+        if pred_idx in matched_pred_indices:
+            continue
+        
+        # Нормализуем значения для сравнения
+        pred_val_norm = normalize_none_lists(pred_val)
+        
+        # Ищем совпадение в ground truth
+        for true_idx, (true_param, true_val, true_unit) in enumerate(true_entries):
+            if true_idx in matched_true_indices:
+                continue
+            
+            # Нормализуем значения для сравнения
+            true_val_norm = normalize_none_lists(true_val)
+            
+            # Проверяем совпадение: параметр, значение и единица должны совпадать
+            if pred_param == true_param and pred_val_norm == true_val_norm and pred_unit == true_unit:
+                # Нашли совпадение
+                matched_pred_indices.add(pred_idx)
+                matched_true_indices.add(true_idx)
+                tp += 1
+                break
+    
+    # FP: записи из предсказания, которые не были сопоставлены
+    fp = len(pred_entries) - len(matched_pred_indices)
+    
+    # FN: записи из ground truth, которые не были сопоставлены
+    # НО: если для параметра есть хотя бы одно несопоставленное предсказание, это FP, а не FN
+    # FN учитывается только для параметров, которые вообще не были предсказаны
+    params_with_predictions = set(pred_param for pred_idx, (pred_param, pred_val, pred_unit) in enumerate(pred_entries) 
+                                  if pred_idx not in matched_pred_indices)
+    
+    fn = 0
+    for true_idx, (true_param, true_val, true_unit) in enumerate(true_entries):
+        if true_idx not in matched_true_indices:
+            # FN учитывается только если для этого параметра нет несопоставленных предсказаний
+            # (т.е. модель вообще не пыталась извлечь этот параметр)
+            if true_param not in params_with_predictions:
+                fn += 1
+    
+    # Формируем список ошибок (в виде словарей)
     errors = []
     
-    for param in all_params:
-        pred_val = pred_dict.get(param)
-        true_val = true_dict.get(param)
-        
-        # Нормализуем значения перед сравнением (чтобы [None, None] == None == [None])
-        pred_val_normalized = normalize_none_lists(pred_val)
-        true_val_normalized = normalize_none_lists(true_val)
-        
-        # Определяем, есть ли значение в предсказании и в истине
-        pred_exists = pred_val is not None
-        true_exists = true_val is not None
-        
-        if pred_val_normalized == true_val_normalized:
-            if pred_exists and true_exists:
-                tp += 1  # Правильно извлечено
-        else:
-            if pred_exists and true_exists:
-                fp += 1  # Извлечено, но неправильно
-                errors.append(f"Параметр {param}: предсказано {pred_val}, истина {true_val}")
-            elif pred_exists and not true_exists:
-                fp += 1  # Извлечено, но не должно было быть
-                errors.append(f"Параметр {param}: предсказано {pred_val}, истина отсутствует")
-            elif not pred_exists and true_exists:
-                fn += 1  # Не извлечено, но должно было быть
-                errors.append(f"Параметр {param}: предсказано отсутствует, истина {true_val}")
+    # Создаем словарь для быстрого поиска ground truth по параметру (только несопоставленные)
+    true_by_param = {}  # {param: [(true_val, true_unit), ...]}
+    for true_idx, (true_param, true_val, true_unit) in enumerate(true_entries):
+        if true_idx not in matched_true_indices:
+            if true_param not in true_by_param:
+                true_by_param[true_param] = []
+            true_by_param[true_param].append((true_val, true_unit))
+    
+    # Создаем словарь несопоставленных предсказаний по параметру
+    fp_by_param = {}  # {param: [(pred_val, pred_unit), ...]}
+    for pred_idx, (pred_param, pred_val, pred_unit) in enumerate(pred_entries):
+        if pred_idx not in matched_pred_indices:
+            if pred_param not in fp_by_param:
+                fp_by_param[pred_param] = []
+            fp_by_param[pred_param].append((pred_val, pred_unit))
+    
+    # FP ошибки: несопоставленные предсказания
+    # Если для параметра есть ground truth, показываем его в ошибке
+    for pred_idx, (pred_param, pred_val, pred_unit) in enumerate(pred_entries):
+        if pred_idx not in matched_pred_indices:
+            unit_str = f", единица: {pred_unit}" if pred_unit else ""
+            # Проверяем, есть ли для этого параметра несопоставленная запись в ground truth
+            if pred_param in true_by_param and true_by_param[pred_param]:
+                # Есть ground truth для этого параметра - показываем первое доступное значение
+                true_val, true_unit_gt = true_by_param[pred_param][0]
+                true_unit_str = f", единица: {true_unit_gt}" if true_unit_gt else ""
+                error_msg = f"Параметр {pred_param}: предсказано {pred_val}{unit_str}, истина {true_val}{true_unit_str}"
+            else:
+                # Нет ground truth для этого параметра
+                error_msg = f"Параметр {pred_param}: предсказано {pred_val}{unit_str}, истина отсутствует"
+            
+            error_dict = {"error": error_msg}
+            if text_index is not None:
+                error_dict["text_index"] = text_index
+            if text is not None:
+                error_dict["text"] = text
+            if response is not None:
+                error_dict["response"] = response
+            errors.append(error_dict)
+    
+    # FN ошибки: оставшиеся несопоставленные ground truth
+    # Показываем только те, для которых НЕТ несопоставленных предсказаний
+    for true_idx, (true_param, true_val, true_unit) in enumerate(true_entries):
+        if true_idx not in matched_true_indices:
+            # Показываем FN только если для этого параметра нет несопоставленных предсказаний
+            if true_param not in fp_by_param:
+                unit_str = f", единица: {true_unit}" if true_unit else ""
+                error_dict = {
+                    "error": f"Параметр {true_param}: предсказано отсутствует, истина {true_val}{unit_str}"
+                }
+                if text_index is not None:
+                    error_dict["text_index"] = text_index
+                if text is not None:
+                    error_dict["text"] = text
+                if response is not None:
+                    error_dict["response"] = response
+                errors.append(error_dict)
     
     # Вычисляем метрики
-    total = len(all_params)
+    # total - это общее количество уникальных записей (TP + FP + FN)
+    total = tp + fp + fn
     score = tp / total if total > 0 else 0.0
     
     # Precision = TP / (TP + FP) - доля правильных среди всех извлеченных
@@ -233,13 +419,17 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any]) -> 
 
 
 def calculate_quality_metrics(predictions: List[Dict[str, Any]], 
-                              ground_truths: List[Dict[str, Any]]) -> Dict[str, Any]:
+                              ground_truths: List[Dict[str, Any]],
+                              texts: List[str] = None,
+                              responses: List[str] = None) -> Dict[str, Any]:
     """
     Вычисляет метрики качества для всех предсказаний.
     
     Args:
         predictions: список распарсенных JSON предсказаний
         ground_truths: список истинных JSON значений
+        texts: список исходных текстов (для ошибок)
+        responses: список ответов моделей (для ошибок)
     
     Returns:
         словарь с метриками
@@ -260,9 +450,15 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
     prochee_fp_total = 0
     prochee_fn_total = 0
     
-    for pred, true_val in zip(predictions, ground_truths):
+    for idx, (pred, true_val) in enumerate(zip(predictions, ground_truths)):
+        # Получаем текст и ответ для текущего индекса
+        text = texts[idx] if texts and idx < len(texts) else None
+        response = responses[idx] if responses and idx < len(responses) else None
+        
         # Массовая доля
-        score_mass, total_mass, errors_mass, metrics_mass = compare_mass_dolya(pred, true_val)
+        score_mass, total_mass, errors_mass, metrics_mass = compare_mass_dolya(
+            pred, true_val, text_index=idx, text=text, response=response
+        )
         if total_mass > 0:
             mass_dolya_scores.append(score_mass)
             all_mass_errors.extend(errors_mass)
@@ -271,7 +467,9 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
             mass_fn_total += metrics_mass["fn"]
         
         # Прочее
-        score_prochee, total_prochee, errors_prochee, metrics_prochee = compare_prochee(pred, true_val)
+        score_prochee, total_prochee, errors_prochee, metrics_prochee = compare_prochee(
+            pred, true_val, text_index=idx, text=text, response=response
+        )
         if total_prochee > 0:
             prochee_scores.append(score_prochee)
             all_prochee_errors.extend(errors_prochee)
@@ -294,26 +492,24 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
     
     return {
         "массовая доля": {
-            "средняя_точность": avg_mass_dolya,
+            "accuracy": avg_mass_dolya,
             "precision": mass_precision,
             "recall": mass_recall,
             "f1": mass_f1,
             "tp": mass_tp_total,
             "fp": mass_fp_total,
             "fn": mass_fn_total,
-            "ошибки": all_mass_errors[:10],  # Первые 10 ошибок для примера (в JSON)
-            "все_ошибки": all_mass_errors  # Все ошибки для сохранения в отдельный файл
+            "все_ошибки": all_mass_errors  # Все ошибки для сохранения в структурированном виде в model_evaluator.py
         },
         "прочее": {
-            "средняя_точность": avg_prochee,
+            "accuracy": avg_prochee,
             "precision": prochee_precision,
             "recall": prochee_recall,
             "f1": prochee_f1,
             "tp": prochee_tp_total,
             "fp": prochee_fp_total,
             "fn": prochee_fn_total,
-            "ошибки": all_prochee_errors[:10],  # Первые 10 ошибок для примера (в JSON)
-            "все_ошибки": all_prochee_errors  # Все ошибки для сохранения в отдельный файл
+            "все_ошибки": all_prochee_errors  # Все ошибки для сохранения в структурированном виде в model_evaluator.py
         }
     }
 

@@ -53,7 +53,7 @@ def check_gemini_api(gemini_api_key: str = None) -> Tuple[bool, str]:
 
 def analyze_errors_with_gemini(
     model_name: str,
-    parsing_errors: List[str],
+    parsing_errors: List[Dict[str, Any]],
     quality_metrics: Dict[str, Any],
     hyperparameters: Dict[str, Any],
     prompt_full_text: str = None,
@@ -64,7 +64,7 @@ def analyze_errors_with_gemini(
     
     Args:
         model_name: название протестированной модели
-        parsing_errors: список ошибок парсинга JSON
+        parsing_errors: список словарей с ошибками: [{"text_index": int, "text": str, "error": str, "response": str}, ...]
         quality_metrics: метрики качества ответов
         hyperparameters: гиперпараметры модели
         prompt_full_text: полный текст использованного промпта
@@ -91,12 +91,49 @@ def analyze_errors_with_gemini(
     # Формируем промпт для анализа (один раз, вне цикла попыток)
     prompt_section = ""
     if prompt_full_text:
-        # Обрезаем промпт для анализа, если он слишком длинный
-        prompt_preview = prompt_full_text[:2000] if len(prompt_full_text) > 2000 else prompt_full_text
+        # Передаем полный промпт без обрезки
         prompt_section = f"""
-Использованный промпт (первые {len(prompt_preview)} символов из {len(prompt_full_text)}):
-{prompt_preview}
+Использованный промпт (полный, {len(prompt_full_text)} символов):
+{prompt_full_text}
 """
+    
+    # Формируем примеры ошибок с исходными текстами
+    errors_section = ""
+    if parsing_errors:
+        # parsing_errors - список записей с полями {text_index, text, response, errors}
+        # Берем до 3 примеров текстов с ошибками
+        example_errors = parsing_errors[:3]
+        
+        if example_errors:
+            errors_section = "\nПримеры ошибок с исходными текстами:\n"
+            for idx, error_entry in enumerate(example_errors, 1):
+                errors_section += f"\n--- Пример {idx} ---\n"
+                errors_section += f"Исходный текст:\n{error_entry.get('text', '')}\n\n"
+                errors_list = error_entry.get('errors', [])
+                if errors_list:
+                    errors_section += f"Ошибки:\n"
+                    for err in errors_list:
+                        errors_section += f"- {err}\n"
+                if error_entry.get('response'):
+                    errors_section += f"\nОтвет модели: {error_entry.get('response', '')}\n"
+        
+        # Формируем список из до 10 ошибок (только описания ошибок)
+        error_descriptions = []
+        for error_entry in parsing_errors:
+            text_idx = error_entry.get('text_index', 0)
+            for err in error_entry.get('errors', []):
+                error_descriptions.append(f"Текст #{text_idx}: {err}")
+                if len(error_descriptions) >= 10:
+                    break
+            if len(error_descriptions) >= 10:
+                break
+        
+        if error_descriptions:
+            errors_section += f"\n\nСписок ошибок (показано {len(error_descriptions)}):\n"
+            for error_desc in error_descriptions:
+                errors_section += f"- {error_desc}\n"
+    else:
+        errors_section = "\nОшибок парсинга не обнаружено.\n"
     
     prompt = f"""
 Ты — эксперт по оценке качества работы языковых моделей. Проанализируй результаты тестирования модели и дай рекомендации по улучшению.
@@ -107,12 +144,9 @@ def analyze_errors_with_gemini(
 {json.dumps(hyperparameters, indent=2, ensure_ascii=False)}
 {prompt_section}
 Метрики качества:
-- Массовая доля: средняя точность {quality_metrics.get('массовая доля', {}).get('средняя_точность', 0):.2%}, Precision: {quality_metrics.get('массовая доля', {}).get('precision', 0):.2%}, Recall: {quality_metrics.get('массовая доля', {}).get('recall', 0):.2%}, F1: {quality_metrics.get('массовая доля', {}).get('f1', 0):.2%}
-- Прочее: средняя точность {quality_metrics.get('прочее', {}).get('средняя_точность', 0):.2%}, Precision: {quality_metrics.get('прочее', {}).get('precision', 0):.2%}, Recall: {quality_metrics.get('прочее', {}).get('recall', 0):.2%}, F1: {quality_metrics.get('прочее', {}).get('f1', 0):.2%}
-
-Ошибки парсинга JSON (5 случайных примеров из {len(parsing_errors)}):
-{chr(10).join(random.sample(parsing_errors, min(5, len(parsing_errors))) if len(parsing_errors) > 5 else (parsing_errors if parsing_errors else ['Ошибок парсинга не обнаружено']))}
-
+- Массовая доля: Accuracy: {quality_metrics.get('массовая доля', {}).get('accuracy', 0):.2%}, Precision: {quality_metrics.get('массовая доля', {}).get('precision', 0):.2%}, Recall: {quality_metrics.get('массовая доля', {}).get('recall', 0):.2%}, F1: {quality_metrics.get('массовая доля', {}).get('f1', 0):.2%}
+- Прочее: Accuracy: {quality_metrics.get('прочее', {}).get('accuracy', 0):.2%}, Precision: {quality_metrics.get('прочее', {}).get('precision', 0):.2%}, Recall: {quality_metrics.get('прочее', {}).get('recall', 0):.2%}, F1: {quality_metrics.get('прочее', {}).get('f1', 0):.2%}
+{errors_section}
 Проанализируй:
 1. Характерные ошибки модели
 2. Причины ошибок парсинга JSON

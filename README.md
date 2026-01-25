@@ -389,6 +389,14 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 
 - `GROUND_TRUTH_PATH` - путь к файлу с ground truth (опционально, по умолчанию используется колонка `json_parsed` из датасета)
 - `OUTPUT_DIR` - директория для сохранения результатов (по умолчанию `results/`)
+- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE"`):
+  - `"FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE"` - промпт с примером текста и ответа (по умолчанию)
+  - `"FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"` - базовый промпт без примера
+  
+  **Настройка в `config.py`:**
+  ```python
+  PROMPT_TEMPLATE_NAME = "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"  # или любая другая переменная из prompt_config.py
+  ```
 
 ### API ключи
 

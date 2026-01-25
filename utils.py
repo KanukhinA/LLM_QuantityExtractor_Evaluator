@@ -5,15 +5,111 @@ import json
 import re
 import ast
 import codecs
-from typing import Dict, Any
-from prompt_config import FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE
+import os
+import inspect
+import warnings
+from typing import Dict, Any, Optional
+import prompt_config
+from config import PROMPT_TEMPLATE_NAME, DATASET_FILENAME
+
+
+def find_dataset_path(dataset_filename: str = None) -> str:
+    """
+    Ищет файл датасета в различных возможных местах.
+    
+    Args:
+        dataset_filename: имя файла датасета (по умолчанию из config.DATASET_FILENAME)
+    
+    Returns:
+        Абсолютный путь к файлу датасета
+    """
+    if dataset_filename is None:
+        dataset_filename = DATASET_FILENAME
+    
+    # Сначала проверяем переменную окружения (приоритет 1)
+    if os.environ.get("DATASET_PATH"):
+        return os.path.abspath(os.environ.get("DATASET_PATH"))
+    
+    # Пробуем несколько вариантов расположения файла
+    config_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(config_dir)  # Родительская директория SmallLLMEvaluator
+    cwd = os.getcwd()  # Текущая рабочая директория
+    
+    # Определяем директорию запуска скрипта (если запускается через %run в Jupyter)
+    # Пытаемся найти директорию, где находится run_all_models.py или main.py
+    script_dir = cwd
+    try:
+        # Пытаемся найти директорию вызывающего скрипта
+        frame = inspect.currentframe()
+        while frame:
+            frame = frame.f_back
+            if frame and frame.f_globals.get('__file__'):
+                script_file = frame.f_globals['__file__']
+                script_dir = os.path.dirname(os.path.abspath(script_file))
+                break
+    except:
+        pass
+    
+    # Список возможных путей для поиска
+    possible_paths = [
+        # Вариант 1: В родительской директории SmallLLMEvaluator (../data/)
+        os.path.join(base_dir, "data", dataset_filename),
+        # Вариант 2: На уровень выше от родительской директории (../../data/)
+        os.path.join(base_dir, "..", "data", dataset_filename),
+        # Вариант 3: В директории запуска скрипта (если data рядом со скриптом)
+        os.path.join(script_dir, "data", dataset_filename),
+        # Вариант 4: На уровень выше от директории запуска скрипта
+        os.path.join(script_dir, "..", "data", dataset_filename),
+        # Вариант 5: Относительно текущей рабочей директории
+        os.path.join(cwd, "data", dataset_filename),
+        # Вариант 6: На уровень выше от текущей рабочей директории
+        os.path.join(cwd, "..", "data", dataset_filename),
+        # Вариант 7: В директории config (на случай, если data рядом с SmallLLMEvaluator)
+        os.path.join(config_dir, "..", "data", dataset_filename),
+        # Вариант 8: Относительный путь (data/results_var3.xlsx)
+        os.path.join("data", dataset_filename),
+    ]
+    
+    # Ищем первый существующий файл
+    dataset_path = None
+    checked_paths = []
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        checked_paths.append(abs_path)
+        if os.path.exists(abs_path):
+            dataset_path = abs_path
+            break
+    
+    # Если не нашли, используем первый вариант как дефолтный (для вывода ошибки)
+    if dataset_path is None:
+        dataset_path = os.path.abspath(possible_paths[0])
+    
+    # Проверяем, что файл найден, и выводим предупреждение, если нет
+    if not os.path.exists(dataset_path):
+        paths_list = "\n".join([f"   {i+1}. {path}" for i, path in enumerate(checked_paths)])
+        warnings.warn(
+            f"⚠️  Датасет не найден по пути: {dataset_path}\n"
+            f"   Проверенные пути:\n{paths_list}\n"
+            f"   Текущая рабочая директория: {cwd}\n"
+            f"   Директория config.py: {config_dir}\n"
+            f"   Родительская директория: {base_dir}\n"
+            f"   Директория запуска скрипта: {script_dir}\n"
+            f"   Убедитесь, что файл {dataset_filename} находится в папке data/\n"
+            f"   Или установите переменную окружения: export DATASET_PATH=/path/to/data/{dataset_filename}",
+            UserWarning
+        )
+    
+    return dataset_path
 
 
 def build_prompt3(text: str) -> str:
     """
     Генерация промпта для конкретного текста
+    
+    Использует промпт, указанный в config.PROMPT_TEMPLATE_NAME (название переменной из prompt_config.py)
     """
-    return FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE.format(text=text)
+    prompt_template = getattr(prompt_config, PROMPT_TEMPLATE_NAME)
+    return prompt_template.format(text=text)
 
 
 def _extract_json_like(s: str) -> str:

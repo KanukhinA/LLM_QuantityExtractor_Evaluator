@@ -9,7 +9,8 @@ from model_evaluator import ModelEvaluator
 import model_loaders as ml
 import model_loaders_api as ml_api
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
-from config import DATASET_PATH, GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
+from config import GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
+from utils import find_dataset_path
 
 # Настройка логирования
 log_file = os.path.join(OUTPUT_DIR, "model_errors.log")
@@ -39,7 +40,7 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
         verbose: если True, выводит подробную информацию (текст и ответы) в консоль
     """
     evaluator = ModelEvaluator(
-        dataset_path=DATASET_PATH,
+        dataset_path=find_dataset_path(),
         ground_truth_path=GROUND_TRUTH_PATH,
         output_dir=OUTPUT_DIR
     )
@@ -92,8 +93,11 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
         print(f"Статистика для анализа:")
         print(f"   • Ошибок парсинга: {len(parsing_errors)}")
         if quality_metrics:
-            mass_errors = len(quality_metrics.get('массовая доля', {}).get('ошибки', []))
-            prochee_errors = len(quality_metrics.get('прочее', {}).get('ошибки', []))
+            # Используем 'все_ошибки' для правильного подсчета всех ошибок
+            mass_dolya = quality_metrics.get('массовая доля', {})
+            mass_errors = len(mass_dolya.get('все_ошибки', mass_dolya.get('ошибки', [])))
+            prochee = quality_metrics.get('прочее', {})
+            prochee_errors = len(prochee.get('все_ошибки', prochee.get('ошибки', [])))
             print(f"   • Ошибок качества 'массовая доля': {mass_errors}")
             print(f"   • Ошибок качества 'прочее': {prochee_errors}")
         print(f"   • Гиперпараметры: {len(hyperparameters)} параметров")
@@ -120,6 +124,9 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
             gpu_memory_during_inference = result.get("gpu_memory_during_inference_gb", 0)
             api_model = result.get("api_model", False)
             multi_agent_mode = result.get("multi_agent_mode")
+            prompt_full_text = result.get("prompt_full_text")
+            prompt_info = result.get("prompt_info")
+            prompt_template = result.get("prompt_template")
             
             analysis_data = {
                 "model_name": model_config["name"],
@@ -128,6 +135,11 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
                 "model_used": gemini_analysis.get("model_used", "gemini-2.5-flash"),
                 "parsing_errors_count": len(parsing_errors),
                 "hyperparameters": hyperparameters,
+                "prompts": {
+                    "prompt_template": prompt_template,
+                    "prompt_full_text": prompt_full_text,
+                    "prompt_info": prompt_info
+                },
                 "system_info": {
                     "api_model": api_model,
                     "multi_agent_mode": multi_agent_mode,
@@ -137,13 +149,13 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
                 },
                 "quality_metrics_summary": {
                     "массовая доля": {
-                        "accuracy": quality_metrics.get('массовая доля', {}).get('средняя_точность', 0) if quality_metrics else 0,
+                        "accuracy": quality_metrics.get('массовая доля', {}).get('accuracy', 0) if quality_metrics else 0,
                         "precision": quality_metrics.get('массовая доля', {}).get('precision', 0) if quality_metrics else 0,
                         "recall": quality_metrics.get('массовая доля', {}).get('recall', 0) if quality_metrics else 0,
                         "f1": quality_metrics.get('массовая доля', {}).get('f1', 0) if quality_metrics else 0
                     },
                     "прочее": {
-                        "accuracy": quality_metrics.get('прочее', {}).get('средняя_точность', 0) if quality_metrics else 0,
+                        "accuracy": quality_metrics.get('прочее', {}).get('accuracy', 0) if quality_metrics else 0,
                         "precision": quality_metrics.get('прочее', {}).get('precision', 0) if quality_metrics else 0,
                         "recall": quality_metrics.get('прочее', {}).get('recall', 0) if quality_metrics else 0,
                         "f1": quality_metrics.get('прочее', {}).get('f1', 0) if quality_metrics else 0
@@ -424,8 +436,9 @@ def main():
             return
     
     # Проверяем существование датасета
-    if not os.path.exists(DATASET_PATH):
-        print(f"Датасет не найден: {DATASET_PATH}")
+    dataset_path = find_dataset_path()
+    if not os.path.exists(dataset_path):
+        print(f"Датасет не найден: {dataset_path}")
         print("Убедитесь, что файл results_var3.xlsx находится в папке data/")
         return
     
@@ -438,7 +451,7 @@ def main():
         print(f"📌 Режим: Мультиагентный ({multi_agent_mode})")
     else:
         print(f"📌 Режим: Одноагентный")
-    print(f"📁 Датасет: {DATASET_PATH}")
+    print(f"📁 Датасет: {find_dataset_path()}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n")
@@ -469,10 +482,10 @@ def main():
             mass = quality.get('массовая доля', {})
             prochee = quality.get('прочее', {})
             print(f"   • 'массовая доля':")
-            print(f"     - Accuracy: {mass.get('средняя_точность', 0):.2%}")
+            print(f"     - Accuracy: {mass.get('accuracy', 0):.2%}")
             print(f"     - Precision: {mass.get('precision', 0):.2%}, Recall: {mass.get('recall', 0):.2%}, F1: {mass.get('f1', 0):.2%}")
             print(f"   • 'прочее':")
-            print(f"     - Accuracy: {prochee.get('средняя_точность', 0):.2%}")
+            print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
             print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
         
         print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")

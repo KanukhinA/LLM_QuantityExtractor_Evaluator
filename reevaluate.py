@@ -6,7 +6,8 @@ import sys
 import json
 import glob
 from model_evaluator import ModelEvaluator
-from config import DATASET_PATH, GEMINI_API_KEY
+from config import GEMINI_API_KEY
+from utils import find_dataset_path
 
 def main():
     if len(sys.argv) < 2:
@@ -27,8 +28,9 @@ def main():
         sys.exit(1)
     
     # Проверяем существование датасета
-    if not os.path.exists(DATASET_PATH):
-        print(f"❌ Ошибка: файл датасета не найден: {DATASET_PATH}")
+    dataset_path = find_dataset_path()
+    if not os.path.exists(dataset_path):
+        print(f"❌ Ошибка: файл датасета не найден: {dataset_path}")
         sys.exit(1)
     
     # Определяем директорию для сохранения результатов
@@ -38,7 +40,7 @@ def main():
         # Выполняем переоценку
         result = ModelEvaluator.reevaluate_from_file(
             results_csv_path=results_csv_path,
-            dataset_path=DATASET_PATH,
+            dataset_path=dataset_path,
             output_dir=output_dir,
             model_name=model_name,
             use_gemini_analysis=use_gemini,
@@ -64,6 +66,9 @@ def main():
             hyperparameters = result.get("hyperparameters", {})
             system_info = None
             multi_agent_mode = None
+            prompt_full_text = None
+            prompt_info = None
+            prompt_template = None
             
             # Ищем исходный файл метрик (без _reevaluated)
             model_name_for_pattern = sanitize_filename(result.get("model_name", "unknown"))
@@ -85,6 +90,9 @@ def main():
                     gpu_memory_during_inference = original_metrics.get("gpu_memory_during_inference_gb", None)
                     api_model = original_metrics.get("api_model", False)
                     multi_agent_mode = original_metrics.get("multi_agent_mode")
+                    prompt_full_text = original_metrics.get("prompt_full_text")
+                    prompt_info = original_metrics.get("prompt_info")
+                    prompt_template = original_metrics.get("prompt_template")
                     
                     system_info = {
                         "api_model": api_model,
@@ -112,16 +120,22 @@ def main():
                 "model_used": gemini_analysis.get("model_used", "gemini-2.5-flash"),
                 "parsing_errors_count": len(result.get("parsing_errors", [])),
                 "hyperparameters": hyperparameters,
+                "prompts": {
+                    "prompt_template": prompt_template,
+                    "prompt_full_text": prompt_full_text,
+                    "prompt_info": prompt_info,
+                    "note": "prompts_loaded_from_metrics_file" if prompt_full_text else "prompts_not_available_for_reevaluation"
+                },
                 "system_info": system_info,
                 "quality_metrics_summary": {
                     "массовая доля": {
-                        "accuracy": quality_metrics.get('массовая доля', {}).get('средняя_точность', 0) if quality_metrics else 0,
+                        "accuracy": quality_metrics.get('массовая доля', {}).get('accuracy', 0) if quality_metrics else 0,
                         "precision": quality_metrics.get('массовая доля', {}).get('precision', 0) if quality_metrics else 0,
                         "recall": quality_metrics.get('массовая доля', {}).get('recall', 0) if quality_metrics else 0,
                         "f1": quality_metrics.get('массовая доля', {}).get('f1', 0) if quality_metrics else 0
                     },
                     "прочее": {
-                        "accuracy": quality_metrics.get('прочее', {}).get('средняя_точность', 0) if quality_metrics else 0,
+                        "accuracy": quality_metrics.get('прочее', {}).get('accuracy', 0) if quality_metrics else 0,
                         "precision": quality_metrics.get('прочее', {}).get('precision', 0) if quality_metrics else 0,
                         "recall": quality_metrics.get('прочее', {}).get('recall', 0) if quality_metrics else 0,
                         "f1": quality_metrics.get('прочее', {}).get('f1', 0) if quality_metrics else 0

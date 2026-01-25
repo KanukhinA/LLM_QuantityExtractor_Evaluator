@@ -273,7 +273,7 @@ class ModelEvaluator:
         
         # Оценка на датасете
         results = []
-        parsing_errors = []
+        parsing_errors = []  # Список словарей с ошибками: {"text_index": int, "text": str, "error": str, "response": str}
         times = []
         memory_samples = []  # Для сбора измерений памяти во время инференса (только для локальных моделей)
         total_start_time = time.time()
@@ -335,12 +335,22 @@ class ModelEvaluator:
                         error_msg = result.get("error")
                         
                         if error_msg:
-                            parsing_errors.append(f"Текст #{i}: ошибка в мультиагентном подходе. Ошибка: {error_msg}")
+                            parsing_errors.append({
+                                "text_index": i,
+                                "text": text,
+                                "error": f"Ошибка в мультиагентном подходе: {error_msg}",
+                                "response": response_text[:500] if response_text else ""
+                            })
                         
                         if not is_valid and json_part:
                             # Для API моделей сохраняем полный JSON при verbose
                             json_display = json_part if (is_api_model and verbose) else json_part[:200]
-                            parsing_errors.append(f"Текст #{i}: невалидный JSON. Ответ: {json_display}")
+                            parsing_errors.append({
+                                "text_index": i,
+                                "text": text,
+                                "error": f"Невалидный JSON. Ответ: {json_display}",
+                                "response": json_part[:500]
+                            })
                         
                         results.append({
                             "text": text,
@@ -353,10 +363,13 @@ class ModelEvaluator:
                         import traceback
                         traceback_str = traceback.format_exc()
                         # Для API моделей сохраняем полный traceback
-                        if is_api_model:
-                            parsing_errors.append(f"Текст #{i}: критическая ошибка в мультиагентном подходе. Ошибка: {error_msg}. Traceback: {traceback_str}")
-                        else:
-                            parsing_errors.append(f"Текст #{i}: критическая ошибка в мультиагентном подходе. Ошибка: {error_msg}. Traceback: {traceback_str[:200]}")
+                        traceback_display = traceback_str if is_api_model else traceback_str[:200]
+                        parsing_errors.append({
+                            "text_index": i,
+                            "text": text,
+                            "error": f"Критическая ошибка в мультиагентном подходе: {error_msg}. Traceback: {traceback_display}",
+                            "response": ""
+                        })
                         results.append({
                             "text": text,
                             "json": "",
@@ -425,10 +438,13 @@ class ModelEvaluator:
                                 import traceback
                                 traceback_str = traceback.format_exc()
                                 # Для API моделей сохраняем полный traceback
-                                if is_api_model:
-                                    parsing_errors.append(f"Текст #{i}: критическая ошибка генерации после {num_retries} попыток. Ошибка: {error_msg}. Traceback: {traceback_str}")
-                                else:
-                                    parsing_errors.append(f"Текст #{i}: критическая ошибка генерации после {num_retries} попыток. Ошибка: {error_msg}. Traceback: {traceback_str[:200]}")
+                                traceback_display = traceback_str if is_api_model else traceback_str[:200]
+                                parsing_errors.append({
+                                    "text_index": i,
+                                    "text": text,
+                                    "error": f"Критическая ошибка генерации после {num_retries} попыток: {error_msg}. Traceback: {traceback_display}",
+                                    "response": ""
+                                })
                     
                     if not response_text:
                         print(f"  ❌ [{i+1}/{len(self.texts)}] Ответ не получен — пропуск")
@@ -457,7 +473,12 @@ class ModelEvaluator:
                     if not is_valid:
                         # Для API моделей при verbose выводим полный JSON, иначе обрезаем
                         json_display = json_part if (is_api_model and verbose) else (json_part[:200] if len(json_part) > 200 else json_part)
-                        parsing_errors.append(f"Текст #{i}: невалидный JSON. Ответ: {json_display}")
+                        parsing_errors.append({
+                            "text_index": i,
+                            "text": text,
+                            "error": f"Невалидный JSON. Ответ: {json_display}",
+                            "response": json_part[:500]
+                        })
                     
                     results.append({
                         "text": text,
@@ -659,7 +680,12 @@ class ModelEvaluator:
                                                 # Для локальных моделей обрезаем при не verbose режиме
                                                 error_display = error_msg if verbose else error_msg[:200]
                                                 print(f"     Последняя ошибка: {error_display}")
-                                        parsing_errors.append(f"Текст #{i}: не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}")
+                                        parsing_errors.append({
+                                            "text_index": i,
+                                            "text": self.texts[i],
+                                            "error": f"Не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}",
+                                            "response": ""
+                                        })
                                         results.append({
                                             "text": self.texts[i],
                                             "json": "",
@@ -675,7 +701,12 @@ class ModelEvaluator:
                                     if not is_valid:
                                         # Для API моделей при verbose выводим полный JSON, иначе обрезаем
                                         json_display = json_part if (is_api_model and verbose) else (json_part[:200] if len(json_part) > 200 else json_part)
-                                        parsing_errors.append(f"Текст #{i}: невалидный JSON. Ответ: {json_display}")
+                                        parsing_errors.append({
+                                            "text_index": i,
+                                            "text": self.texts[i],
+                                            "error": f"Невалидный JSON. Ответ: {json_display}",
+                                            "response": response_text[:500] if response_text else json_part[:500]
+                                        })
                                     
                                     results.append({
                                         "text": self.texts[i],
@@ -884,7 +915,18 @@ class ModelEvaluator:
                     else:
                         ground_truths_normalized.append({})
                 
-                quality_metrics = calculate_quality_metrics(predictions, ground_truths_normalized)
+                # Извлекаем тексты и ответы из results
+                texts_for_metrics = []
+                responses_for_metrics = []
+                for r in results:
+                    texts_for_metrics.append(r.get("text", ""))
+                    responses_for_metrics.append(r.get("json", ""))  # json содержит ответ модели
+                
+                quality_metrics = calculate_quality_metrics(
+                    predictions, ground_truths_normalized,
+                    texts=texts_for_metrics,
+                    responses=responses_for_metrics
+                )
                 
                 # Проверяем, что quality_metrics - это словарь
                 if not isinstance(quality_metrics, dict):
@@ -896,7 +938,7 @@ class ModelEvaluator:
                     
                     print(f"   ✅ Метрики качества вычислены:")
                     print(f"   📊 Группа 'массовая доля':")
-                    print(f"      • Точность (Accuracy): {mass_dolya.get('средняя_точность', 0):.2%}")
+                    print(f"      • Accuracy: {mass_dolya.get('accuracy', 0):.2%}")
                     print(f"      • Precision: {mass_dolya.get('precision', 0):.2%}")
                     print(f"      • Recall: {mass_dolya.get('recall', 0):.2%}")
                     print(f"      • F1-score: {mass_dolya.get('f1', 0):.2%}")
@@ -904,7 +946,7 @@ class ModelEvaluator:
                     print(f"      • Количество сравнений: {mass_dolya.get('количество_сравнений', 0)}")
                     print(f"      • Примеры ошибок: {len(mass_dolya.get('ошибки', []))}")
                     print(f"   📊 Группа 'прочее':")
-                    print(f"      • Точность (Accuracy): {prochee.get('средняя_точность', 0):.2%}")
+                    print(f"      • Accuracy: {prochee.get('accuracy', 0):.2%}")
                     print(f"      • Precision: {prochee.get('precision', 0):.2%}")
                     print(f"      • Recall: {prochee.get('recall', 0):.2%}")
                     print(f"      • F1-score: {prochee.get('f1', 0):.2%}")
@@ -1019,24 +1061,6 @@ class ModelEvaluator:
             print(f"⚠️  ОЦЕНКА ЗАВЕРШЕНА С ПРЕРЫВАНИЕМ")
         else:
             print(f"✅ ОЦЕНКА ЗАВЕРШЕНА УСПЕШНО!")
-        print(f"{'='*80}")
-        print(f"📌 Итоговая сводка:")
-        print(f"   • Модель: {model_name}")
-        print(f"   • Обработано текстов: {len(results)}/{len(self.texts)}")
-        if interrupted:
-            print(f"   • ⚠️  Обработка была прервана пользователем")
-        print(f"   • Общее время: {total_time/60:.2f} минут")
-        print(f"   • Средняя скорость: {avg_speed:.3f} сек/ответ")
-        print(f"   • Ошибки парсинга: {parsing_error_rate:.2%} ({invalid_count}/{len(results)})")
-        if is_api_model:
-            print(f"   • Тип: API")
-        else:
-            print(f"   • Использование памяти (среднее во время инференса): {memory_during_inference_avg:.2f} GB")
-        if quality_metrics:
-            mass_acc = quality_metrics.get('массовая доля', {}).get('средняя_точность', 0)
-            prochee_acc = quality_metrics.get('прочее', {}).get('средняя_точность', 0)
-            print(f"   • Качество 'массовая доля': {mass_acc:.2%}")
-            print(f"   • Качество 'прочее': {prochee_acc:.2%}")
         print(f"{'='*80}\n")
         
         return evaluation_result
@@ -1057,14 +1081,68 @@ class ModelEvaluator:
         print(f"💾 Детальные результаты сохранены: {csv_path}")
         
         # Сохраняем метрики
-        # Создаем копию для сохранения в JSON без поля "все_ошибки" (чтобы не перегружать файл)
+        # Создаем копию для сохранения в JSON
         evaluation_result_for_json = copy.deepcopy(evaluation_result)
         quality_metrics_for_json = evaluation_result_for_json.get("quality_metrics")
+        
+        # Собираем все ошибки из quality_metrics (они уже в формате словарей)
+        all_quality_errors = []
         if quality_metrics_for_json:
             for group in ["массовая доля", "прочее"]:
                 if group in quality_metrics_for_json:
-                    # Удаляем поле "все_ошибки" перед сохранением в JSON
+                    # Берем все ошибки (не только первые 10)
+                    group_errors = quality_metrics_for_json[group].get("все_ошибки", [])
+                    # Проверяем, что ошибки уже в формате словарей
+                    for error in group_errors:
+                        if isinstance(error, dict):
+                            all_quality_errors.append(error)
+                        else:
+                            # Для обратной совместимости: преобразуем строку в словарь
+                            all_quality_errors.append({"error": str(error)})
+                    # Удаляем поле "все_ошибки" и "ошибки" перед сохранением в JSON (чтобы не дублировать)
                     quality_metrics_for_json[group].pop("все_ошибки", None)
+                    quality_metrics_for_json[group].pop("ошибки", None)
+        
+        # Подготавливаем ошибки для сохранения
+        parsing_errors_list = evaluation_result_for_json.get("parsing_errors", [])
+        
+        # Объединяем parsing_errors и quality_errors
+        all_errors = parsing_errors_list + all_quality_errors
+        
+        # Группируем ошибки по текстам
+        errors_by_text = {}  # {text_index: {"text": str, "response": str, "errors": [str]}}
+        
+        for error in all_errors:
+            if isinstance(error, dict):
+                text_idx = error.get("text_index", 0)
+                text = error.get("text", "")
+                response = error.get("response", "")
+                error_msg = error.get("error", "")
+                
+                if text_idx not in errors_by_text:
+                    errors_by_text[text_idx] = {
+                        "text_index": text_idx,
+                        "text": text,
+                        "response": response,
+                        "errors": []
+                    }
+                
+                # Добавляем ошибку в список ошибок для этого текста
+                if error_msg:
+                    errors_by_text[text_idx]["errors"].append(error_msg)
+                
+                # Обновляем text и response, если они есть (могут быть разными для разных ошибок одного текста)
+                if text and not errors_by_text[text_idx]["text"]:
+                    errors_by_text[text_idx]["text"] = text
+                if response and not errors_by_text[text_idx]["response"]:
+                    errors_by_text[text_idx]["response"] = response
+        
+        # Преобразуем в список записей (каждая запись - текст с его ошибками)
+        errors_for_save = list(errors_by_text.values())
+        
+        # Добавляем ошибки в результат для сохранения
+        # Все ошибки сохраняются в структурированном виде: список записей {text_index, text, response, errors}
+        evaluation_result_for_json["ошибки"] = errors_for_save
         
         metrics_path = os.path.join(self.output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}_{timestamp}.json")
         with open(metrics_path, 'w', encoding='utf-8') as f:
@@ -1225,7 +1303,8 @@ class ModelEvaluator:
         # Пересчитываем метрики качества
         print(f"\n📊 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА...")
         try:
-            quality_metrics = calculate_quality_metrics(predictions, ground_truths)
+            # В reevaluate нет доступа к текстам и ответам, передаем None
+            quality_metrics = calculate_quality_metrics(predictions, ground_truths, texts=None, responses=None)
             print(f"✅ Метрики успешно вычислены")
         except Exception as e:
             print(f"⚠️  Ошибка при вычислении метрик качества: {e}")
@@ -1424,8 +1503,8 @@ class ModelEvaluator:
         print(f"   • Обработано текстов: {len(predictions)}")
         print(f"   • Ошибки парсинга: {parsing_error_rate:.2%} ({invalid_count}/{len(predictions)})")
         if quality_metrics:
-            mass_acc = quality_metrics.get('массовая доля', {}).get('средняя_точность', 0)
-            prochee_acc = quality_metrics.get('прочее', {}).get('средняя_точность', 0)
+            mass_acc = quality_metrics.get('массовая доля', {}).get('accuracy', 0)
+            prochee_acc = quality_metrics.get('прочее', {}).get('accuracy', 0)
             mass_f1 = quality_metrics.get('массовая доля', {}).get('f1', 0)
             prochee_f1 = quality_metrics.get('прочее', {}).get('f1', 0)
             print(f"   • Качество 'массовая доля': Accuracy={mass_acc:.2%}, F1={mass_f1:.2%}")
