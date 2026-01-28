@@ -272,7 +272,7 @@ MODEL_CONFIGS = {
         "load_func": ml_api.load_gemma_3_27b_api,
         "generate_func": ml_api.generate_gemma_api,
         "hyperparameters": {
-            "max_new_tokens": 512,
+            "max_new_tokens": 1024,
             "model_name": "gemma-3-27b-it",
             "api_model": True
         }
@@ -294,6 +294,16 @@ MODEL_CONFIGS = {
         "hyperparameters": {
             "max_new_tokens": 512,
             "model_name": "mistralai/mistral-small-3.1-24b-instruct:free",
+            "api_model": True
+        }
+    },
+    "qwen-3-32b-api": {
+        "name": "qwen/qwen3-32b",
+        "load_func": ml_api.load_qwen_3_32b_api,
+        "generate_func": ml_api.generate_openrouter_api,
+        "hyperparameters": {
+            "max_new_tokens": 32768,
+            "model_name": "qwen/qwen3-32b",
             "api_model": True
         }
     },
@@ -399,15 +409,18 @@ def main():
     
     # Теперь проверяем аргументы командной строки
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name> [--multi-agent MODE]")
+        print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output]")
         print("\nАргументы:")
-        print("  <model_name>     - ключ модели из конфигурации")
-        print("  --multi-agent     - (опционально) режим мультиагентного подхода")
-        print("                      Доступные режимы: simple_4agents, critic_3agents")
+        print("  <model_name>        - ключ модели из конфигурации")
+        print("  --multi-agent       - (опционально) режим мультиагентного подхода")
+        print("                        Доступные режимы: simple_4agents, critic_3agents, qa_workflow")
+        print("  --structured-output - (опционально) использовать structured output через Pydantic")
+        print("                        Работает только с API моделями, поддерживающими structured output")
         print("\nПримеры:")
         print("  python main.py qwen-2.5-3b")
         print("  python main.py qwen-2.5-3b --multi-agent simple_4agents")
-        print("  python main.py qwen-2.5-3b --multi-agent critic_3agents")
+        print("  python main.py gemma-3-27b-api --structured-output")
+        print("  python main.py qwen-3-32b-api --structured-output")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
@@ -420,20 +433,28 @@ def main():
         print("Доступные модели:", ", ".join(MODEL_CONFIGS.keys()))
         return
     
-    # Парсим аргументы командной строки для мультиагентного режима
+    # Парсим аргументы командной строки
     multi_agent_mode = None
+    structured_output = False
+    
     if len(sys.argv) > 2:
-        if "--multi-agent" in sys.argv:
-            idx = sys.argv.index("--multi-agent")
-            if idx + 1 < len(sys.argv):
-                multi_agent_mode = sys.argv[idx + 1]
+        i = 2
+        while i < len(sys.argv):
+            arg = sys.argv[i]
+            if arg == "--multi-agent":
+                if i + 1 < len(sys.argv):
+                    multi_agent_mode = sys.argv[i + 1]
+                    i += 2
+                else:
+                    print("Ошибка: после --multi-agent должен быть указан режим (например, simple_4agents)")
+                    return
+            elif arg == "--structured-output":
+                structured_output = True
+                i += 1
             else:
-                print("Ошибка: после --multi-agent должен быть указан режим (например, simple_4agents)")
+                print(f"Неизвестный аргумент: {arg}")
+                print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output]")
                 return
-        else:
-            print(f"Неизвестный аргумент: {sys.argv[2]}")
-            print("Использование: python main.py <model_name> [--multi-agent MODE]")
-            return
     
     # Проверяем существование датасета
     dataset_path = find_dataset_path()
@@ -451,16 +472,20 @@ def main():
         print(f"📌 Режим: Мультиагентный ({multi_agent_mode})")
     else:
         print(f"📌 Режим: Одноагентный")
+    if structured_output:
+        print(f"📌 Structured Output: Включен (Pydantic валидация)")
     print(f"📁 Датасет: {find_dataset_path()}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n")
     
-    # Создаем копию конфигурации и добавляем multi_agent_mode если указан
+    # Создаем копию конфигурации и добавляем параметры если указаны
     import copy
     config = copy.deepcopy(MODEL_CONFIGS[model_key])
     if multi_agent_mode:
         config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
+    if structured_output:
+        config["hyperparameters"]["structured_output"] = True
     
     result = run_evaluation(config, use_gemini=use_gemini, verbose=True)  # Подробный вывод для main.py
     

@@ -169,6 +169,10 @@ class ModelEvaluator:
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)
         use_multi_agent = multi_agent_mode is not None and multi_agent_mode != ""
         
+        # Берем max_new_tokens из hyperparameters, если он там указан
+        if "max_new_tokens" in hyperparameters:
+            max_new_tokens = hyperparameters["max_new_tokens"]
+        
         # Определяем, является ли модель API-моделью
         is_api_model = hyperparameters.get("api_model", False)
         if not is_api_model:
@@ -268,8 +272,23 @@ class ModelEvaluator:
             print()
         
         # Используем промпт
+        structured_output = hyperparameters.get("structured_output", False)
+        
+        # Загружаем Pydantic схему для structured output, если нужно
+        response_schema = None
+        if structured_output:
+            try:
+                from structured_schemas import FertilizerExtractionOutput
+                response_schema = FertilizerExtractionOutput
+            except ImportError:
+                print("   ⚠️ Предупреждение: structured_schemas не найден, structured output отключен")
+                structured_output = False
+        
         if prompt_template is None:
-            prompt_template = build_prompt3
+            # Создаем обертку для build_prompt3 с поддержкой structured_output и response_schema
+            def prompt_wrapper(text: str):
+                return build_prompt3(text, structured_output=structured_output, response_schema=response_schema)
+            prompt_template = prompt_wrapper
         
         # Оценка на датасете
         results = []
@@ -386,16 +405,24 @@ class ModelEvaluator:
                             start_time = time.time()
                             # Передаем repetition_penalty из гиперпараметров, если есть
                             repetition_penalty = hyperparameters.get("repetition_penalty")
-                            # Для API моделей передаем model_name из hyperparameters
-                            if is_api_model and "model_name" in hyperparameters:
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, model_name=hyperparameters["model_name"])
+                            
+                            # Формируем параметры для генерации
+                            gen_kwargs = {"max_new_tokens": max_new_tokens}
+                            
+                            # Добавляем параметры в зависимости от типа модели
+                            if is_api_model:
+                                if "model_name" in hyperparameters:
+                                    gen_kwargs["model_name"] = hyperparameters["model_name"]
+                                # Добавляем structured output для API моделей
+                                if structured_output and response_schema:
+                                    gen_kwargs["structured_output"] = True
+                                    gen_kwargs["response_schema"] = response_schema
                             elif repetition_penalty is not None:
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
+                                gen_kwargs["repetition_penalty"] = repetition_penalty
                             elif "enable_thinking" in hyperparameters:
-                                # Для Qwen3 передаем enable_thinking из hyperparameters
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=hyperparameters.get("enable_thinking", True))
-                            else:
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
+                                gen_kwargs["enable_thinking"] = hyperparameters.get("enable_thinking", True)
+                            
+                            response_text = generate_func(model, tokenizer, prompt, **gen_kwargs)
                             elapsed = time.time() - start_time
                             times.append(elapsed)
                             
@@ -466,9 +493,27 @@ class ModelEvaluator:
                         continue
                     
                     # Извлекаем JSON
-                    json_part = extract_json_from_response(response_text)
-                    parsed_json = parse_json_safe(json_part)
-                    is_valid = is_valid_json(json_part)
+                    # Для structured output валидируем через Pydantic схему
+                    if structured_output and response_schema:
+                        # Для локальных моделей извлекаем JSON и валидируем через Pydantic
+                        json_part = extract_json_from_response(response_text)
+                        parsed_json = parse_json_safe(json_part)
+                        
+                        # Валидируем через Pydantic схему
+                        try:
+                            validated_output = response_schema.model_validate(parsed_json)
+                            # Конвертируем обратно в словарь для совместимости
+                            parsed_json = validated_output.model_dump(by_alias=True)
+                            is_valid = True
+                        except Exception as e:
+                            # Если валидация не прошла, используем обычный парсинг
+                            is_valid = is_valid_json(json_part)
+                            if verbose:
+                                print(f"   ⚠️ Structured output валидация не прошла: {e}")
+                    else:
+                        json_part = extract_json_from_response(response_text)
+                        parsed_json = parse_json_safe(json_part)
+                        is_valid = is_valid_json(json_part)
                     
                     if not is_valid:
                         # Для API моделей при verbose выводим полный JSON, иначе обрезаем
@@ -694,9 +739,27 @@ class ModelEvaluator:
                                         })
                                         continue
                                     
-                                    json_part = extract_json_from_response(response_text)
-                                    parsed_json = parse_json_safe(json_part)
-                                    is_valid = is_valid_json(json_part)
+                                    # Для structured output валидируем через Pydantic схему
+                                    if structured_output and response_schema:
+                                        # Для локальных моделей извлекаем JSON и валидируем через Pydantic
+                                        json_part = extract_json_from_response(response_text)
+                                        parsed_json = parse_json_safe(json_part)
+                                        
+                                        # Валидируем через Pydantic схему
+                                        try:
+                                            validated_output = response_schema.model_validate(parsed_json)
+                                            # Конвертируем обратно в словарь для совместимости
+                                            parsed_json = validated_output.model_dump(by_alias=True)
+                                            is_valid = True
+                                        except Exception as e:
+                                            # Если валидация не прошла, используем обычный парсинг
+                                            is_valid = is_valid_json(json_part)
+                                            if verbose:
+                                                print(f"   ⚠️ Structured output валидация не прошла: {e}")
+                                    else:
+                                        json_part = extract_json_from_response(response_text)
+                                        parsed_json = parse_json_safe(json_part)
+                                        is_valid = is_valid_json(json_part)
                                     
                                     if not is_valid:
                                         # Для API моделей при verbose выводим полный JSON, иначе обрезаем
@@ -1042,7 +1105,7 @@ class ModelEvaluator:
             "parsing_errors_count": len(parsing_errors),
             "quality_metrics": quality_metrics,
             "hyperparameters": hyperparameters_to_save,
-            "prompt_template": prompt_template.__name__ if hasattr(prompt_template, '__name__') else str(prompt_template) if not use_multi_agent else f"multi_agent_{multi_agent_mode}",
+            "prompt_template": self._get_prompt_template_name(prompt_template, use_multi_agent, multi_agent_mode),
             "prompt_full_text": full_prompt_example,
             "prompt_info": prompt_info,
             "parsing_errors": parsing_errors,
@@ -1065,6 +1128,29 @@ class ModelEvaluator:
         
         return evaluation_result
     
+    def _get_prompt_template_name(self, prompt_template, use_multi_agent: bool, multi_agent_mode: str = None) -> str:
+        """Получает название промпта для сохранения в результатах"""
+        if use_multi_agent:
+            return f"multi_agent_{multi_agent_mode}"
+        
+        # Пытаемся получить название из функции
+        if hasattr(prompt_template, '__name__'):
+            name = prompt_template.__name__
+            if name != "prompt_wrapper":
+                return name
+        
+        # Пытаемся получить из строкового представления
+        str_repr = str(prompt_template)
+        if not str_repr.startswith("<function"):
+            return str_repr
+        
+        # Если ничего не подошло, пытаемся получить из config
+        try:
+            from config import PROMPT_TEMPLATE_NAME
+            return PROMPT_TEMPLATE_NAME
+        except:
+            return "default"
+    
     def _save_results(self, evaluation_result: Dict[str, Any], results: List[Dict[str, Any]]):
         """Сохраняет результаты в файлы"""
         timestamp = evaluation_result["timestamp"]
@@ -1074,9 +1160,27 @@ class ModelEvaluator:
         multi_agent_mode = evaluation_result.get("multi_agent_mode")
         multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
         
+        # Получаем название промпта для добавления в имя файла
+        prompt_template_name = evaluation_result.get("prompt_template", "")
+        # Если это название функции или multi_agent, пытаемся получить реальное название промпта
+        if prompt_template_name.startswith("multi_agent_"):
+            prompt_name_safe = prompt_template_name
+        elif prompt_template_name == "prompt_wrapper" or not prompt_template_name or prompt_template_name == "<function":
+            # Пытаемся получить из config
+            try:
+                from config import PROMPT_TEMPLATE_NAME
+                prompt_name_safe = sanitize_filename(PROMPT_TEMPLATE_NAME)
+            except:
+                prompt_name_safe = "default"
+        else:
+            prompt_name_safe = sanitize_filename(prompt_template_name)
+        
+        # Добавляем название промпта в имя файла перед датой
+        prompt_suffix = f"_{prompt_name_safe}" if prompt_name_safe else ""
+        
         # Сохраняем детальные результаты
         df_results = pd.DataFrame(results)
-        csv_path = os.path.join(self.output_dir, f"results_{model_name_safe}{multi_agent_suffix}_{timestamp}.csv")
+        csv_path = os.path.join(self.output_dir, f"results_{model_name_safe}{multi_agent_suffix}{prompt_suffix}_{timestamp}.csv")
         df_results.to_csv(csv_path, index=False, encoding='utf-8-sig')
         print(f"💾 Детальные результаты сохранены: {csv_path}")
         
@@ -1144,7 +1248,7 @@ class ModelEvaluator:
         # Все ошибки сохраняются в структурированном виде: список записей {text_index, text, response, errors}
         evaluation_result_for_json["ошибки"] = errors_for_save
         
-        metrics_path = os.path.join(self.output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}_{timestamp}.json")
+        metrics_path = os.path.join(self.output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}{prompt_suffix}_{timestamp}.json")
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(evaluation_result_for_json, f, ensure_ascii=False, indent=2)
         print(f"💾 Метрики сохранены: {metrics_path}")
@@ -1425,8 +1529,9 @@ class ModelEvaluator:
         
         model_name_safe = sanitize_filename(model_name)
         
-        # Пытаемся найти исходный файл метрик для извлечения multi_agent_mode
+        # Пытаемся найти исходный файл метрик для извлечения multi_agent_mode и prompt_template
         multi_agent_mode = None
+        prompt_template_name = None
         metrics_file_pattern = os.path.join(output_dir, f"metrics_{model_name_safe}_*.json")
         metrics_files = glob.glob(metrics_file_pattern)
         original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
@@ -1435,12 +1540,33 @@ class ModelEvaluator:
                 with open(original_metrics_files[-1], 'r', encoding='utf-8') as f:
                     original_metrics = json.load(f)
                 multi_agent_mode = original_metrics.get("multi_agent_mode")
+                prompt_template_name = original_metrics.get("prompt_template")
             except Exception:
                 pass  # Если не удалось загрузить, просто пропускаем
         
         # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
         multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
-        metrics_path = os.path.join(output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}_{timestamp}_reevaluated.json")
+        
+        # Получаем название промпта для добавления в имя файла
+        if not prompt_template_name:
+            prompt_template_name = evaluation_result.get("prompt_template", "")
+        # Если это название функции или multi_agent, пытаемся получить реальное название промпта
+        if prompt_template_name and prompt_template_name.startswith("multi_agent_"):
+            prompt_name_safe = prompt_template_name
+        elif prompt_template_name == "prompt_wrapper" or not prompt_template_name or prompt_template_name == "<function":
+            # Пытаемся получить из config
+            try:
+                from config import PROMPT_TEMPLATE_NAME
+                prompt_name_safe = sanitize_filename(PROMPT_TEMPLATE_NAME)
+            except:
+                prompt_name_safe = "default"
+        else:
+            prompt_name_safe = sanitize_filename(prompt_template_name)
+        
+        # Добавляем название промпта в имя файла перед датой
+        prompt_suffix = f"_{prompt_name_safe}" if prompt_name_safe else ""
+        
+        metrics_path = os.path.join(output_dir, f"metrics_{model_name_safe}{multi_agent_suffix}{prompt_suffix}_{timestamp}_reevaluated.json")
         
         # Создаем копию для сохранения в JSON без поля "все_ошибки" (чтобы не перегружать файл)
         evaluation_result_for_json = copy.deepcopy(evaluation_result)

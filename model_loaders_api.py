@@ -89,10 +89,18 @@ def generate_gemma_api(
     prompt: str, 
     max_new_tokens: int = 1024, 
     model_name: str = "gemma-3-4b-it",
-    repetition_penalty: float = None
+    repetition_penalty: float = None,
+    temperature: float = None,
+    top_k: int = None,
+    top_p: float = None,
+    structured_output: bool = False,
+    response_schema: Any = None
 ) -> str:
     """
-    Функция генерации для Gemma 3 моделей через API с retry логикой до 10 попыток
+    Функция генерации для Gemma 3 моделей через API.
+    
+    По умолчанию использует детерминированную генерацию (temperature=0.0, do_sample=False).
+    Для включения sampling передайте temperature > 0 (используется в few_shot_extractor).
     
     Args:
         client: клиент API (genai.Client)
@@ -101,41 +109,48 @@ def generate_gemma_api(
         max_new_tokens: максимальное количество новых токенов
         model_name: имя модели API (gemma-3-4b, gemma-3-12b, gemma-3-27b)
         repetition_penalty: штраф за повторения (если None, не используется, для API не поддерживается напрямую)
+        temperature: температура для sampling (если None, используется 0.0 - детерминированная генерация)
+        top_k: top_k для sampling (если указан, используется)
+        top_p: top_p для sampling (если указан, используется)
     
     Returns:
         сгенерированный текст
     """
-    # Параметры для разных попыток (до 10 попыток с разными параметрами)
-    retry_configs = [
-        {"temperature": 0.0, "top_p": None, "top_k": None},  # Попытка 1: детерминированная
-        {"temperature": 0.1, "top_p": None, "top_k": None},  # Попытка 2: немного случайности
-        {"temperature": 0.0, "top_p": 0.95, "top_k": 40},    # Попытка 3: с top_p/top_k
-        {"temperature": 0.2, "top_p": 0.9, "top_k": 50},    # Попытка 4: более высокая температура
-        {"temperature": 0.0, "top_p": 0.99, "top_k": None}, # Попытка 5: только top_p
-        {"temperature": 0.15, "top_p": None, "top_k": 40},  # Попытка 6: только top_k
-        {"temperature": 0.0, "top_p": 0.9, "top_k": None},  # Попытка 7: низкая температура с top_p
-        {"temperature": 0.1, "top_p": 0.95, "top_k": 50},   # Попытка 8: комбинация параметров
-        {"temperature": 0.05, "top_p": None, "top_k": None}, # Попытка 9: очень низкая температура
-        {"temperature": 0.0, "top_p": 1.0, "top_k": None},  # Попытка 10: детерминированная с top_p=1.0
-    ]
+    import time
+    import re
     
+    # По умолчанию используем детерминированную генерацию (do_sample=False)
+    if temperature is None:
+        temperature = 0.0
+    
+    num_retries = 10
     last_error = None
     
-    for attempt in range(10):
-        config = retry_configs[attempt]
-        
+    for attempt in range(num_retries):
         try:
             # Формируем параметры запроса
             generation_config = {
                 "max_output_tokens": max_new_tokens,
-                "temperature": config["temperature"],
+                "temperature": temperature,
             }
             
-            # Добавляем опциональные параметры
-            if config["top_p"] is not None:
-                generation_config["top_p"] = config["top_p"]
-            if config["top_k"] is not None:
-                generation_config["top_k"] = config["top_k"]
+            # Добавляем опциональные параметры sampling
+            if top_p is not None:
+                generation_config["top_p"] = top_p
+            if top_k is not None:
+                generation_config["top_k"] = top_k
+            
+            # Добавляем structured output, если указан
+            if structured_output and response_schema is not None:
+                try:
+                    # Конвертируем Pydantic схему в JSON Schema для Gemini API
+                    if hasattr(response_schema, 'model_json_schema'):
+                        json_schema = response_schema.model_json_schema()
+                        generation_config["response_schema"] = json_schema
+                        generation_config["response_mime_type"] = "application/json"
+                except Exception as e:
+                    print(f"   ⚠️ Предупреждение: не удалось добавить structured output: {e}")
+                    print(f"   Продолжаем без structured output...")
             
             # Выполняем запрос к API
             response = client.models.generate_content(
@@ -166,12 +181,10 @@ def generate_gemma_api(
             error_str = str(e).lower()
             
             # Проверяем, является ли это ошибкой 404 (модель не найдена)
-            # В таком случае не имеет смысла повторять запросы
             if "404" in error_str or "not found" in error_str or "model not found" in error_str:
                 raise Exception(f"Модель не найдена (404): {last_error}")
             
             # Проверяем, является ли это ошибкой 429 (rate limit / resource exhausted)
-            # Для free tier нужно увеличить задержку между запросами
             is_rate_limit = (
                 "429" in error_str or 
                 "resource_exhausted" in error_str or 
@@ -180,21 +193,19 @@ def generate_gemma_api(
             )
             
             # Если это последняя попытка, пробрасываем исключение
-            if attempt == 9:
-                raise Exception(f"Ошибка после 10 попыток. Последняя ошибка: {last_error}")
+            if attempt == num_retries - 1:
+                raise Exception(f"Ошибка после {num_retries} попыток. Последняя ошибка: {last_error}")
             
             # Для rate limit ошибок пытаемся извлечь требуемое время ожидания из ошибки
             if is_rate_limit:
                 delay = None
                 
                 # Пытаемся найти время ожидания в тексте ошибки
-                # Ищем паттерны типа "retry after 30s", "wait 60 seconds", "retry_after: 45", "Please retry in 12.12324s" и т.д.
-                # Паттерны для поиска времени ожидания (в секундах) - поддерживают целые и десятичные числа
                 patterns = [
-                    r'retry[_\s]?after[_\s]?:?\s*(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)',  # "retry after 30s", "retry_after: 45 seconds"
-                    r'wait[_\s]+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)',                    # "wait 60 seconds"
-                    r'retry[_\s]?in[_\s]+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)',          # "retry in 30 seconds", "Please retry in 12.12324s"
-                    r'(\d+(?:\.\d+)?)\s*(?:second|sec|s)\s+.*?(?:retry|wait)',           # "30 seconds before retry"
+                    r'retry[_\s]?after[_\s]?:?\s*(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)',
+                    r'wait[_\s]+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)',
+                    r'retry[_\s]?in[_\s]+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)',
+                    r'(\d+(?:\.\d+)?)\s*(?:second|sec|s)\s+.*?(?:retry|wait)',
                 ]
                 
                 for pattern in patterns:
@@ -202,8 +213,6 @@ def generate_gemma_api(
                     if match:
                         try:
                             extracted_delay = float(match.group(1))
-                            # Проверяем разумность значения (максимум 3600 секунд = 1 час)
-                            # Время ожидания обычно не превышает часа
                             if 1 <= extracted_delay <= 3600:
                                 delay = extracted_delay
                                 break
@@ -212,14 +221,11 @@ def generate_gemma_api(
                 
                 # Если не удалось извлечь время из ошибки, используем экспоненциальную задержку
                 if delay is None:
-                    # Экспоненциальная задержка с большим базовым временем для free tier
-                    # Начинаем с 5 секунд и увеличиваем экспоненциально
-                    delay = min(5.0 * (2 ** attempt), 60.0)  # Максимум 60 секунд
-                    print(f"   ⚠️ Rate limit (429). Время ожидания не указано. Используем {delay:.1f} секунд перед попыткой {attempt + 2}/10...")
+                    delay = min(5.0 * (2 ** attempt), 60.0)
+                    print(f"   ⚠️ Rate limit (429). Время ожидания не указано. Используем {delay:.1f} секунд перед попыткой {attempt + 2}/{num_retries}...")
                 else:
-                    # Добавляем небольшую буферную задержку к указанному времени (10%)
                     delay = delay * 1.1
-                    print(f"   ⚠️ Rate limit (429). API требует ожидания {delay:.1f} секунд. Ожидание перед попыткой {attempt + 2}/10...")
+                    print(f"   ⚠️ Rate limit (429). API требует ожидания {delay:.1f} секунд. Ожидание перед попыткой {attempt + 2}/{num_retries}...")
                 
                 time.sleep(delay)
             else:
@@ -228,7 +234,7 @@ def generate_gemma_api(
                 time.sleep(delay)
     
     # Если дошли сюда, все попытки провалились
-    raise Exception(f"Не удалось получить ответ после 10 попыток. Последняя ошибка: {last_error}")
+    raise Exception(f"Не удалось получить ответ после {num_retries} попыток. Последняя ошибка: {last_error}")
 
 
 # ============================================================================
@@ -242,6 +248,10 @@ def load_deepseek_r1t_chimera_api() -> Tuple[Optional[Any], Optional[Any]]:
     
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY не установлен. Установите переменную окружения или в config_secrets.py")
+    
+    # Проверяем формат ключа
+    if not OPENAI_API_KEY.startswith("sk-") and not OPENAI_API_KEY.startswith("sk-or-"):
+        print(f"   ⚠️ Предупреждение: API ключ не начинается с 'sk-' или 'sk-or-'. Убедитесь, что это правильный ключ OpenRouter.")
     
     print(f"   Инициализация OpenRouter API клиента для deepseek-r1t-chimera...")
     try:
@@ -264,7 +274,36 @@ def load_mistral_small_3_1_24b_api() -> Tuple[Optional[Any], Optional[Any]]:
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY не установлен. Установите переменную окружения или в config_secrets.py")
     
+    # Проверяем формат ключа
+    if not OPENAI_API_KEY.startswith("sk-") and not OPENAI_API_KEY.startswith("sk-or-"):
+        print(f"   ⚠️ Предупреждение: API ключ не начинается с 'sk-' или 'sk-or-'. Убедитесь, что это правильный ключ OpenRouter.")
+    
     print(f"   Инициализация OpenRouter API клиента для mistral-small-3.1-24b-instruct...")
+    try:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENAI_API_KEY,
+        )
+        print(f"   ✓ OpenRouter API клиент инициализирован")
+        return client, None
+    except Exception as e:
+        print(f"   ❌ Ошибка инициализации OpenRouter API клиента: {e}")
+        raise
+
+
+def load_qwen_3_32b_api() -> Tuple[Optional[Any], Optional[Any]]:
+    """Загрузка qwen/qwen3-32b через OpenRouter API (возвращает клиент API вместо модели)"""
+    if not OPENAI_AVAILABLE:
+        raise ImportError("Библиотека openai не установлена. Установите: pip install openai")
+    
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY не установлен. Установите переменную окружения или в config_secrets.py")
+    
+    # Проверяем формат ключа
+    if not OPENAI_API_KEY.startswith("sk-") and not OPENAI_API_KEY.startswith("sk-or-"):
+        print(f"   ⚠️ Предупреждение: API ключ не начинается с 'sk-' или 'sk-or-'. Убедитесь, что это правильный ключ OpenRouter.")
+    
+    print(f"   Инициализация OpenRouter API клиента для qwen/qwen3-32b...")
     try:
         client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -283,10 +322,18 @@ def generate_openrouter_api(
     prompt: str, 
     max_new_tokens: int = 1024, 
     model_name: str = "tngtech/deepseek-r1t-chimera:free",
-    repetition_penalty: float = None
+    repetition_penalty: float = None,
+    temperature: float = None,
+    top_k: int = None,
+    top_p: float = None,
+    structured_output: bool = False,
+    response_schema: Any = None
 ) -> str:
     """
-    Функция генерации для моделей через OpenRouter API с retry логикой до 10 попыток
+    Функция генерации для моделей через OpenRouter API.
+    
+    По умолчанию использует детерминированную генерацию (temperature=0.0, do_sample=False).
+    Для включения sampling передайте temperature > 0 (используется в few_shot_extractor).
     
     Args:
         client: клиент API (OpenAI)
@@ -295,61 +342,71 @@ def generate_openrouter_api(
         max_new_tokens: максимальное количество новых токенов
         model_name: имя модели API
         repetition_penalty: штраф за повторения (если None, не используется)
+        temperature: температура для sampling (если None, используется 0.0 - детерминированная генерация)
+        top_k: top_k для sampling (если указан, используется)
+        top_p: top_p для sampling (если указан, используется)
     
     Returns:
         сгенерированный текст
     """
+    import time
+    import warnings
+    
     # Защита: убеждаемся, что tokenizer не используется для API моделей
     if tokenizer is not None:
-        import warnings
         warnings.warn("tokenizer передан в generate_openrouter_api, но не используется для API моделей. Убедитесь, что для API моделей tokenizer=None.")
-    # Параметры для разных попыток (до 10 попыток с разными параметрами)
-    retry_configs = [
-        {"temperature": 0.0, "top_p": None},  # Попытка 1: детерминированная
-        {"temperature": 0.1, "top_p": None},  # Попытка 2: немного случайности
-        {"temperature": 0.0, "top_p": 0.95},    # Попытка 3: с top_p
-        {"temperature": 0.2, "top_p": 0.9},    # Попытка 4: более высокая температура
-        {"temperature": 0.0, "top_p": 0.99}, # Попытка 5: только top_p
-        {"temperature": 0.15, "top_p": None},  # Попытка 6: средняя температура
-        {"temperature": 0.0, "top_p": 0.9},  # Попытка 7: низкая температура с top_p
-        {"temperature": 0.1, "top_p": 0.95},   # Попытка 8: комбинация параметров
-        {"temperature": 0.05, "top_p": None}, # Попытка 9: очень низкая температура
-        {"temperature": 0.0, "top_p": 1.0},  # Попытка 10: детерминированная с top_p=1.0
-    ]
     
+    # По умолчанию используем детерминированную генерацию (do_sample=False)
+    if temperature is None:
+        temperature = 0.0
+    
+    num_retries = 10
     last_error = None
     
-    for attempt in range(10):
-        config = retry_configs[attempt]
-        
+    for attempt in range(num_retries):
         try:
             # Формируем параметры запроса
-            messages = [
-                {"role": "user", "content": prompt}
-            ]
+            messages = [{"role": "user", "content": prompt}]
             
             generation_params = {
                 "model": model_name,
                 "messages": messages,
                 "max_tokens": max_new_tokens,
-                "temperature": config["temperature"],
+                "temperature": temperature,
             }
             
-            # Добавляем опциональные параметры
-            if config["top_p"] is not None:
-                generation_params["top_p"] = config["top_p"]
-            
+            # Добавляем опциональные параметры sampling
+            if top_p is not None:
+                generation_params["top_p"] = top_p
+            if top_k is not None:
+                generation_params["top_k"] = top_k
             if repetition_penalty is not None:
                 generation_params["frequency_penalty"] = repetition_penalty
             
             # Выполняем запрос к API
-            response = client.chat.completions.create(
-                **generation_params,
-                extra_headers={
-                    "HTTP-Referer": "https://github.com",  # Optional
-                    "X-Title": "SmallLLMEvaluator",  # Optional
-                }
-            )
+            try:
+                response = client.chat.completions.create(
+                    **generation_params,
+                    extra_headers={
+                        "HTTP-Referer": "https://github.com",  # Optional
+                        "X-Title": "SmallLLMEvaluator",  # Optional
+                    }
+                )
+            except Exception as api_error:
+                # Специальная обработка ошибки 401 (аутентификация)
+                error_str = str(api_error).lower()
+                if "401" in error_str or "unauthorized" in error_str or "cookie auth" in error_str or "no cookie" in error_str:
+                    print(f"   ❌ Ошибка аутентификации (401): Проверьте правильность OPENAI_API_KEY")
+                    print(f"   💡 Убедитесь, что:")
+                    print(f"      - Ключ получен с https://openrouter.ai/keys")
+                    print(f"      - Ключ начинается с 'sk-or-' (OpenRouter) или 'sk-'")
+                    print(f"      - Ключ установлен в config_secrets.py или переменной окружения OPENAI_API_KEY")
+                    if OPENAI_API_KEY:
+                        key_preview = OPENAI_API_KEY[:10] + "..." if len(OPENAI_API_KEY) > 10 else OPENAI_API_KEY
+                        print(f"   🔑 Используемый ключ (первые 10 символов): {key_preview}")
+                    else:
+                        print(f"   🔑 Ключ не установлен или пустой!")
+                raise
             
             # Извлекаем текст ответа
             if response.choices and len(response.choices) > 0:
@@ -373,6 +430,10 @@ def generate_openrouter_api(
             # Проверяем, является ли это ошибкой 404 (модель не найдена)
             if "404" in error_str or "not found" in error_str or "model not found" in error_str:
                 raise Exception(f"Модель не найдена (404): {last_error}")
+            
+            # Проверяем, является ли это ошибкой 401 (аутентификация)
+            if "401" in error_str or "unauthorized" in error_str or "cookie auth" in error_str or "no cookie" in error_str:
+                raise Exception(f"Ошибка аутентификации (401): {last_error}. Проверьте правильность OPENAI_API_KEY.")
             
             # Проверяем, является ли это ошибкой 429 (rate limit)
             is_rate_limit = (
