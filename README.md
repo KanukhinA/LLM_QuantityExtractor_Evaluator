@@ -52,7 +52,9 @@
 - `BaseGenerator` и `StandardGenerator` из `core/` используются только в мультиагентном подходе (когда `use_multi_agent=True`)
 - Основной код использует функциональный подход из `model_loaders.py`
 
-## Установка
+## Установка и настройка
+
+### Установка зависимостей
 
 1. Клонируйте репозиторий или скопируйте проект
 
@@ -61,7 +63,7 @@
 pip install -r requirements.txt
 ```
 
-3. Настройте API ключи:
+### Настройка API ключей
 
 Создайте файл `config_secrets.py` на основе примера:
 ```bash
@@ -97,6 +99,46 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 - OpenRouter API Key: https://openrouter.ai/keys
   - Используется для запуска моделей через OpenRouter API (например, deepseek-r1t-chimera-api, mistral-small-3.1-24b-api, qwen-3-32b-api)
 
+### Конфигурация проекта
+
+Основные настройки находятся в `config.py`:
+
+**Путь к датасету:**
+Путь к датасету (`DATASET_PATH`) определяется автоматически. Программа ищет файл `results_var3.xlsx` в следующих местах (в порядке приоритета):
+
+1. **Переменная окружения** (наивысший приоритет):
+   ```bash
+   export DATASET_PATH=/path/to/data/results_var3.xlsx
+   ```
+
+2. **Автоматический поиск** (если переменная окружения не установлена):
+   - В родительской директории SmallLLMEvaluator: `../data/results_var3.xlsx`
+   - На уровень выше: `../../data/results_var3.xlsx`
+   - В директории запуска скрипта: `<script_dir>/data/results_var3.xlsx`
+   - На уровень выше от директории запуска: `<script_dir>/../data/results_var3.xlsx`
+   - В текущей рабочей директории: `<cwd>/data/results_var3.xlsx`
+   - На уровень выше от текущей директории: `<cwd>/../data/results_var3.xlsx`
+   - Относительный путь: `data/results_var3.xlsx`
+
+**Примечание:** Если файл не найден, программа выведет предупреждение со списком всех проверенных путей, что поможет определить правильное расположение файла.
+
+**Другие настройки:**
+- `GROUND_TRUTH_PATH` - путь к файлу с ground truth (опционально, по умолчанию используется колонка `json_parsed` из датасета)
+- `OUTPUT_DIR` - директория для сохранения результатов (по умолчанию `results/`)
+- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"`):
+  - `"FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE"` - промпт с примером текста и ответа
+  - `"FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"` - базовый промпт без примера
+  - `"MINIMAL_FIVESHOT_PROMPT"` - промпт few-shot с 5 примерами
+  
+  **Настройка в `config.py`:**
+  ```python
+  PROMPT_TEMPLATE_NAME = "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"  # или любая другая переменная из prompt_config.py
+  ```
+
+**Приоритет загрузки API ключей:**
+1. Файл `config_secrets.py` (если существует)
+2. Переменные окружения
+
 ## Структура проекта
 
 ```
@@ -123,6 +165,143 @@ SmallLLMEvaluator/
 ```
 
 ## Использование
+
+### Оценка одной модели
+
+Запустите `main.py` с указанием модели:
+
+```bash
+python main.py <model_key>
+```
+
+Например:
+```bash
+python main.py qwen-2.5-3b
+```
+
+**Запуск в мультиагентном режиме:**
+
+Для запуска модели в мультиагентном режиме используйте флаг `--multi-agent`:
+
+```bash
+python main.py <model_key> --multi-agent <mode>
+```
+
+**Доступные режимы мультиагентного подхода:**
+- `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
+- `critic_3agents` - 3 агента: генератор (создает первоначальный ответ), критик (анализирует ответ на соответствие промпту), исправитель (устраняет найденные ошибки) (вдохновлено подходом из Reddit: 3agents)
+- `qa_workflow` - 6 агентов: извлечение питательных веществ → массовые доли для каждого вещества → стандарт → марка → количества → сборка JSON (QA-подход с вопросами-ответами)
+
+**Отключение анализа через Gemini API:**
+
+Для отключения анализа ошибок через Gemini API используйте флаг `--no-gemini`:
+
+```bash
+python main.py <model_key> --no-gemini
+```
+
+Это полезно, если:
+- У вас нет `GEMINI_API_KEY`
+- Вы хотите ускорить процесс оценки (анализ через Gemini занимает дополнительное время)
+- Вы не нуждаетесь в автоматическом анализе ошибок
+
+**Режим Structured Output (Pydantic валидация):**
+
+Режим `--structured-output` использует Pydantic схемы для валидации и структурирования ответов моделей. Это обеспечивает более надежное извлечение данных и гарантирует соответствие ответов ожидаемой структуре.
+
+**Примеры запуска:**
+
+```bash
+# Одноагентный режим (по умолчанию)
+python main.py qwen-2.5-3b
+
+# Мультиагентный режим
+python main.py qwen-2.5-3b --multi-agent simple_4agents
+python main.py qwen-2.5-3b --multi-agent critic_3agents
+python main.py qwen-2.5-3b --multi-agent qa_workflow
+
+# Qwen3 32B (локальная версия, требует ~64GB+ VRAM)
+python main.py qwen-3-32b
+python main.py qwen-3-32b --multi-agent simple_4agents
+
+# CodeGemma 7B (специализирована для работы с кодом, требует ~14GB VRAM)
+python main.py codegemma-7b
+python main.py codegemma-7b --multi-agent simple_4agents
+
+# Запуск без анализа через Gemini API
+python main.py qwen-2.5-3b --no-gemini
+python main.py qwen-2.5-3b --multi-agent simple_4agents --no-gemini
+
+# Одноагентный режим с structured output
+python main.py qwen-2.5-3b --structured-output
+
+# Мультиагентный режим с structured output
+python main.py gemma-3-4b-api --multi-agent simple_4agents --structured-output
+
+# API модель с structured output
+python main.py gemma-3-27b-api --structured-output
+```
+
+Доступные модели можно посмотреть, запустив `main.py` без аргументов.
+
+### Сравнение подходов
+
+**Одноагентный подход:**
+- Быстрее (один запрос к модели)
+- Меньше использование памяти
+- Подходит для простых задач
+- Использует единый промпт `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`
+
+**Мультиагентный подход:**
+- Более точное извлечение данных за счет специализации
+- Разделение ответственности между агентами
+- Больше запросов к модели (зависит от режима: 3-4 запроса вместо 1)
+- Больше использование памяти и времени
+- Использует специализированные промпты для каждого этапа
+
+**Режимы:**
+- `simple_4agents` - 4 запроса к модели (извлечение числовых фрагментов → массовые доли → прочие параметры → формирование JSON)
+- `critic_3agents` - 3 запроса к модели (генератор → критик → исправитель)
+- `qa_workflow` - минимум 4 запроса (nutrients, standard, grade, quantities), максимум зависит от количества найденных питательных веществ (4 + N запросов, где N - количество веществ)
+
+**Информация о режиме сохраняется в метриках:**
+- Поле `multi_agent_mode` в JSON метриках содержит используемый режим (или `null` для одноагентного)
+- Поле `prompt_info` содержит информацию о промптах для мультиагентного режима
+- Поле `prompt_designation` содержит обозначение использованного промпта (из `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
+
+### Оценка всех моделей
+
+Запустите скрипт для оценки всех настроенных моделей:
+
+```bash
+python run_all_models.py
+```
+
+Скрипт автоматически:
+- Проверит доступность Gemini API
+- Запустит оценку для каждой модели
+- Пропустит модели, которые не удалось загрузить
+- Сохранит результаты для каждой модели
+
+### Переоценка результатов
+
+Если нужно пересчитать метрики качества из сохраненного CSV файла без повторного запуска модели:
+
+```bash
+python reevaluate.py results/results_model_name_timestamp.csv
+```
+
+Или с указанием имени модели:
+```bash
+python reevaluate.py results/results_model_name_timestamp.csv "model/name"
+```
+
+Для включения анализа ошибок через Gemini API добавьте флаг `--gemini`:
+```bash
+python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gemini
+```
+
+**Примечание:** Для использования анализа через Gemini необходим `GEMINI_API_KEY` в `config_secrets.py` или в переменных окружения.
 
 ### Извлечение few-shot примеров
 
@@ -221,127 +400,6 @@ CSV файл с колонками:
 - `total_uncertainty`: общая неопределенность (отсортировано по убыванию)
 - `responses`: список из k сгенерированных ответов (JSON строка)
 
-### Оценка одной модели
-
-Запустите `main.py` с указанием модели:
-
-```bash
-python main.py <model_key>
-```
-
-Например:
-```bash
-python main.py qwen-2.5-3b
-```
-
-**Запуск в мультиагентном режиме:**
-
-Для запуска модели в мультиагентном режиме используйте флаг `--multi-agent`:
-
-```bash
-python main.py <model_key> --multi-agent <mode>
-```
-
-Например:
-```bash
-python main.py qwen-2.5-3b --multi-agent simple_4agents
-```
-
-**Доступные режимы мультиагентного подхода:**
-- `simple_4agents` - 4 агента: извлечение числовых фрагментов, массовые доли, прочие параметры, формирование JSON
-- `critic_3agents` - 3 агента: генератор (создает первоначальный ответ), критик (анализирует ответ на соответствие промпту), исправитель (устраняет найденные ошибки) (вдохновлено подходом из Reddit: 3agents)
-- `qa_workflow` - 6 агентов: извлечение питательных веществ → массовые доли для каждого вещества → стандарт → марка → количества → сборка JSON (QA-подход с вопросами-ответами)
-
-**Примеры запуска:**
-
-```bash
-# Одноагентный режим (по умолчанию)
-python main.py qwen-2.5-3b
-
-# Мультиагентный режим
-python main.py qwen-2.5-3b --multi-agent simple_4agents
-python main.py qwen-2.5-3b --multi-agent critic_3agents
-python main.py qwen-2.5-3b --multi-agent qa_workflow
-
-# Qwen3 32B (локальная версия, требует ~64GB+ VRAM)
-python main.py qwen-3-32b
-python main.py qwen-3-32b --multi-agent simple_4agents
-
-# CodeGemma 7B (специализирована для работы с кодом, требует ~14GB VRAM)
-python main.py codegemma-7b
-python main.py codegemma-7b --multi-agent simple_4agents
-```
-
-Доступные модели можно посмотреть, запустив `main.py` без аргументов.
-
-### Сравнение подходов
-
-**Одноагентный подход:**
-- Быстрее (один запрос к модели)
-- Меньше использование памяти
-- Подходит для простых задач
-- Использует единый промпт `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`
-
-**Мультиагентный подход:**
-- Более точное извлечение данных за счет специализации
-- Разделение ответственности между агентами
-- Больше запросов к модели (зависит от режима: 3-4 запроса вместо 1)
-- Больше использование памяти и времени
-- Использует специализированные промпты для каждого этапа
-
-**Режимы:**
-- `simple_4agents` - 4 запроса к модели (извлечение числовых фрагментов → массовые доли → прочие параметры → формирование JSON)
-- `critic_3agents` - 3 запроса к модели (генератор → критик → исправитель)
-- `qa_workflow` - минимум 4 запроса (nutrients, standard, grade, quantities), максимум зависит от количества найденных питательных веществ (4 + N запросов, где N - количество веществ)
-
-**Информация о режиме сохраняется в метриках:**
-- Поле `multi_agent_mode` в JSON метриках содержит используемый режим (или `null` для одноагентного)
-- Поле `prompt_info` содержит информацию о промптах для мультиагентного режима
-
-### Режим Structured Output (Pydantic валидация)
-
-Режим `--structured-output` использует Pydantic схемы для валидации и структурирования ответов моделей. Это обеспечивает более надежное извлечение данных и гарантирует соответствие ответов ожидаемой структуре.
-
-**Как работает:**
-
-1. **Для API моделей (Gemma 3, OpenRouter):**
-   - JSON Schema из Pydantic схемы передается напрямую в API
-   - API возвращает ответ, соответствующий схеме
-   - Ответ уже валидирован и не требует дополнительной проверки
-
-2. **Для локальных моделей:**
-   - JSON Schema добавляется в конец промпта, чтобы модель знала требуемую структуру
-   - После генерации ответ валидируется через Pydantic схему
-   - Если валидация не проходит, используется обычный парсинг JSON
-
-**Преимущества:**
-- Гарантированная структура ответа (соответствие схеме)
-- Автоматическая валидация типов данных
-- Более надежное извлечение данных
-- Меньше ошибок парсинга
-- Улучшенная совместимость с API моделями, поддерживающими structured generation
-
-**Использование:**
-
-```bash
-# Одноагентный режим с structured output
-python main.py qwen-2.5-3b --structured-output
-
-# Мультиагентный режим с structured output
-python main.py gemma-3-4b-api --multi-agent simple_4agents --structured-output
-
-# API модель с structured output
-python main.py gemma-3-27b-api --structured-output
-```
-
-**Технические детали:**
-- Используется Pydantic схема `FertilizerExtractionOutput` из `structured_schemas.py`
-- Для API моделей используется специальный промпт `FERTILIZER_EXTRACTION_PROMPT_STRUCTURED`
-- Для локальных моделей JSON Schema добавляется в промпт автоматически
-- При ошибке валидации система автоматически переключается на обычный парсинг
-
-**Примечание:** Режим `--structured-output` можно комбинировать с любым мультиагентным режимом (`simple_4agents`, `critic_3agents`, `qa_workflow`).
-
 ### Режим вывода (verbose)
 
 Проект поддерживает два режима вывода информации в консоль:
@@ -370,64 +428,41 @@ python main.py qwen-2.5-3b
 python run_all_models.py
 ```
 
-### Оценка всех моделей
-
-Запустите скрипт для оценки всех настроенных моделей:
-
-```bash
-python run_all_models.py
-```
-
-Скрипт автоматически:
-- Проверит доступность Gemini API
-- Запустит оценку для каждой модели
-- Пропустит модели, которые не удалось загрузить
-- Сохранит результаты для каждой модели
-
-### Ручная оценка результатов
-
-Если нужно пересчитать метрики качества из сохраненного CSV файла без повторного запуска модели:
-
-```bash
-python reevaluate.py results/results_model_name_timestamp.csv
-```
-
-Или с указанием имени модели:
-```bash
-python reevaluate.py results/results_model_name_timestamp.csv "model/name"
-```
-
-Для включения анализа ошибок через Gemini API добавьте флаг `--gemini`:
-```bash
-python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gemini
-```
-
-**Примечание:** Для использования анализа через Gemini необходим `GEMINI_API_KEY` в `config_secrets.py` или в переменных окружения.
-
 ## Доступные модели
 
 Проект поддерживает следующие модели:
 
 ### Локальные модели (загружаются с Hugging Face)
 
+**Gemma модели:**
 - **google/gemma-2-2b-it** - Gemma 2.2B Instruct (ключ: `gemma-2-2b`)
 - **google/gemma-3-1b-it** - Gemma 3 1B Instruct (ключ: `gemma-3-1b`)
 - **google/gemma-3-4b-it** - Gemma 3 4B Instruct (ключ: `gemma-3-4b`)
 - **google/codegemma-7b-it** - CodeGemma 7B Instruct (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
+
+**Qwen модели:**
 - **Qwen/Qwen2.5-1.5B-Instruct** - Qwen 2.5 1.5B (ключ: `qwen-2.5-1.5b`)
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B (ключ: `qwen-2.5-3b`)
 - **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B (ключ: `qwen-2.5-4b`)
 - **Qwen/Qwen3-8B** - Qwen 3 8B (ключ: `qwen-3-8b`) - поддерживает thinking mode
 - **Qwen/Qwen3-32B** - Qwen 3 32B (ключ: `qwen-3-32b`) - поддерживает thinking mode, требует ~64GB+ VRAM для полной загрузки
+
+**Mistral модели:**
 - **mistralai/Ministral-3-3B-Reasoning-2512** - Ministral 3 3B Reasoning (ключ: `Ministral-3-3B-Reasoning-2512`)
-- **AI4Chem/CHEMLLM-2b-1_5** - CHEMLLM 2B (ключ: `CHEMLLM-2b-1_5`)
-- **microsoft/Phi-3.5-mini-instruct** - Phi 3.5 Mini (ключ: `Phi-3.5-mini-instruct`)
+- **mistralai/Mistral-3-8B-Instruct** - Mistral 3 8B Instruct (ключ: `mistral-3-8b-instruct`) - требует ~16GB VRAM
+- **mistralai/Mistral-3-14B-Instruct** - Mistral 3 14B Instruct (ключ: `mistral-3-14b-instruct`) - требует ~28GB VRAM
+- **mistralai/Mistral-3-3B-Reasoning** - Mistral 3 3B Reasoning (ключ: `mistral-3-3b-reasoning`)
+
+**Другие модели:**
 - **microsoft/Phi-4-mini-instruct** - Phi 4 Mini (ключ: `phi-4-mini-instruct`)
-- **unsloth/mistral-7b-v0.3-bnb-4bit** - Mistral 7B (предквантизированная) (ключ: `mistral-7b-v0.3-bnb-4bit`)
 
-### API модели (через Google Generative AI API)
+**Важно для Mistral 3 моделей:**
+- Требуется `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
+- Требуется `mistral-common>=1.8.6`: `pip install mistral-common --upgrade`
 
-**Требования:**
+### API модели
+
+**Требования и особенности API моделей:**
 - Для моделей Gemma 3 требуется `GEMINI_API_KEY` в `config_secrets.py` или переменных окружения
 - Для моделей через OpenRouter требуется `OPENAI_API_KEY` в `config_secrets.py` или переменных окружения
 - Библиотека `google-genai` должна быть установлена для моделей Gemma 3
@@ -470,21 +505,23 @@ python main.py qwen-3-32b-api --multi-agent simple_4agents
 python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 ```
 
-## Метрики оценки
+## Метрики и результаты
+
+### Метрики оценки
 
 Для каждой модели автоматически собираются следующие метрики:
 
-### Производительность
+**Производительность:**
 - Средняя скорость ответа (секунды)
 - Время загрузки модели
 - Общее время инференса
 - Использование GPU памяти (среднее, максимальное, минимальное)
 
-### Качество парсинга
+**Качество парсинга:**
 - Процент успешно распарсенных JSON ответов
 - Список ошибок парсинга с полными ответами моделей
 
-### Качество извлечения данных
+**Качество извлечения данных:**
 Для групп "массовая доля" и "прочее":
 - Accuracy (точность)
 - Precision (прецизионность)
@@ -494,141 +531,34 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 - False Positives (FP)
 - False Negatives (FN)
 
-## Формат результатов
+### Формат результатов
 
 Результаты сохраняются в директории `results/`:
 
-1. **results_model_name_timestamp.csv** - Детальные результаты для каждого текста:
+1. **results_model_name_prompt_timestamp.csv** - Детальные результаты для каждого текста:
    - `text` - исходный текст
    - `json` - извлеченный JSON из ответа модели
    - `json_parsed` - распарсенный JSON
    - `is_valid` - валидность JSON
 
-2. **metrics_model_name_timestamp.json** - Сводные метрики:
+2. **metrics_model_name_prompt_timestamp.json** - Сводные метрики:
    - Информация о GPU
    - Метрики производительности
    - Метрики качества
    - Гиперпараметры модели
-   - Полный текст промпта
+   - `prompt_template` - техническое название промпта
+   - `prompt_designation` - обозначение использованного промпта (из `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
+   - `prompt_full_text` - полный текст промпта
+   - `prompt_info` - дополнительная информация о промптах (для мультиагентного режима)
    - Список ошибок парсинга
 
 3. **evaluation_summary.jsonl** - Общий файл со всеми прогонами (JSON Lines формат)
 
 4. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
 
-## Конфигурация
+**Примечание:** Название промпта добавляется в имя файла (например, `metrics_model_name_FERTILIZER_EXTRACTION_PROMPT_TEMPLATE_timestamp.json`), а также сохраняется в отдельном поле `prompt_designation` в JSON файле для удобного поиска и фильтрации результатов.
 
-Основные настройки находятся в `config.py`:
-
-### Путь к датасету
-
-Путь к датасету (`DATASET_PATH`) определяется автоматически. Программа ищет файл `results_var3.xlsx` в следующих местах (в порядке приоритета):
-
-1. **Переменная окружения** (наивысший приоритет):
-   ```bash
-   export DATASET_PATH=/path/to/data/results_var3.xlsx
-   ```
-
-2. **Автоматический поиск** (если переменная окружения не установлена):
-   - В родительской директории SmallLLMEvaluator: `../data/results_var3.xlsx`
-   - На уровень выше: `../../data/results_var3.xlsx`
-   - В директории запуска скрипта: `<script_dir>/data/results_var3.xlsx`
-   - На уровень выше от директории запуска: `<script_dir>/../data/results_var3.xlsx`
-   - В текущей рабочей директории: `<cwd>/data/results_var3.xlsx`
-   - На уровень выше от текущей директории: `<cwd>/../data/results_var3.xlsx`
-   - Относительный путь: `data/results_var3.xlsx`
-
-**Примечание:** Если файл не найден, программа выведет предупреждение со списком всех проверенных путей, что поможет определить правильное расположение файла.
-
-### Другие настройки
-
-- `GROUND_TRUTH_PATH` - путь к файлу с ground truth (опционально, по умолчанию используется колонка `json_parsed` из датасета)
-- `OUTPUT_DIR` - директория для сохранения результатов (по умолчанию `results/`)
-- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE"`):
-  - `"FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE"` - промпт с примером текста и ответа (по умолчанию)
-  - `"FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"` - базовый промпт без примера
-  
-  **Настройка в `config.py`:**
-  ```python
-  PROMPT_TEMPLATE_NAME = "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"  # или любая другая переменная из prompt_config.py
-  ```
-
-### API ключи
-
-**API ключи должны быть установлены через переменные окружения или файл `config_secrets.py`:**
-
-- `HF_TOKEN` - токен Hugging Face (ОБЯЗАТЕЛЬНЫЙ)
-- `GEMINI_API_KEY` - ключ Gemini API (опциональный, для анализа ошибок и моделей Gemma 3 через API)
-- `OPENAI_API_KEY` - ключ OpenRouter API (опциональный, для моделей через OpenRouter API)
-
-**Приоритет загрузки ключей:**
-1. Файл `config_secrets.py` (если существует)
-2. Переменные окружения
-
-## Добавление новой модели
-
-1. Добавьте функцию загрузки в `model_loaders.py`:
-```python
-def load_your_model() -> Tuple[Any, Any]:
-    tokenizer = AutoTokenizer.from_pretrained("model/name", token=HF_TOKEN)
-    model = AutoModelForCausalLM.from_pretrained(
-        "model/name",
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
-```
-
-2. Добавьте функцию генерации (если нужна специализированная):
-```python
-def generate_your_model(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
-    # Ваша логика генерации
-    pass
-```
-
-3. Добавьте конфигурацию в `main.py` в словарь `MODEL_CONFIGS`:
-```python
-"your-model-key": {
-    "name": "model/name",
-    "load_func": ml.load_your_model,
-    "generate_func": ml.generate_standard,  # или ml.generate_your_model
-    "hyperparameters": {
-        "max_new_tokens": 1024,
-        "do_sample": False,
-        "dtype": "bfloat16"
-    }
-}
-```
-
-Для запуска в мультиагентном режиме используйте флаг `--multi-agent`:
-```bash
-python main.py your-model-key --multi-agent simple_4agents
-```
-
-## Требования
-
-### Основные требования
-
-- Python 3.8+
-- PyTorch с поддержкой CUDA (для локальных моделей)
-- Transformers библиотека
-- LangGraph (для мультиагентного подхода)
-- Другие зависимости из requirements.txt
-
-### Требования для локальных моделей
-
-- CUDA-совместимая GPU (рекомендуется 8GB+ VRAM)
-- Hugging Face Token (`HF_TOKEN`)
-
-### Требования для API моделей
-
-- Google Generative AI API Key (`GEMINI_API_KEY`)
-- Библиотека `google-genai` (устанавливается через `pip install google-genai`)
-- Локальная GPU не требуется
-
-## Работа промптов
+## Конфигурация промптов
 
 ### Конфигурация промптов
 
@@ -636,6 +566,8 @@ python main.py your-model-key --multi-agent simple_4agents
 
 **Для одноагентного подхода:**
 - **`FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`** - основной промпт для одноагентного подхода
+- **`FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE`** - промпт с примером текста и ответа
+- **`MINIMAL_FIVESHOT_PROMPT`** - промпт few-shot с 5 примерами
 
 **Для режима `simple_4agents`:**
 - **`NUMERIC_FRAGMENTS_EXTRACTION_PROMPT`** - промпт для агента извлечения числовых фрагментов
@@ -749,6 +681,77 @@ python main.py your-model-key --multi-agent simple_4agents
 }
 ```
 
+## Добавление новой модели
+
+1. Добавьте функцию загрузки в `model_loaders.py`:
+```python
+def load_your_model() -> Tuple[Any, Any]:
+    tokenizer = AutoTokenizer.from_pretrained("model/name", token=HF_TOKEN)
+    model = AutoModelForCausalLM.from_pretrained(
+        "model/name",
+        device_map="auto",
+        dtype=torch.bfloat16,
+        token=HF_TOKEN,
+        trust_remote_code=True
+    )
+    return model, tokenizer
+```
+
+2. Добавьте функцию генерации (если нужна специализированная):
+```python
+def generate_your_model(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
+    # Ваша логика генерации
+    pass
+```
+
+3. Добавьте конфигурацию в `main.py` в словарь `MODEL_CONFIGS`:
+```python
+"your-model-key": {
+    "name": "model/name",
+    "load_func": ml.load_your_model,
+    "generate_func": ml.generate_standard,  # или ml.generate_your_model
+    "hyperparameters": {
+        "max_new_tokens": 1024,
+        "do_sample": False,
+        "dtype": "bfloat16"
+    }
+}
+```
+
+Для запуска в мультиагентном режиме используйте флаг `--multi-agent`:
+```bash
+python main.py your-model-key --multi-agent simple_4agents
+```
+
+## Требования
+
+### Основные требования
+
+- Python 3.8+
+- PyTorch с поддержкой CUDA (для локальных моделей)
+- Transformers библиотека
+- LangGraph (для мультиагентного подхода)
+- Другие зависимости из requirements.txt
+
+### Требования для локальных моделей
+
+- CUDA-совместимая GPU (рекомендуется 8GB+ VRAM)
+- Hugging Face Token (`HF_TOKEN`)
+
+### Требования для API моделей
+
+- Google Generative AI API Key (`GEMINI_API_KEY`) для моделей Gemma 3
+- OpenRouter API Key (`OPENAI_API_KEY`) для моделей через OpenRouter
+- Библиотека `google-genai` (устанавливается через `pip install google-genai`) для моделей Gemma 3
+- Библиотека `openai` (устанавливается через `pip install openai`) для моделей через OpenRouter
+- Локальная GPU не требуется
+
+### Специальные требования
+
+**Для Mistral 3 моделей:**
+- `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
+- `mistral-common>=1.8.6`: `pip install mistral-common --upgrade`
+
 ## Справка по использованию
 
 ```bash
@@ -767,6 +770,7 @@ python reevaluate.py
 | `python main.py <model_key> --multi-agent <mode>` | Оценка одной модели | Мультиагентный | Отключен | По умолчанию |
 | `python main.py <model_key> --structured-output` | Оценка с Pydantic валидацией | Одноагентный | Включен | По умолчанию |
 | `python main.py <model_key> --multi-agent <mode> --structured-output` | Оценка с мультиагентным режимом и Pydantic | Мультиагентный | Включен | По умолчанию |
+| `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Отключен |
 | `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | По умолчанию |
 | `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | Отключен |
 | `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | Включен |

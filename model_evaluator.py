@@ -1107,6 +1107,18 @@ class ModelEvaluator:
         # Создаем копию гиперпараметров для сохранения (чтобы гарантировать сохранение всех значений)
         hyperparameters_to_save = copy.deepcopy(hyperparameters)
         
+        # Получаем название промпта для сохранения
+        prompt_template_name = self._get_prompt_template_name(prompt_template, use_multi_agent, multi_agent_mode)
+        
+        # Получаем читаемое обозначение промпта из конфигурации
+        prompt_designation = prompt_template_name
+        if not use_multi_agent:
+            try:
+                from config import PROMPT_TEMPLATE_NAME
+                prompt_designation = PROMPT_TEMPLATE_NAME
+            except:
+                pass
+        
         evaluation_result = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "model_name": model_name,
@@ -1125,7 +1137,8 @@ class ModelEvaluator:
             "parsing_errors_count": len(parsing_errors),
             "quality_metrics": quality_metrics,
             "hyperparameters": hyperparameters_to_save,
-            "prompt_template": self._get_prompt_template_name(prompt_template, use_multi_agent, multi_agent_mode),
+            "prompt_template": prompt_template_name,
+            "prompt_designation": prompt_designation,  # Обозначение промпта (из config.PROMPT_TEMPLATE_NAME или multi_agent_mode)
             "prompt_full_text": full_prompt_example,
             "prompt_info": prompt_info,
             "parsing_errors": parsing_errors,
@@ -1540,7 +1553,9 @@ class ModelEvaluator:
             "total_samples": len(predictions),
             "valid_json_count": valid_count,
             "invalid_json_count": invalid_count,
-            "gemini_analysis": gemini_analysis
+            "gemini_analysis": gemini_analysis,
+            "prompt_template": prompt_template_name,  # Сохраняем название промпта из исходных метрик
+            "prompt_designation": prompt_designation  # Сохраняем обозначение промпта из исходных метрик
         }
         
         # Сохраняем обновленные метрики
@@ -1552,6 +1567,7 @@ class ModelEvaluator:
         # Пытаемся найти исходный файл метрик для извлечения multi_agent_mode и prompt_template
         multi_agent_mode = None
         prompt_template_name = None
+        prompt_designation = None
         metrics_file_pattern = os.path.join(output_dir, f"metrics_{model_name_safe}_*.json")
         metrics_files = glob.glob(metrics_file_pattern)
         original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
@@ -1561,6 +1577,7 @@ class ModelEvaluator:
                     original_metrics = json.load(f)
                 multi_agent_mode = original_metrics.get("multi_agent_mode")
                 prompt_template_name = original_metrics.get("prompt_template")
+                prompt_designation = original_metrics.get("prompt_designation")  # Сохраняем обозначение промпта
             except Exception:
                 pass  # Если не удалось загрузить, просто пропускаем
         

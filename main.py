@@ -338,9 +338,9 @@ MODEL_CONFIGS = {
             "torch_dtype": "bfloat16"
         }
     },
-    "CHEMLLM-2b-1_5": {
-        "name": "AI4Chem/CHEMLLM-2b-1_5",
-        "load_func": ml.load_chemllm_2b_1_5,
+    "mistral-3-8b-instruct": {
+        "name": "mistralai/Mistral-3-8B-Instruct",
+        "load_func": ml.load_mistral_3_8b_instruct,
         "generate_func": ml.generate_standard,
         "hyperparameters": {
             "max_new_tokens": 1024,
@@ -348,12 +348,22 @@ MODEL_CONFIGS = {
             "torch_dtype": "bfloat16"
         }
     },
-    "Phi-3.5-mini-instruct": {
-        "name": "microsoft/Phi-3.5-mini-instruct",
-        "load_func": ml.load_phi_3_5_mini_instruct,
-        "generate_func": ml.generate_phi_3_5,  # Используем специальную функцию для Phi-3.5
+    "mistral-3-14b-instruct": {
+        "name": "mistralai/Mistral-3-14B-Instruct",
+        "load_func": ml.load_mistral_3_14b_instruct,
+        "generate_func": ml.generate_standard,
         "hyperparameters": {
             "max_new_tokens": 1024,
+            "do_sample": False,
+            "torch_dtype": "bfloat16"
+        }
+    },
+    "mistral-3-3b-reasoning": {
+        "name": "mistralai/Mistral-3-3B-Reasoning",
+        "load_func": ml.load_mistral_3_3b_reasoning,
+        "generate_func": ml.generate_standard,
+        "hyperparameters": {
+            "max_new_tokens": 512,
             "do_sample": False,
             "torch_dtype": "bfloat16"
         }
@@ -378,16 +388,6 @@ MODEL_CONFIGS = {
             "dtype": "bfloat16"
         }
     },
-    "mistral-7b-v0.3-bnb-4bit": {
-        "name": "unsloth/mistral-7b-v0.3-bnb-4bit",
-        "load_func": ml.load_mistral_7b_v0_3_bnb_4bit,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "quantization": "4-bit (pre-quantized)"
-        }
-    }
 }
 
 
@@ -430,13 +430,14 @@ def main():
     
     # Теперь проверяем аргументы командной строки
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output]")
+        print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output] [--no-gemini]")
         print("\nАргументы:")
         print("  <model_name>        - ключ модели из конфигурации")
         print("  --multi-agent       - (опционально) режим мультиагентного подхода")
         print("                        Доступные режимы: simple_4agents, critic_3agents, qa_workflow")
         print("  --structured-output - (опционально) использовать structured output через Pydantic")
         print("                        Работает только с API моделями, поддерживающими structured output")
+        print("  --no-gemini         - (опционально) отключить анализ ошибок через Gemini API")
         print("\nПримеры:")
         print("  python main.py qwen-2.5-3b")
         print("  python main.py qwen-2.5-3b --multi-agent simple_4agents")
@@ -444,6 +445,7 @@ def main():
         print("  python main.py qwen-3-32b --multi-agent simple_4agents")
         print("  python main.py gemma-3-27b-api --structured-output")
         print("  python main.py qwen-3-32b-api --structured-output")
+        print("  python main.py qwen-2.5-3b --no-gemini")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
@@ -459,6 +461,7 @@ def main():
     # Парсим аргументы командной строки
     multi_agent_mode = None
     structured_output = False
+    use_gemini = True  # По умолчанию включен
     
     if len(sys.argv) > 2:
         i = 2
@@ -474,9 +477,12 @@ def main():
             elif arg == "--structured-output":
                 structured_output = True
                 i += 1
+            elif arg == "--no-gemini" or arg == "--skip-gemini":
+                use_gemini = False
+                i += 1
             else:
                 print(f"Неизвестный аргумент: {arg}")
-                print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output]")
+                print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output] [--no-gemini]")
                 return
     
     # Проверяем существование датасета
@@ -497,6 +503,10 @@ def main():
         print(f"📌 Режим: Одноагентный")
     if structured_output:
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
+    if use_gemini:
+        print(f"📌 Анализ через Gemini API: Включен")
+    else:
+        print(f"📌 Анализ через Gemini API: Отключен")
     print(f"📁 Датасет: {find_dataset_path()}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
