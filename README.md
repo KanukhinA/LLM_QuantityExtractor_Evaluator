@@ -262,6 +262,14 @@ python main.py qwen-2.5-3b
 python main.py qwen-2.5-3b --multi-agent simple_4agents
 python main.py qwen-2.5-3b --multi-agent critic_3agents
 python main.py qwen-2.5-3b --multi-agent qa_workflow
+
+# Qwen3 32B (локальная версия, требует ~64GB+ VRAM)
+python main.py qwen-3-32b
+python main.py qwen-3-32b --multi-agent simple_4agents
+
+# CodeGemma 7B (специализирована для работы с кодом, требует ~14GB VRAM)
+python main.py codegemma-7b
+python main.py codegemma-7b --multi-agent simple_4agents
 ```
 
 Доступные модели можно посмотреть, запустив `main.py` без аргументов.
@@ -405,10 +413,12 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 - **google/gemma-2-2b-it** - Gemma 2.2B Instruct (ключ: `gemma-2-2b`)
 - **google/gemma-3-1b-it** - Gemma 3 1B Instruct (ключ: `gemma-3-1b`)
 - **google/gemma-3-4b-it** - Gemma 3 4B Instruct (ключ: `gemma-3-4b`)
+- **google/codegemma-7b-it** - CodeGemma 7B Instruct (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
 - **Qwen/Qwen2.5-1.5B-Instruct** - Qwen 2.5 1.5B (ключ: `qwen-2.5-1.5b`)
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B (ключ: `qwen-2.5-3b`)
 - **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B (ключ: `qwen-2.5-4b`)
 - **Qwen/Qwen3-8B** - Qwen 3 8B (ключ: `qwen-3-8b`) - поддерживает thinking mode
+- **Qwen/Qwen3-32B** - Qwen 3 32B (ключ: `qwen-3-32b`) - поддерживает thinking mode, требует ~64GB+ VRAM для полной загрузки
 - **mistralai/Ministral-3-3B-Reasoning-2512** - Ministral 3 3B Reasoning (ключ: `Ministral-3-3B-Reasoning-2512`)
 - **AI4Chem/CHEMLLM-2b-1_5** - CHEMLLM 2B (ключ: `CHEMLLM-2b-1_5`)
 - **microsoft/Phi-3.5-mini-instruct** - Phi 3.5 Mini (ключ: `Phi-3.5-mini-instruct`)

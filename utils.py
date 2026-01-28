@@ -225,30 +225,122 @@ def build_prompt3(text: str, structured_output: bool = False, response_schema: A
     return prompt_text
 
 
+def _find_last_valid_json(text: str) -> str:
+    """
+    Находит последний валидный JSON объект или массив в тексте.
+    Учитывает баланс скобок для правильного определения границ JSON.
+    
+    Args:
+        text: текст для поиска
+        
+    Returns:
+        строка с последним JSON объектом/массивом или пустая строка
+    """
+    if not text:
+        return ""
+    
+    # Ищем все возможные начала JSON объектов и массивов
+    candidates = []
+    
+    # Ищем все открывающие скобки
+    for i, char in enumerate(text):
+        if char == '{':
+            candidates.append(('object', i))
+        elif char == '[':
+            candidates.append(('array', i))
+    
+    if not candidates:
+        return ""
+    
+    # Проверяем кандидатов с конца, чтобы найти последний валидный JSON
+    for json_type, start_idx in reversed(candidates):
+        # Извлекаем фрагмент от начала до конца текста
+        fragment = text[start_idx:]
+        
+        # Пытаемся найти конец JSON объекта/массива, учитывая баланс скобок
+        depth_obj = 0
+        depth_arr = 0
+        in_string = False
+        escape = False
+        
+        end_idx = -1
+        for i, ch in enumerate(fragment):
+            # Обрабатываем escape-последовательности
+            if ch == "\\" and not escape:
+                escape = True
+                continue
+            elif escape:
+                escape = False
+                continue
+            
+            # Переключаем состояние строки только на неэкранированных кавычках
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            
+            # Считаем скобки только вне строк
+            if not in_string:
+                if ch == "{":
+                    depth_obj += 1
+                elif ch == "}":
+                    if depth_obj > 0:
+                        depth_obj -= 1
+                        # Для объекта проверяем только depth_obj (массив может быть внутри)
+                        if json_type == 'object' and depth_obj == 0:
+                            # Нашли конец объекта
+                            end_idx = i + 1
+                            break
+                elif ch == "[":
+                    depth_arr += 1
+                elif ch == "]":
+                    if depth_arr > 0:
+                        depth_arr -= 1
+                        # Для массива проверяем только depth_arr (объект может быть внутри)
+                        if json_type == 'array' and depth_arr == 0:
+                            # Нашли конец массива
+                            end_idx = i + 1
+                            break
+        
+        if end_idx != -1:
+            # Нашли валидный JSON
+            extracted = fragment[:end_idx].strip()
+            if extracted:
+                return extracted
+        else:
+            # JSON обрезан, но все равно возвращаем (будет обработано в parse_json_safe)
+            extracted = fragment.strip()
+            if extracted:
+                return extracted
+    
+    return ""
+
+
 def _extract_json_like(s: str) -> str:
     """
     Извлекает JSON-подстроку:
-    1) fenced ```json ... ```
-    2) если нет — ищет первый '{' и возвращает оттуда до конца (фрагмент, возможно обрезанный)
+    1) fenced ```json ... ``` (берет последний блок, если их несколько)
+    2) если нет — ищет последний '{' и возвращает оттуда до конца (фрагмент, возможно обрезанный)
     """
     if not isinstance(s, str):
         return ""
 
-    # 1) fenced block ```json ... ```
-    m = re.search(r"```(?:json)?\s*(.*?)\s*```", s, flags=re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip()
+    # 1) fenced block ```json ... ``` - ищем все блоки и берем последний
+    json_blocks = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", s, flags=re.IGNORECASE | re.DOTALL))
+    if json_blocks:
+        # Берем последний блок
+        last_block = json_blocks[-1]
+        return last_block.group(1).strip()
 
     # убрать ведущие markdown-символы и пробелы
     s_stripped = re.sub(r"^[\s\*\-#>]+", "", s.lstrip())
 
-    # 2) найти первую фигурную скобку и вернуть фрагмент от неё до конца (включая возможную обрезку)
-    idx = s_stripped.find("{")
+    # 2) найти последнюю фигурную скобку и вернуть фрагмент от неё до конца (включая возможную обрезку)
+    idx = s_stripped.rfind("{")
     if idx != -1:
         return s_stripped[idx:].strip()
 
-    # если нет '{', пробуем '['
-    idx = s_stripped.find("[")
+    # если нет '{', пробуем последнюю '['
+    idx = s_stripped.rfind("[")
     if idx != -1:
         return s_stripped[idx:].strip()
 
@@ -494,31 +586,11 @@ def extract_json_from_response(response_text: str) -> str:
                 if extracted:
                     return extracted
             
-            # Если нет markdown блоков, ищем последний JSON объект или массив
-            # Ищем все вхождения открывающих фигурных скобок (для объектов)
-            brace_positions = []
-            bracket_positions = []  # Для массивов
-            
-            for i, char in enumerate(json_part):
-                if char == '{':
-                    brace_positions.append(i)
-                elif char == '[':
-                    bracket_positions.append(i)
-            
-            # Берем последний JSON (объект или массив)
-            last_obj_idx = brace_positions[-1] if brace_positions else -1
-            last_arr_idx = bracket_positions[-1] if bracket_positions else -1
-            
-            if last_obj_idx > last_arr_idx:
-                # Последний JSON - объект
-                extracted = json_part[last_obj_idx:].strip()
-                if extracted:
-                    return extracted
-            elif last_arr_idx != -1:
-                # Последний JSON - массив
-                extracted = json_part[last_arr_idx:].strip()
-                if extracted:
-                    return extracted
+            # Если нет markdown блоков, ищем последний валидный JSON объект или массив
+            # Используем более умный подход: находим последний JSON, учитывая баланс скобок
+            extracted = _find_last_valid_json(json_part)
+            if extracted:
+                return extracted
             
             # Если ничего не найдено, возвращаем как есть
             return json_part
@@ -532,30 +604,10 @@ def extract_json_from_response(response_text: str) -> str:
         if extracted:
             return extracted
     
-    # 3. Ищем последний JSON объект или массив в тексте
-    brace_positions = []  # Для объектов
-    bracket_positions = []  # Для массивов
-    
-    for i, char in enumerate(response_text):
-        if char == '{':
-            brace_positions.append(i)
-        elif char == '[':
-            bracket_positions.append(i)
-    
-    # Берем последний JSON (объект или массив)
-    last_obj_idx = brace_positions[-1] if brace_positions else -1
-    last_arr_idx = bracket_positions[-1] if bracket_positions else -1
-    
-    if last_obj_idx > last_arr_idx:
-        # Последний JSON - объект
-        extracted = response_text[last_obj_idx:].strip()
-        if extracted:
-            return extracted
-    elif last_arr_idx != -1:
-        # Последний JSON - массив
-        extracted = response_text[last_arr_idx:].strip()
-        if extracted:
-            return extracted
+    # 3. Ищем последний валидный JSON объект или массив в тексте
+    extracted = _find_last_valid_json(response_text)
+    if extracted:
+        return extracted
     
     # 4. Иначе возвращаем весь текст (будет обработано в parse_json_safe)
     return response_text.strip()

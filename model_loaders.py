@@ -130,6 +130,62 @@ def load_qwen_3_8b() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
+def load_qwen_3_32b() -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3-32B с автоматическим выбором dtype"""
+    print(f"   Загрузка токенизатора Qwen/Qwen3-32B...")
+    print(f"   ⚠️ Примечание: Модель требует значительный объем VRAM (~64GB+ для полной загрузки)")
+    print(f"   (это может занять некоторое время при первом запуске)")
+    
+    try:
+        start_time = time.time()
+        tokenizer = AutoTokenizer.from_pretrained(
+            "Qwen/Qwen3-32B",
+            token=HF_TOKEN,
+            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
+            resume_download=True
+        )
+        elapsed = time.time() - start_time
+        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
+        print(f"   Возможные причины:")
+        print(f"     - Медленное интернет-соединение")
+        print(f"     - Проблемы с HuggingFace серверами")
+        print(f"     - Неверный или истекший HF_TOKEN")
+        print(f"   Попробуйте:")
+        print(f"     - Проверить интернет-соединение")
+        print(f"     - Проверить HF_TOKEN в config_secrets.py")
+        print(f"     - Увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
+        raise
+    
+    print(f"   Загрузка модели Qwen/Qwen3-32B...")
+    print(f"   ⚠️ Это может занять значительное время из-за размера модели (~32B параметров)")
+    try:
+        start_time = time.time()
+        model = AutoModelForCausalLM.from_pretrained(
+            "Qwen/Qwen3-32B",
+            torch_dtype="auto",
+            device_map="auto",
+            token=HF_TOKEN,
+            trust_remote_code=True
+        )
+        elapsed = time.time() - start_time
+        print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки модели: {e}")
+        print(f"   Возможные причины:")
+        print(f"     - Недостаточно VRAM (модель требует ~64GB+ для полной загрузки)")
+        print(f"     - Медленное интернет-соединение")
+        print(f"     - Проблемы с HuggingFace серверами")
+        print(f"   Рекомендации:")
+        print(f"     - Используйте квантизацию (4-bit или 8-bit) для уменьшения требований к памяти")
+        print(f"     - Рассмотрите использование API версии: qwen-3-32b-api")
+        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
+        raise
+    
+    return model, tokenizer
+
+
 def load_gemma_3_4b_4bit() -> Tuple[Any, Any]:
     """Загрузка google/gemma-3-4b-it с 4-bit quantization"""
     from transformers import BitsAndBytesConfig
@@ -268,6 +324,67 @@ def load_gemma_3_4b() -> Tuple[Any, Any]:
         print(f"   ✓ Модель загружена за {elapsed:.1f}с")
     except Exception as e:
         print(f"   ❌ Ошибка загрузки модели: {e}")
+        raise
+    
+    return model, tokenizer
+
+
+def load_codegemma_7b() -> Tuple[Any, Any]:
+    """Загрузка google/codegemma-7b-it (CodeGemma 7B Instruct, требует ~14GB VRAM)"""
+    model_id = "google/codegemma-7b-it"
+    
+    print(f"   Загрузка токенизатора {model_id}...")
+    print(f"   ⚠️ Примечание: CodeGemma специализирована для работы с кодом")
+    print(f"   (это может занять некоторое время при первом запуске)")
+    
+    try:
+        start_time = time.time()
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_id,
+            token=HF_TOKEN,
+            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
+            resume_download=True
+        )
+        elapsed = time.time() - start_time
+        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
+        print(f"   Возможные причины:")
+        print(f"     - Медленное интернет-соединение")
+        print(f"     - Проблемы с HuggingFace серверами")
+        print(f"     - Неверный или истекший HF_TOKEN")
+        print(f"   Попробуйте:")
+        print(f"     - Проверить интернет-соединение")
+        print(f"     - Проверить HF_TOKEN в config_secrets.py")
+        print(f"     - Увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
+        raise
+    
+    # Устанавливаем pad_token, если его нет
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
+    print(f"   Загрузка модели {model_id}...")
+    print(f"   ⚠️ Это может занять некоторое время из-за размера модели (~7B параметров)")
+    try:
+        start_time = time.time()
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            token=HF_TOKEN,
+            trust_remote_code=True
+        )
+        elapsed = time.time() - start_time
+        print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки модели: {e}")
+        print(f"   Возможные причины:")
+        print(f"     - Недостаточно VRAM (модель требует ~14GB для полной загрузки)")
+        print(f"     - Медленное интернет-соединение")
+        print(f"     - Проблемы с HuggingFace серверами")
+        print(f"   Рекомендации:")
+        print(f"     - Используйте квантизацию (4-bit или 8-bit) для уменьшения требований к памяти")
+        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
         raise
     
     return model, tokenizer

@@ -227,6 +227,17 @@ MODEL_CONFIGS = {
             "enable_thinking": True
         }
     },
+    "qwen-3-32b": {
+        "name": "Qwen/Qwen3-32B",
+        "load_func": ml.load_qwen_3_32b,
+        "generate_func": ml.generate_qwen_3,
+        "hyperparameters": {
+            "max_new_tokens": 32768,
+            "do_sample": False,
+            "torch_dtype": "auto",
+            "enable_thinking": True
+        }
+    },
     "gemma-3-1b": {
         "name": "google/gemma-3-1b-it",
         "load_func": ml.load_gemma_3_1b,
@@ -243,6 +254,16 @@ MODEL_CONFIGS = {
         "generate_func": ml.generate_gemma,
         "hyperparameters": {
             "max_new_tokens": 512,
+            "do_sample": False,
+            "torch_dtype": "bfloat16"
+        }
+    },
+    "codegemma-7b": {
+        "name": "google/codegemma-7b-it",
+        "load_func": ml.load_codegemma_7b,
+        "generate_func": ml.generate_standard,
+        "hyperparameters": {
+            "max_new_tokens": 1024,
             "do_sample": False,
             "torch_dtype": "bfloat16"
         }
@@ -419,6 +440,8 @@ def main():
         print("\nПримеры:")
         print("  python main.py qwen-2.5-3b")
         print("  python main.py qwen-2.5-3b --multi-agent simple_4agents")
+        print("  python main.py qwen-3-32b")
+        print("  python main.py qwen-3-32b --multi-agent simple_4agents")
         print("  python main.py gemma-3-27b-api --structured-output")
         print("  python main.py qwen-3-32b-api --structured-output")
         print("\nДоступные модели:")

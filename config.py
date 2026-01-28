@@ -27,7 +27,7 @@ from utils import HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY
 # - "FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE" - промпт с примером текста и ответа (по умолчанию) One-shot prompt
 # - "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE" - baseline промпт без примера
 # - "MINIMAL_FIVESHOT_PROMPT" - промпт few-shot с 5 примерами
-PROMPT_TEMPLATE_NAME = "MINIMAL_FIVESHOT_APIE_PROMPT"
+PROMPT_TEMPLATE_NAME = "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"
 
 # Пути для few-shot extractor
 # Путь к неразмеченному корпусу (Excel файл)
