@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 
 
-def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = False):
+def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool = True, verbose: bool = False):
     """
     Запускает оценку модели
     
@@ -34,6 +34,7 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
             - load_func: функция загрузки модели
             - generate_func: функция генерации
             - hyperparameters: гиперпараметры (может содержать multi_agent_mode)
+        model_key: ключ модели из конфигурации (alias, используется для имен файлов)
         use_gemini: использовать ли анализ через Gemini API
         verbose: если True, выводит подробную информацию (текст и ответы) в консоль
     """
@@ -365,7 +366,7 @@ def main():
             config["hyperparameters"]["use_outlines"] = True
         
         try:
-            result = run_evaluation(config, use_gemini=use_gemini, verbose=verbose)
+            result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)
             
             if result.get("status") != "error":
                 results_summary.append({

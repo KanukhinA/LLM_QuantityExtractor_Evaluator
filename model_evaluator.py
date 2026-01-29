@@ -174,12 +174,14 @@ class ModelEvaluator:
                       num_retries: int = 2,
                       verbose: bool = False,
                       use_gemini_analysis: bool = False,
-                      gemini_api_key: str = None) -> Dict[str, Any]:
+                      gemini_api_key: str = None,
+                      model_key: str = None) -> Dict[str, Any]:
         """
         Оценивает модель на датасете
         
         Args:
-            model_name: название модели
+            model_name: полное название модели (для отображения)
+            model_key: ключ модели из конфигурации (alias, используется для имен файлов)
             load_model_func: функция для загрузки модели (должна возвращать (model, tokenizer))
             generate_func: функция генерации (model, tokenizer, prompt) -> response_text
             hyperparameters: словарь с гиперпараметрами (может содержать multi_agent_mode)
@@ -1253,9 +1255,13 @@ class ModelEvaluator:
             except:
                 pass
         
+        # Используем model_key для имен файлов, если он передан, иначе используем model_name
+        model_key_for_files = model_key if model_key else model_name
+        
         evaluation_result = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "model_name": model_name,
+            "model_key": model_key_for_files,  # Сохраняем ключ модели для использования в именах файлов
             "interrupted": interrupted,
             "processed_count": len(results),
             "total_count": len(self.texts),
@@ -1321,7 +1327,12 @@ class ModelEvaluator:
     def _save_results(self, evaluation_result: Dict[str, Any], results: List[Dict[str, Any]]):
         """Сохраняет результаты в файлы"""
         timestamp = evaluation_result["timestamp"]
-        model_name_safe = sanitize_filename(evaluation_result["model_name"])
+        # Используем model_key для имен файлов, если он есть, иначе model_name
+        model_key_for_files = evaluation_result.get("model_key")
+        if model_key_for_files:
+            model_name_safe = sanitize_filename(model_key_for_files)
+        else:
+            model_name_safe = sanitize_filename(evaluation_result["model_name"])
         
         # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
         multi_agent_mode = evaluation_result.get("multi_agent_mode")
@@ -1628,11 +1639,18 @@ class ModelEvaluator:
         # Извлекаем имя модели из имени файла, если не указано
         if model_name is None:
             filename = os.path.basename(results_csv_path)
-            # Формат: results_model_name_timestamp.csv
+            # Формат: results_model_key_timestamp.csv или results_model_key_prompt_timestamp.csv
+            # Ищем timestamp в конце (формат YYYYMMDD_HHMMSS)
             parts = filename.replace("results_", "").replace(".csv", "").split("_")
             if len(parts) >= 2:
-                # Берем все части кроме последней (timestamp)
-                model_name = "_".join(parts[:-1])
+                # Проверяем, является ли последняя часть timestamp (8 цифр + подчеркивание + 6 цифр)
+                last_part = parts[-1]
+                if len(last_part) == 15 and last_part[:8].isdigit() and last_part[9:].isdigit() and last_part[8] == '_':
+                    # Последняя часть - timestamp, берем все остальное
+                    model_name = "_".join(parts[:-1])
+                else:
+                    # Старый формат или нет timestamp, берем все кроме последней части
+                    model_name = "_".join(parts[:-1])
             else:
                 model_name = "unknown"
         
@@ -1698,11 +1716,61 @@ class ModelEvaluator:
             print(f"   ⚠️ Модуль gemini_analyzer не доступен, пропускаем анализ через Gemini")
         print()
         
+        # Сохраняем обновленные метрики
+        print(f"\n💾 СОХРАНЕНИЕ ОБНОВЛЕННЫХ РЕЗУЛЬТАТОВ...")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Пытаемся найти исходный файл метрик для извлечения multi_agent_mode, prompt_template и model_key
+        multi_agent_mode = None
+        prompt_template_name = None
+        prompt_designation = None
+        model_key_from_metrics = None
+        
+        # Сначала пытаемся найти файлы метрик по model_name (для обратной совместимости)
+        model_name_safe = sanitize_filename(model_name)
+        metrics_file_pattern = os.path.join(output_dir, f"metrics_{model_name_safe}_*.json")
+        metrics_files = glob.glob(metrics_file_pattern)
+        original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
+        
+        # Если не нашли, пытаемся найти по имени файла CSV (извлекаем ключ модели)
+        if not original_metrics_files:
+            filename = os.path.basename(results_csv_path)
+            # Формат: results_model_key_timestamp.csv или results_model_key_prompt_timestamp.csv
+            parts = filename.replace("results_", "").replace(".csv", "").split("_")
+            if len(parts) >= 2:
+                # Берем первую часть как потенциальный ключ модели
+                potential_model_key = parts[0]
+                metrics_file_pattern = os.path.join(output_dir, f"metrics_{sanitize_filename(potential_model_key)}_*.json")
+                metrics_files = glob.glob(metrics_file_pattern)
+                original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
+        
+        if original_metrics_files:
+            try:
+                with open(original_metrics_files[-1], 'r', encoding='utf-8') as f:
+                    original_metrics = json.load(f)
+                multi_agent_mode = original_metrics.get("multi_agent_mode")
+                prompt_template_name = original_metrics.get("prompt_template")
+                prompt_designation = original_metrics.get("prompt_designation")
+                model_key_from_metrics = original_metrics.get("model_key")  # Извлекаем ключ модели
+            except Exception:
+                pass  # Если не удалось загрузить, просто пропускаем
+        
+        # Используем model_key из метрик, если он есть, иначе используем model_name
+        model_key_for_files = model_key_from_metrics if model_key_from_metrics else model_name
+        model_name_safe = sanitize_filename(model_key_for_files)
+        
+        # Если не удалось загрузить из метрик, используем значения по умолчанию
+        if prompt_template_name is None:
+            prompt_template_name = ""
+        if prompt_designation is None:
+            prompt_designation = ""
+        
         # Формируем обновленный результат
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         evaluation_result = {
             "timestamp": timestamp,
             "model_name": model_name,
+            "model_key": model_key_for_files,  # Сохраняем ключ модели для использования в именах файлов
             "reevaluated_from": results_csv_path,
             "parsing_error_rate": parsing_error_rate,
             "parsing_errors_count": len(parsing_errors),
@@ -1716,35 +1784,12 @@ class ModelEvaluator:
             "prompt_designation": prompt_designation  # Сохраняем обозначение промпта из исходных метрик
         }
         
-        # Сохраняем обновленные метрики
-        print(f"\n💾 СОХРАНЕНИЕ ОБНОВЛЕННЫХ РЕЗУЛЬТАТОВ...")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        model_name_safe = sanitize_filename(model_name)
-        
-        # Пытаемся найти исходный файл метрик для извлечения multi_agent_mode и prompt_template
-        multi_agent_mode = None
-        prompt_template_name = None
-        prompt_designation = None
-        metrics_file_pattern = os.path.join(output_dir, f"metrics_{model_name_safe}_*.json")
-        metrics_files = glob.glob(metrics_file_pattern)
-        original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
-        if original_metrics_files:
-            try:
-                with open(original_metrics_files[-1], 'r', encoding='utf-8') as f:
-                    original_metrics = json.load(f)
-                multi_agent_mode = original_metrics.get("multi_agent_mode")
-                prompt_template_name = original_metrics.get("prompt_template")
-                prompt_designation = original_metrics.get("prompt_designation")  # Сохраняем обозначение промпта
-            except Exception:
-                pass  # Если не удалось загрузить, просто пропускаем
-        
         # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
         multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
         
         # Получаем название промпта для добавления в имя файла
         if not prompt_template_name:
-            prompt_template_name = evaluation_result.get("prompt_template", "")
+            prompt_template_name = ""
         # Если это название функции или multi_agent, пытаемся получить реальное название промпта
         if prompt_template_name and prompt_template_name.startswith("multi_agent_"):
             prompt_name_safe = prompt_template_name
