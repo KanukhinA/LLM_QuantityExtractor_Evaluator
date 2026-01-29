@@ -1,5 +1,6 @@
 # Секретные ключи API
 config_secrets.py
+evaluation_summary.jsonl
 
 *.log
 
