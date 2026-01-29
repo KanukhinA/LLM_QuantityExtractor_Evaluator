@@ -28,6 +28,7 @@ def normalize_none_lists(value: Any) -> Any:
 def normalize_value(value: Any) -> Any:
     """
     Нормализует значение для сравнения (конвертирует числа, списки и т.д.)
+    Обрабатывает проценты: "53%" -> 53.0, "53.5%" -> 53.5
     """
     # Сначала нормализуем None-списки
     value = normalize_none_lists(value)
@@ -39,10 +40,22 @@ def normalize_value(value: Any) -> Any:
     if isinstance(value, list):
         return [normalize_value(v) for v in value]
     if isinstance(value, str):
+        # Убираем пробелы
+        value = value.strip()
+        
+        # Обрабатываем проценты: "53%" -> 53.0, "53.5%" -> 53.5
+        if value.endswith('%'):
+            try:
+                # Убираем символ % и преобразуем в число
+                numeric_value = float(value[:-1].strip())
+                return numeric_value
+            except (ValueError, AttributeError):
+                pass
+        
         # Пытаемся преобразовать строку в число
         try:
             return float(value)
-        except:
+        except (ValueError, TypeError):
             return value.lower().strip()
     return value
 
@@ -62,6 +75,10 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
     Returns:
         (score, total_items, errors, metrics): точность, общее количество элементов, список ошибок (словари), метрики (precision, recall, f1)
     """
+    # Обрабатываем случай, когда predicted - None или пустой словарь
+    if not predicted:
+        predicted = {}
+    
     pred_mass = predicted.get("массовая доля", [])
     true_mass = ground_truth.get("массовая доля", [])
     
@@ -244,6 +261,10 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
     Returns:
         (score, total_items, errors, metrics): точность, общее количество элементов, список ошибок (словари), метрики (precision, recall, f1)
     """
+    # Обрабатываем случай, когда predicted - None или пустой словарь
+    if not predicted:
+        predicted = {}
+    
     pred_prochee = predicted.get("прочее", [])
     true_prochee = ground_truth.get("прочее", [])
     

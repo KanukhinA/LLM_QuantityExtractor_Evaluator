@@ -191,25 +191,20 @@ def build_prompt3(text: str, structured_output: bool = False, response_schema: A
     Генерация промпта для конкретного текста
     
     Использует промпт, указанный в config.PROMPT_TEMPLATE_NAME (название переменной из prompt_config.py)
-    Если structured_output=True, использует вариант промпта для structured output
-    Если response_schema передан, добавляет JSON schema в промпт для локальных моделей
+    Если structured_output=True, использует тот же промпт, но добавляет JSON Schema в конец
     """
     from config import PROMPT_TEMPLATE_NAME
     import json
     
-    if structured_output:
-        # Используем вариант промпта для structured output
-        prompt_name = PROMPT_TEMPLATE_NAME.replace("_TEMPLATE", "_STRUCTURED").replace("_WITH_EXAMPLE", "_STRUCTURED")
-        if not hasattr(prompt_config, prompt_name):
-            # Если специального промпта нет, используем обычный
-            prompt_name = PROMPT_TEMPLATE_NAME
-        prompt_template = getattr(prompt_config, prompt_name)
-    else:
-        prompt_template = getattr(prompt_config, PROMPT_TEMPLATE_NAME)
+    # Для structured output используем тот же промпт, что и для обычного режима
+    # JSON Schema будет добавлен автоматически в конец
+    # Для structured output используется тот же промпт, что и для обычного режима
+    # JSON Schema будет добавлен автоматически в конец
+    prompt_template = getattr(prompt_config, PROMPT_TEMPLATE_NAME)
     
     prompt_text = prompt_template.format(text=text)
     
-    # Для локальных моделей добавляем JSON schema в промпт, если передан response_schema
+    # Для structured output добавляем JSON Schema в конец промпта (для локальных моделей)
     if structured_output and response_schema is not None:
         try:
             # Конвертируем Pydantic схему в JSON Schema

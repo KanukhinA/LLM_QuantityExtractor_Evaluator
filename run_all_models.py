@@ -2,9 +2,9 @@
 Скрипт для запуска оценки всех моделей подряд
 """
 import sys
-from main import MODEL_CONFIGS, run_evaluation
+from main import run_evaluation
 from gemini_analyzer import check_gemini_api
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, MODEL_CONFIGS
 
 def run_all_models():
     """Запускает оценку всех моделей из конфигурации"""

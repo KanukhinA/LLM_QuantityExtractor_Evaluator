@@ -344,7 +344,8 @@ def generate_multiple_responses(
     k: int = 3,
     hyperparameters: Dict[str, Any] = None,
     temperature: float = 0.7,
-    top_p: float = 0.95
+    top_p: float = 0.95,
+    model_name: str = None
 ) -> List[str]:
     """
     Генерирует k вариантов ответа для одного текста с использованием sampling.
@@ -374,19 +375,19 @@ def generate_multiple_responses(
         try:
             if is_api_model:
                 # Для API моделей передаем параметры sampling напрямую
-                if "model_name" in hyperparameters:
+                if model_name:
                     # Передаем temperature и top_p для API моделей
                     try:
                         response = generate_func(
                             model, tokenizer, prompt, max_new_tokens, 
-                            model_name=hyperparameters["model_name"],
+                            model_name=model_name,
                             temperature=temperature,
                             top_p=top_p if temperature > 0 else None
                         )
                     except TypeError:
                         # Если функция не поддерживает эти параметры, используем без них
                         response = generate_func(model, tokenizer, prompt, max_new_tokens, 
-                                                model_name=hyperparameters["model_name"])
+                                                model_name=model_name)
                 else:
                     try:
                         response = generate_func(
@@ -506,7 +507,8 @@ def extract_few_shot_examples(
     alpha: float = 0.33,  # вес для Generation Disagreement (𝒰_d)
     beta: float = 0.33,   # вес для Format Uncertainty (𝒰_f)
     gamma: float = 0.34,  # вес для Content Uncertainty (𝒰_c)
-    verbose: bool = False
+    verbose: bool = False,
+    model_name: str = None
 ) -> pd.DataFrame:
     """
     Извлекает few-shot примеры из неразмеченного корпуса на основе алгоритма
@@ -594,7 +596,7 @@ def extract_few_shot_examples(
         # Генерируем k вариантов ответа с sampling
         responses = generate_multiple_responses(
             text, generate_func, model, tokenizer, max_new_tokens, k, hyperparameters,
-            temperature=temperature, top_p=top_p
+            temperature=temperature, top_p=top_p, model_name=model_name
         )
         
         # Вычисляем метрики неопределенности
@@ -817,7 +819,7 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # Загружаем конфигурацию модели
-    from main import MODEL_CONFIGS
+    from config import MODEL_CONFIGS
     
     if args.model_key not in MODEL_CONFIGS:
         print(f"❌ Ошибка: модель '{args.model_key}' не найдена в MODEL_CONFIGS")
@@ -866,7 +868,8 @@ if __name__ == "__main__":
             alpha=args.alpha,
             beta=args.beta,
             gamma=args.gamma,
-            verbose=args.verbose
+            verbose=args.verbose,
+            model_name=model_config["name"]
         )
         
         # Сохраняем результаты, если указан путь

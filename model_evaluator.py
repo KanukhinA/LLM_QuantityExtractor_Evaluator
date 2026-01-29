@@ -19,6 +19,31 @@ from multi_agent_graph import process_with_multi_agent
 import re
 
 
+def normalize_structured_output_keys(data):
+    """
+    Рекурсивно нормализует ключи словаря из structured output:
+    заменяет ключи с подчеркиванием на ключи с пробелами для совместимости с calculate_quality_metrics
+    """
+    if isinstance(data, dict):
+        normalized = {}
+        for key, value in data.items():
+            # Заменяем ключи с подчеркиванием на ключи с пробелами
+            if key == "массовая_доля":
+                new_key = "массовая доля"
+            else:
+                new_key = key
+            # Рекурсивно обрабатываем вложенные структуры
+            if isinstance(value, (dict, list)):
+                normalized[new_key] = normalize_structured_output_keys(value)
+            else:
+                normalized[new_key] = value
+        return normalized
+    elif isinstance(data, list):
+        return [normalize_structured_output_keys(item) for item in data]
+    else:
+        return data
+
+
 def sanitize_filename(name: str) -> str:
     """
     Санитизирует имя для использования в имени файла.
@@ -314,7 +339,6 @@ class ModelEvaluator:
             if is_api_model:
                 # Для API моделей используем APIGenerator
                 from core.generators import APIGenerator
-                model_name = hyperparameters.get("model_name", "gemma-3-12b-it")
                 generator = APIGenerator(model, tokenizer, model_name=model_name)
             else:
                 # Для локальных моделей используем StandardGenerator
@@ -370,7 +394,7 @@ class ModelEvaluator:
                                 "text_index": i,
                                 "text": text,
                                 "error": f"Ошибка в мультиагентном подходе: {error_msg}",
-                                "response": response_text[:500] if response_text else ""
+                                "response": response_text if response_text else ""
                             })
                         
                         if not is_valid and json_part:
@@ -380,7 +404,7 @@ class ModelEvaluator:
                                 "text_index": i,
                                 "text": text,
                                 "error": f"Невалидный JSON. Ответ: {json_display}",
-                                "response": json_part[:500]
+                                "response": json_part
                             })
                         
                         results.append({
@@ -423,16 +447,23 @@ class ModelEvaluator:
                             
                             # Добавляем параметры в зависимости от типа модели
                             if is_api_model:
-                                if "model_name" in hyperparameters:
-                                    gen_kwargs["model_name"] = hyperparameters["model_name"]
+                                gen_kwargs["model_name"] = model_name
                                 # Добавляем structured output для API моделей
                                 if structured_output and response_schema:
                                     gen_kwargs["structured_output"] = True
                                     gen_kwargs["response_schema"] = response_schema
-                            elif repetition_penalty is not None:
-                                gen_kwargs["repetition_penalty"] = repetition_penalty
-                            elif "enable_thinking" in hyperparameters:
-                                gen_kwargs["enable_thinking"] = hyperparameters.get("enable_thinking", True)
+                            else:
+                                # Локальные модели
+                                if repetition_penalty is not None:
+                                    gen_kwargs["repetition_penalty"] = repetition_penalty
+                                if "enable_thinking" in hyperparameters:
+                                    gen_kwargs["enable_thinking"] = hyperparameters.get("enable_thinking", True)
+                                # Пробрасываем structured-output параметры и режим outlines
+                                if structured_output and response_schema:
+                                    gen_kwargs["structured_output"] = True
+                                    gen_kwargs["response_schema"] = response_schema
+                                    if hyperparameters.get("use_outlines", False):
+                                        gen_kwargs["use_outlines"] = True
                             
                             response_text = generate_func(model, tokenizer, prompt, **gen_kwargs)
                             elapsed = time.time() - start_time
@@ -495,7 +526,12 @@ class ModelEvaluator:
                                 # Для локальных моделей обрезаем при не verbose режиме
                                 error_display = error_msg if verbose else error_msg[:200]
                                 print(f"     Последняя ошибка: {error_display}")
-                        parsing_errors.append(f"Текст #{i}: не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}")
+                        parsing_errors.append({
+                            "text_index": i,
+                            "text": text,
+                            "error": f"Не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}",
+                            "response": ""
+                        })
                         results.append({
                             "text": text,
                             "json": "",
@@ -509,19 +545,65 @@ class ModelEvaluator:
                     if structured_output and response_schema:
                         # Для локальных моделей извлекаем JSON и валидируем через Pydantic
                         json_part = extract_json_from_response(response_text)
-                        parsed_json = parse_json_safe(json_part)
+                        
+                        # Пробуем распарсить JSON: сначала стандартный json.loads, потом parse_json_safe
+                        parsed_json = None
+                        try:
+                            # Пробуем стандартный парсер для корректного JSON
+                            parsed_json = json.loads(json_part)
+                        except json.JSONDecodeError:
+                            # Если не получилось, используем умный парсер
+                            parsed_json = parse_json_safe(json_part)
+                            # Если и это не помогло, пробуем распарсить исходный response_text
+                            if not parsed_json or not isinstance(parsed_json, dict):
+                                parsed_json = parse_json_safe(response_text)
                         
                         # Валидируем через Pydantic схему
                         try:
+                            if not parsed_json or not isinstance(parsed_json, dict):
+                                raise ValueError(f"Не удалось распарсить JSON. Извлеченный JSON: {json_part[:200]}")
+                            
                             validated_output = response_schema.model_validate(parsed_json)
                             # Конвертируем обратно в словарь для совместимости
-                            parsed_json = validated_output.model_dump(by_alias=True)
+                            # Используем model_dump() и затем нормализуем ключи вручную
+                            parsed_json = validated_output.model_dump()
+                            # Нормализуем ключи: заменяем подчеркивания на пробелы
+                            parsed_json = normalize_structured_output_keys(parsed_json)
+                            # Сериализуем обратно в JSON строку для сохранения в CSV
+                            # Это гарантирует правильное форматирование без экранированных кавычек
+                            json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
                             is_valid = True
                         except Exception as e:
                             # Если валидация не прошла, используем обычный парсинг
-                            is_valid = is_valid_json(json_part)
+                            # Пробуем еще раз распарсить json_part, если parsed_json пустой
+                            if not parsed_json or not isinstance(parsed_json, dict):
+                                try:
+                                    parsed_json = json.loads(json_part)
+                                except json.JSONDecodeError:
+                                    parsed_json = parse_json_safe(json_part)
+                            
+                            # Проверяем, что JSON успешно распарсился
+                            if parsed_json and isinstance(parsed_json, dict):
+                                is_valid = True
+                                # Обновляем json_part для сохранения в CSV
+                                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                            else:
+                                # Если не удалось распарсить, пробуем еще раз из исходного ответа
+                                parsed_json = parse_json_safe(response_text)
+                                if parsed_json and isinstance(parsed_json, dict):
+                                    is_valid = True
+                                    json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                                else:
+                                    is_valid = False
+                            
                             if verbose:
                                 print(f"   ⚠️ Structured output валидация не прошла: {e}")
+                                print(f"   📋 Извлеченный JSON (первые 500 символов): {json_part[:500] if len(json_part) > 500 else json_part}")
+                                print(f"   📋 Распарсенный JSON (тип: {type(parsed_json)}): {str(parsed_json)[:500] if parsed_json else 'None'}")
+                                if is_valid:
+                                    print(f"   ✅ Fallback парсинг успешен, JSON валиден")
+                                else:
+                                    print(f"   ❌ Fallback парсинг не удался")
                     else:
                         json_part = extract_json_from_response(response_text)
                         parsed_json = parse_json_safe(json_part)
@@ -534,7 +616,7 @@ class ModelEvaluator:
                             "text_index": i,
                             "text": text,
                             "error": f"Невалидный JSON. Ответ: {json_display}",
-                            "response": json_part[:500]
+                            "response": json_part
                         })
                     
                     results.append({
@@ -681,16 +763,26 @@ class ModelEvaluator:
                                         try:
                                             start_time = time.time()
                                             repetition_penalty = hyperparameters.get("repetition_penalty")
-                                            # Для API моделей передаем model_name из hyperparameters
-                                            if is_api_model and "model_name" in hyperparameters:
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, model_name=hyperparameters["model_name"])
-                                            elif repetition_penalty is not None:
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
-                                            elif "enable_thinking" in hyperparameters:
-                                                # Для Qwen3 передаем enable_thinking из hyperparameters
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=hyperparameters.get("enable_thinking", True))
+
+                                            gen_kwargs = {"max_new_tokens": max_new_tokens}
+
+                                            if is_api_model:
+                                                gen_kwargs["model_name"] = model_name
+                                                if structured_output and response_schema:
+                                                    gen_kwargs["structured_output"] = True
+                                                    gen_kwargs["response_schema"] = response_schema
                                             else:
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
+                                                if repetition_penalty is not None:
+                                                    gen_kwargs["repetition_penalty"] = repetition_penalty
+                                                if "enable_thinking" in hyperparameters:
+                                                    gen_kwargs["enable_thinking"] = hyperparameters.get("enable_thinking", True)
+                                                if structured_output and response_schema:
+                                                    gen_kwargs["structured_output"] = True
+                                                    gen_kwargs["response_schema"] = response_schema
+                                                    if hyperparameters.get("use_outlines", False):
+                                                        gen_kwargs["use_outlines"] = True
+
+                                            response_text = generate_func(model, tokenizer, prompt, **gen_kwargs)
                                             elapsed = time.time() - start_time
                                             times.append(elapsed)
                                             
@@ -762,19 +854,65 @@ class ModelEvaluator:
                                     if structured_output and response_schema:
                                         # Для локальных моделей извлекаем JSON и валидируем через Pydantic
                                         json_part = extract_json_from_response(response_text)
-                                        parsed_json = parse_json_safe(json_part)
+                                        
+                                        # Пробуем распарсить JSON: сначала стандартный json.loads, потом parse_json_safe
+                                        parsed_json = None
+                                        try:
+                                            # Пробуем стандартный парсер для корректного JSON
+                                            parsed_json = json.loads(json_part)
+                                        except json.JSONDecodeError:
+                                            # Если не получилось, используем умный парсер
+                                            parsed_json = parse_json_safe(json_part)
+                                            # Если и это не помогло, пробуем распарсить исходный response_text
+                                            if not parsed_json or not isinstance(parsed_json, dict):
+                                                parsed_json = parse_json_safe(response_text)
                                         
                                         # Валидируем через Pydantic схему
                                         try:
+                                            if not parsed_json or not isinstance(parsed_json, dict):
+                                                raise ValueError(f"Не удалось распарсить JSON. Извлеченный JSON: {json_part[:200]}")
+                                            
                                             validated_output = response_schema.model_validate(parsed_json)
                                             # Конвертируем обратно в словарь для совместимости
-                                            parsed_json = validated_output.model_dump(by_alias=True)
+                                            # Используем model_dump() и затем нормализуем ключи вручную
+                                            parsed_json = validated_output.model_dump()
+                                            # Нормализуем ключи: заменяем подчеркивания на пробелы
+                                            parsed_json = normalize_structured_output_keys(parsed_json)
+                                            # Сериализуем обратно в JSON строку для сохранения в CSV
+                                            # Это гарантирует правильное форматирование без экранированных кавычек
+                                            json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
                                             is_valid = True
                                         except Exception as e:
                                             # Если валидация не прошла, используем обычный парсинг
-                                            is_valid = is_valid_json(json_part)
+                                            # Пробуем еще раз распарсить json_part, если parsed_json пустой
+                                            if not parsed_json or not isinstance(parsed_json, dict):
+                                                try:
+                                                    parsed_json = json.loads(json_part)
+                                                except json.JSONDecodeError:
+                                                    parsed_json = parse_json_safe(json_part)
+                                            
+                                            # Проверяем, что JSON успешно распарсился
+                                            if parsed_json and isinstance(parsed_json, dict):
+                                                is_valid = True
+                                                # Обновляем json_part для сохранения в CSV
+                                                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                                            else:
+                                                # Если не удалось распарсить, пробуем еще раз из исходного ответа
+                                                parsed_json = parse_json_safe(response_text)
+                                                if parsed_json and isinstance(parsed_json, dict):
+                                                    is_valid = True
+                                                    json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                                                else:
+                                                    is_valid = False
+                                            
                                             if verbose:
                                                 print(f"   ⚠️ Structured output валидация не прошла: {e}")
+                                                print(f"   📋 Извлеченный JSON (первые 500 символов): {json_part[:500] if len(json_part) > 500 else json_part}")
+                                                print(f"   📋 Распарсенный JSON (тип: {type(parsed_json)}): {str(parsed_json)[:500] if parsed_json else 'None'}")
+                                                if is_valid:
+                                                    print(f"   ✅ Fallback парсинг успешен, JSON валиден")
+                                                else:
+                                                    print(f"   ❌ Fallback парсинг не удался")
                                     else:
                                         json_part = extract_json_from_response(response_text)
                                         parsed_json = parse_json_safe(json_part)
@@ -787,7 +925,7 @@ class ModelEvaluator:
                                             "text_index": i,
                                             "text": self.texts[i],
                                             "error": f"Невалидный JSON. Ответ: {json_display}",
-                                            "response": response_text[:500] if response_text else json_part[:500]
+                                            "response": response_text if response_text else json_part
                                         })
                                     
                                     results.append({
@@ -920,24 +1058,20 @@ class ModelEvaluator:
             print(f"   • Агенты: {workflow_description}")
             print(f"   • Полный текст всех промптов (пример с первым текстом):")
             print(f"{'─'*80}")
-            # Выводим промпты с отступами для читаемости
+            # Выводим полный текст промпта
             prompt_lines = full_prompt_example.split('\n')
-            for line in prompt_lines[:50]:  # Первые 50 строк, чтобы не перегружать консоль
+            for line in prompt_lines:
                 print(f"   {line}")
-            if len(prompt_lines) > 50:
-                print(f"   ... (ещё {len(prompt_lines) - 50} строк, полный текст сохранён в отчёте)")
             print(f"{'─'*80}")
         else:
             print(f"   • Режим: Одноагентный")
             print(f"   • Шаблон: {prompt_template.__name__ if hasattr(prompt_template, '__name__') else str(prompt_template)}")
             print(f"   • Полный текст промпта (пример с первым текстом):")
             print(f"{'─'*80}")
-            # Выводим промпт с отступами для читаемости
+            # Выводим полный текст промпта
             prompt_lines = full_prompt_example.split('\n')
-            for line in prompt_lines[:30]:  # Первые 30 строк, чтобы не перегружать консоль
+            for line in prompt_lines:
                 print(f"   {line}")
-            if len(prompt_lines) > 30:
-                print(f"   ... (ещё {len(prompt_lines) - 30} строк, полный текст сохранён в отчёте)")
             print(f"{'─'*80}")
         print()
         
@@ -1273,6 +1407,30 @@ class ModelEvaluator:
                     errors_by_text[text_idx]["text"] = text
                 if response and not errors_by_text[text_idx]["response"]:
                     errors_by_text[text_idx]["response"] = response
+            elif isinstance(error, str):
+                # Для обратной совместимости: преобразуем строку в словарь
+                # Пытаемся извлечь text_index из строки вида "Текст #X: ..."
+                import re
+                match = re.match(r'Текст\s*#(\d+):\s*(.+)', error)
+                if match:
+                    text_idx = int(match.group(1))
+                    error_msg = match.group(2)
+                else:
+                    # Если не удалось распарсить, используем индекс 0
+                    text_idx = 0
+                    error_msg = error
+                
+                if text_idx not in errors_by_text:
+                    errors_by_text[text_idx] = {
+                        "text_index": text_idx,
+                        "text": "",
+                        "response": "",
+                        "errors": []
+                    }
+                
+                # Добавляем ошибку в список ошибок для этого текста
+                if error_msg:
+                    errors_by_text[text_idx]["errors"].append(error_msg)
         
         # Преобразуем в список записей (каждая запись - текст с его ошибками)
         errors_for_save = list(errors_by_text.values())

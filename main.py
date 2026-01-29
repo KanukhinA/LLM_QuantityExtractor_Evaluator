@@ -6,10 +6,8 @@ import sys
 import logging
 from datetime import datetime
 from model_evaluator import ModelEvaluator
-import model_loaders as ml
-import model_loaders_api as ml_api
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
-from config import GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY
+from config import GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY, MODEL_CONFIGS
 from utils import find_dataset_path
 
 # Настройка логирования
@@ -174,223 +172,6 @@ def run_evaluation(model_config: dict, use_gemini: bool = True, verbose: bool = 
     return result
 
 
-# Конфигурации моделей
-MODEL_CONFIGS = {
-    "gemma-2-2b": {
-        "name": "google/gemma-2-2b-it",
-        "load_func": ml.load_gemma_2_2b,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "qwen-2.5-1.5b": {
-        "name": "Qwen/Qwen2.5-1.5B-Instruct",
-        "load_func": ml.load_qwen_2_5_1_5b,
-        "generate_func": ml.generate_qwen,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "qwen-2.5-3b": {
-        "name": "Qwen/Qwen2.5-3B-Instruct",
-        "load_func": ml.load_qwen_2_5_3b,
-        "generate_func": ml.generate_qwen,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "dtype": "bfloat16"
-        }
-    },
-    "qwen-2.5-4b": {
-        "name": "Qwen/Qwen2.5-4B-Instruct",
-        "load_func": ml.load_qwen_2_5_4b,
-        "generate_func": ml.generate_qwen,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "dtype": "bfloat16"
-        }
-    },
-    "qwen-3-8b": {
-        "name": "Qwen/Qwen3-8B",
-        "load_func": ml.load_qwen_3_8b,
-        "generate_func": ml.generate_qwen_3,
-        "hyperparameters": {
-            "max_new_tokens": 32768,
-            "do_sample": False,
-            "torch_dtype": "auto",
-            "enable_thinking": True
-        }
-    },
-    "qwen-3-32b": {
-        "name": "Qwen/Qwen3-32B",
-        "load_func": ml.load_qwen_3_32b,
-        "generate_func": ml.generate_qwen_3,
-        "hyperparameters": {
-            "max_new_tokens": 32768,
-            "do_sample": False,
-            "torch_dtype": "auto",
-            "enable_thinking": True
-        }
-    },
-    "gemma-3-1b": {
-        "name": "google/gemma-3-1b-it",
-        "load_func": ml.load_gemma_3_1b,
-        "generate_func": ml.generate_gemma,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "gemma-3-4b": {
-        "name": "google/gemma-3-4b-it",
-        "load_func": ml.load_gemma_3_4b,
-        "generate_func": ml.generate_gemma,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "codegemma-7b": {
-        "name": "google/codegemma-7b-it",
-        "load_func": ml.load_codegemma_7b,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "gemma-3-4b-api": {
-        "name": "gemma-3-4b-it",
-        "load_func": ml_api.load_gemma_3_4b_api,
-        "generate_func": ml_api.generate_gemma_api,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "model_name": "gemma-3-4b-it",
-            "api_model": True
-        }
-    },
-    "gemma-3-12b-api": {
-        "name": "gemma-3-12b-it",
-        "load_func": ml_api.load_gemma_3_12b_api,
-        "generate_func": ml_api.generate_gemma_api,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "model_name": "gemma-3-12b-it",
-            "api_model": True
-        }
-    },
-    "gemma-3-27b-api": {
-        "name": "gemma-3-27b-it",
-        "load_func": ml_api.load_gemma_3_27b_api,
-        "generate_func": ml_api.generate_gemma_api,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "model_name": "gemma-3-27b-it",
-            "api_model": True
-        }
-    },
-    "deepseek-r1t-chimera-api": {
-        "name": "tngtech/deepseek-r1t-chimera:free",
-        "load_func": ml_api.load_deepseek_r1t_chimera_api,
-        "generate_func": ml_api.generate_openrouter_api,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "model_name": "tngtech/deepseek-r1t-chimera:free",
-            "api_model": True
-        }
-    },
-    "mistral-small-3.1-24b-api": {
-        "name": "mistralai/mistral-small-3.1-24b-instruct:free",
-        "load_func": ml_api.load_mistral_small_3_1_24b_api,
-        "generate_func": ml_api.generate_openrouter_api,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "model_name": "mistralai/mistral-small-3.1-24b-instruct:free",
-            "api_model": True
-        }
-    },
-    "qwen-3-32b-api": {
-        "name": "qwen/qwen3-32b",
-        "load_func": ml_api.load_qwen_3_32b_api,
-        "generate_func": ml_api.generate_openrouter_api,
-        "hyperparameters": {
-            "max_new_tokens": 32768,
-            "model_name": "qwen/qwen3-32b",
-            "api_model": True
-        }
-    },
-    "Ministral-3-3B-Reasoning-2512": {
-        "name": "mistralai/Ministral-3-3B-Reasoning-2512",
-        "load_func": ml.load_ministral_3_3b_reasoning_2512,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "mistral-3-8b-instruct": {
-        "name": "mistralai/Mistral-3-8B-Instruct",
-        "load_func": ml.load_mistral_3_8b_instruct,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "mistral-3-14b-instruct": {
-        "name": "mistralai/Mistral-3-14B-Instruct",
-        "load_func": ml.load_mistral_3_14b_instruct,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "mistral-3-3b-reasoning": {
-        "name": "mistralai/Mistral-3-3B-Reasoning",
-        "load_func": ml.load_mistral_3_3b_reasoning,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 512,
-            "do_sample": False,
-            "torch_dtype": "bfloat16"
-        }
-    },
-    "phi-4-mini-instruct": {
-        "name": "microsoft/Phi-4-mini-instruct",
-        "load_func": ml.load_phi_4_mini_instruct,
-        "generate_func": ml.generate_standard,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "dtype": "bfloat16"
-        }
-    },
-    "t5gemma-2-1b-1b": {
-        "name": "google/t5gemma-2-1b-1b",
-        "load_func": ml.load_t5gemma_2_1b_1b,
-        "generate_func": ml.generate_t5,
-        "hyperparameters": {
-            "max_new_tokens": 1024,
-            "do_sample": False,
-            "dtype": "bfloat16"
-        }
-    },
-}
-
-
 def main():
     """Главная функция"""
     # Проверяем работоспособность Gemini API в самом начале
@@ -430,43 +211,48 @@ def main():
     
     # Теперь проверяем аргументы командной строки
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output] [--no-gemini]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         print("\nАргументы:")
-        print("  <model_name>        - ключ модели из конфигурации")
+        print("  <model_name>        - ключ модели из конфигурации (можно указать несколько через запятую или пробел)")
         print("  --multi-agent       - (опционально) режим мультиагентного подхода")
         print("                        Доступные режимы: simple_4agents, critic_3agents, qa_workflow")
         print("  --structured-output - (опционально) использовать structured output через Pydantic")
         print("                        Работает только с API моделями, поддерживающими structured output")
+        print("  --outlines          - (опционально) использовать библиотеку outlines для структурированной генерации JSON")
+        print("                        Работает для локальных моделей вместе с --structured-output и Pydantic схемой")
         print("  --no-gemini         - (опционально) отключить анализ ошибок через Gemini API")
+        print("  --verbose           - (опционально) включить подробный вывод (включен по умолчанию)")
+        print("  --no-verbose        - (опционально) отключить подробный вывод")
         print("\nПримеры:")
         print("  python main.py qwen-2.5-3b")
+        print("  python main.py qwen-2.5-3b,qwen-2.5-4b  # Несколько моделей через запятую")
+        print("  python main.py qwen-2.5-3b qwen-2.5-4b  # Несколько моделей через пробел")
         print("  python main.py qwen-2.5-3b --multi-agent simple_4agents")
-        print("  python main.py qwen-3-32b")
-        print("  python main.py qwen-3-32b --multi-agent simple_4agents")
+        print("  python main.py qwen-2.5-3b qwen-2.5-4b --no-gemini  # Несколько моделей с флагами")
         print("  python main.py gemma-3-27b-api --structured-output")
         print("  python main.py qwen-3-32b-api --structured-output")
         print("  python main.py qwen-2.5-3b --no-gemini")
+        print("  python main.py qwen-2.5-3b --structured-output --outlines")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
         return
     
-    model_key = sys.argv[1]
-    
-    if model_key not in MODEL_CONFIGS:
-        print(f"Модель '{model_key}' не найдена.")
-        print("Доступные модели:", ", ".join(MODEL_CONFIGS.keys()))
-        return
-    
     # Парсим аргументы командной строки
+    # Сначала собираем все модели и флаги
+    model_keys = []
     multi_agent_mode = None
     structured_output = False
+    use_outlines = False
     use_gemini = True  # По умолчанию включен
+    verbose = True  # По умолчанию включен для main.py
     
-    if len(sys.argv) > 2:
-        i = 2
-        while i < len(sys.argv):
-            arg = sys.argv[i]
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        
+        # Если это флаг, обрабатываем его
+        if arg.startswith("--"):
             if arg == "--multi-agent":
                 if i + 1 < len(sys.argv):
                     multi_agent_mode = sys.argv[i + 1]
@@ -477,13 +263,44 @@ def main():
             elif arg == "--structured-output":
                 structured_output = True
                 i += 1
+            elif arg == "--outlines":
+                use_outlines = True
+                i += 1
             elif arg == "--no-gemini" or arg == "--skip-gemini":
                 use_gemini = False
                 i += 1
+            elif arg == "--verbose":
+                verbose = True
+                i += 1
+            elif arg == "--no-verbose" or arg == "--quiet":
+                verbose = False
+                i += 1
             else:
                 print(f"Неизвестный аргумент: {arg}")
-                print("Использование: python main.py <model_name> [--multi-agent MODE] [--structured-output] [--no-gemini]")
+                print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
                 return
+        else:
+            # Это модель или список моделей через запятую
+            if "," in arg:
+                # Разбиваем по запятой
+                models = [m.strip() for m in arg.split(",") if m.strip()]
+                model_keys.extend(models)
+            else:
+                model_keys.append(arg)
+            i += 1
+    
+    # Проверяем, что указаны модели
+    if not model_keys:
+        print("Ошибка: не указаны модели для оценки")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        return
+    
+    # Проверяем, что все модели существуют
+    invalid_models = [m for m in model_keys if m not in MODEL_CONFIGS]
+    if invalid_models:
+        print(f"Ошибка: следующие модели не найдены: {', '.join(invalid_models)}")
+        print("Доступные модели:", ", ".join(MODEL_CONFIGS.keys()))
+        return
     
     # Проверяем существование датасета
     dataset_path = find_dataset_path()
@@ -492,17 +309,33 @@ def main():
         print("Убедитесь, что файл results_var3.xlsx находится в папке data/")
         return
     
-    print(f"\n{'='*80}")
-    print(f"ЗАПУСК ОЦЕНКИ МОДЕЛИ")
-    print(f"{'='*80}")
-    print(f"📌 Модель: {model_key}")
-    print(f"📌 Полное название: {MODEL_CONFIGS[model_key]['name']}")
+    # Если одна модель, выводим информацию о ней
+    if len(model_keys) == 1:
+        model_key = model_keys[0]
+        print(f"\n{'='*80}")
+        print(f"ЗАПУСК ОЦЕНКИ МОДЕЛИ")
+        print(f"{'='*80}")
+        print(f"📌 Модель: {model_key}")
+        print(f"📌 Полное название: {MODEL_CONFIGS[model_key]['name']}")
+    else:
+        print(f"\n{'='*80}")
+        print(f"ЗАПУСК ОЦЕНКИ НЕСКОЛЬКИХ МОДЕЛЕЙ")
+        print(f"{'='*80}")
+        print(f"📌 Количество моделей: {len(model_keys)}")
+        print(f"📌 Модели: {', '.join(model_keys)}")
+    
     if multi_agent_mode:
         print(f"📌 Режим: Мультиагентный ({multi_agent_mode})")
     else:
         print(f"📌 Режим: Одноагентный")
     if structured_output:
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
+    if use_outlines:
+        print(f"📌 Outlines: Включен")
+    if verbose:
+        print(f"📌 Verbose: Включен (подробный вывод)")
+    else:
+        print(f"📌 Verbose: Отключен (краткий вывод)")
     if use_gemini:
         print(f"📌 Анализ через Gemini API: Включен")
     else:
@@ -512,41 +345,123 @@ def main():
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n")
     
-    # Создаем копию конфигурации и добавляем параметры если указаны
+    # Запускаем оценку для каждой модели
     import copy
-    config = copy.deepcopy(MODEL_CONFIGS[model_key])
-    if multi_agent_mode:
-        config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
-    if structured_output:
-        config["hyperparameters"]["structured_output"] = True
+    results_summary = []
     
-    result = run_evaluation(config, use_gemini=use_gemini, verbose=True)  # Подробный вывод для main.py
+    for idx, model_key in enumerate(model_keys, 1):
+        if len(model_keys) > 1:
+            print(f"\n{'='*80}")
+            print(f"МОДЕЛЬ {idx}/{len(model_keys)}: {model_key}")
+            print(f"{'='*80}\n")
+        
+        # Создаем копию конфигурации и добавляем параметры если указаны
+        config = copy.deepcopy(MODEL_CONFIGS[model_key])
+        if multi_agent_mode:
+            config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
+        if structured_output:
+            config["hyperparameters"]["structured_output"] = True
+        if use_outlines:
+            config["hyperparameters"]["use_outlines"] = True
+        
+        try:
+            result = run_evaluation(config, use_gemini=use_gemini, verbose=verbose)
+            
+            if result.get("status") != "error":
+                results_summary.append({
+                    "model_key": model_key,
+                    "status": "success",
+                    "result": result
+                })
+                
+                if len(model_keys) == 1:
+                    # Для одной модели выводим полную сводку
+                    print(f"\n{'='*80}")
+                    print(f"🎉 ФИНАЛЬНАЯ СВОДКА")
+                    print(f"{'='*80}")
+                    print(f"Оценка модели '{model_key}' завершена успешно!")
+                    print(f"\nОсновные результаты:")
+                    print(f"   • Модель: {result.get('model_name', 'N/A')}")
+                    print(f"   • Время выполнения: {result.get('average_response_time_seconds', 0) * result.get('total_samples', 0) / 60:.2f} минут")
+                    print(f"   • Средняя скорость: {result.get('average_response_time_seconds', 0):.3f} сек/ответ")
+                    print(f"   • Ошибки парсинга: {result.get('parsing_error_rate', 0):.2%} ({result.get('invalid_json_count', 0)}/{result.get('total_samples', 0)})")
+                    print(f"   • Использование памяти: {result.get('gpu_memory_during_inference_gb', 0):.2f} GB")
+                    
+                    quality = result.get('quality_metrics')
+                    if quality:
+                        print(f"\n🎯 Метрики качества:")
+                        mass = quality.get('массовая доля', {})
+                        prochee = quality.get('прочее', {})
+                        print(f"   • 'массовая доля':")
+                        print(f"     - Accuracy: {mass.get('accuracy', 0):.2%}")
+                        print(f"     - Precision: {mass.get('precision', 0):.2%}, Recall: {mass.get('recall', 0):.2%}, F1: {mass.get('f1', 0):.2%}")
+                        print(f"   • 'прочее':")
+                        print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
+                        print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
+                    
+                    print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")
+                    print(f"{'='*80}\n")
+            else:
+                results_summary.append({
+                    "model_key": model_key,
+                    "status": "error",
+                    "error": result.get("error", "Unknown error")
+                })
+                print(f"❌ Ошибка при оценке модели '{model_key}': {result.get('error', 'Unknown error')}\n")
+        except KeyboardInterrupt:
+            print(f"\n⚠️ Прервано пользователем. Остановка оценки моделей.")
+            break
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            print(f"❌ Критическая ошибка при оценке '{model_key}': {error_msg}")
+            print(f"   Детали: {traceback.format_exc()[:500]}...\n")
+            results_summary.append({
+                "model_key": model_key,
+                "status": "error",
+                "error": error_msg
+            })
     
-    if result.get("status") != "error":
+    # Выводим итоговую сводку для нескольких моделей
+    if len(model_keys) > 1:
         print(f"\n{'='*80}")
-        print(f"🎉 ФИНАЛЬНАЯ СВОДКА")
-        print(f"{'='*80}")
-        print(f"Оценка модели '{model_key}' завершена успешно!")
-        print(f"\nОсновные результаты:")
-        print(f"   • Модель: {result.get('model_name', 'N/A')}")
-        print(f"   • Время выполнения: {result.get('average_response_time_seconds', 0) * result.get('total_samples', 0) / 60:.2f} минут")
-        print(f"   • Средняя скорость: {result.get('average_response_time_seconds', 0):.3f} сек/ответ")
-        print(f"   • Ошибки парсинга: {result.get('parsing_error_rate', 0):.2%} ({result.get('invalid_json_count', 0)}/{result.get('total_samples', 0)})")
-        print(f"   • Использование памяти: {result.get('gpu_memory_during_inference_gb', 0):.2f} GB")
+        print(f"🎉 ИТОГОВАЯ СВОДКА ПО ВСЕМ МОДЕЛЯМ")
+        print(f"{'='*80}\n")
         
-        quality = result.get('quality_metrics')
-        if quality:
-            print(f"\n🎯 Метрики качества:")
-            mass = quality.get('массовая доля', {})
-            prochee = quality.get('прочее', {})
-            print(f"   • 'массовая доля':")
-            print(f"     - Accuracy: {mass.get('accuracy', 0):.2%}")
-            print(f"     - Precision: {mass.get('precision', 0):.2%}, Recall: {mass.get('recall', 0):.2%}, F1: {mass.get('f1', 0):.2%}")
-            print(f"   • 'прочее':")
-            print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
-            print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
+        successful = [s for s in results_summary if s['status'] == 'success']
+        failed = [s for s in results_summary if s['status'] == 'error']
         
-        print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")
+        print(f"Общая статистика:")
+        print(f"   • Всего моделей: {len(results_summary)}")
+        print(f"   • Успешно оценено: {len(successful)}")
+        print(f"   • Пропущено из-за ошибок: {len(failed)}")
+        print()
+        
+        if successful:
+            print(f"УСПЕШНО ОЦЕНЕННЫЕ МОДЕЛИ:")
+            for summary in successful:
+                result = summary['result']
+                print(f"   • {summary['model_key']}")
+                print(f"     - Модель: {result.get('model_name', 'N/A')}")
+                print(f"     - Скорость: {result.get('average_response_time_seconds', 0):.3f} сек/ответ")
+                print(f"     - Ошибки парсинга: {result.get('parsing_error_rate', 0):.2%}")
+                print(f"     - Память: {result.get('gpu_memory_during_inference_gb', 0):.2f} GB")
+                
+                quality = result.get('quality_metrics')
+                if quality:
+                    mass = quality.get('массовая доля', {})
+                    prochee = quality.get('прочее', {})
+                    print(f"     - Метрики 'массовая доля': Accuracy={mass.get('accuracy', 0):.2%}, F1={mass.get('f1', 0):.2%}")
+                    print(f"     - Метрики 'прочее': Accuracy={prochee.get('accuracy', 0):.2%}, F1={prochee.get('f1', 0):.2%}")
+                print()
+        
+        if failed:
+            print(f"ПРОПУЩЕННЫЕ МОДЕЛИ:")
+            for summary in failed:
+                print(f"   • {summary['model_key']}: {summary.get('error', 'Unknown error')[:100]}")
+            print()
+        
+        print(f"📁 Результаты сохранены в директории: {OUTPUT_DIR}")
         print(f"{'='*80}\n")
 
 

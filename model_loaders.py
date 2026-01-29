@@ -69,7 +69,7 @@ def load_ministral_3_3b_reasoning_2512() -> Tuple[Any, Any]:
 
 def load_mistral_3_8b_instruct() -> Tuple[Any, Any]:
     """
-    Загрузка mistralai/Mistral-3-8B-Instruct в bfloat16
+    Загрузка mistralai/Ministral-3-8B-Instruct-2512 в bfloat16
     
     ВАЖНО: 
     - Требуется transformers>=4.50.0.dev0:
@@ -79,7 +79,7 @@ def load_mistral_3_8b_instruct() -> Tuple[Any, Any]:
     """
     from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
     
-    model_id = "mistralai/Mistral-3-8B-Instruct"
+    model_id = "mistralai/Ministral-3-8B-Instruct-2512"
     
     print(f"   Загрузка токенизатора {model_id}...")
     try:
@@ -115,7 +115,7 @@ def load_mistral_3_8b_instruct() -> Tuple[Any, Any]:
 
 def load_mistral_3_14b_instruct() -> Tuple[Any, Any]:
     """
-    Загрузка mistralai/Mistral-3-14B-Instruct в bfloat16
+    Загрузка mistralai/Ministral-3-14B-Instruct-2512 в bfloat16
     
     ВАЖНО: 
     - Требуется transformers>=4.50.0.dev0:
@@ -125,7 +125,7 @@ def load_mistral_3_14b_instruct() -> Tuple[Any, Any]:
     """
     from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
     
-    model_id = "mistralai/Mistral-3-14B-Instruct"
+    model_id = "mistralai/Ministral-3-14B-Instruct-2512"
     
     print(f"   Загрузка токенизатора {model_id}...")
     try:
@@ -161,7 +161,7 @@ def load_mistral_3_14b_instruct() -> Tuple[Any, Any]:
 
 def load_mistral_3_3b_reasoning() -> Tuple[Any, Any]:
     """
-    Загрузка mistralai/Mistral-3-3B-Reasoning в bfloat16
+    Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16
     
     ВАЖНО: 
     - Требуется transformers>=4.50.0.dev0:
@@ -171,7 +171,7 @@ def load_mistral_3_3b_reasoning() -> Tuple[Any, Any]:
     """
     from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
     
-    model_id = "mistralai/Mistral-3-3B-Reasoning"
+    model_id = "mistralai/Ministral-3-3B-Reasoning-2512"
     
     # Используем MistralCommonBackend для токенизатора
     tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
@@ -491,7 +491,16 @@ def load_codegemma_7b() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
-def generate_gemma(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
+def generate_gemma(
+    model, 
+    tokenizer, 
+    prompt: str, 
+    max_new_tokens: int = 1024, 
+    repetition_penalty: float = None,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    use_outlines: bool = False
+) -> str:
     """
     Функция генерации для Gemma 3 моделей с использованием правильного формата сообщений
     
@@ -501,6 +510,9 @@ def generate_gemma(model, tokenizer, prompt: str, max_new_tokens: int = 1024, re
         prompt: промпт
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
+        structured_output: флаг для structured output (игнорируется для Gemma)
+        response_schema: схема для structured output (игнорируется для Gemma)
+        use_outlines: использовать ли outlines (игнорируется для Gemma)
     """
     # Для Gemma 3 используем правильный формат сообщений
     # Проверяем, является ли модель Gemma3ForCausalLM
@@ -709,7 +721,16 @@ def load_t5gemma_2_1b_1b() -> Tuple[Any, Any]:
     return model, processor
 
 
-def generate_standard(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
+def generate_standard(
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int = 1024,
+    repetition_penalty: float = None,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    use_outlines: bool = False,
+) -> str:
     """
     Стандартная функция генерации для большинства моделей
     
@@ -720,6 +741,30 @@ def generate_standard(model, tokenizer, prompt: str, max_new_tokens: int = 1024,
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
     """
+    # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
+    # Работает только для локальных HF-моделей; для API моделей outlines не используется.
+    if use_outlines and structured_output and response_schema is not None:
+        try:
+            import outlines  # type: ignore
+        except Exception as e:
+            raise ImportError(
+                "Библиотека outlines не установлена. Установите: pip install outlines"
+            ) from e
+
+        try:
+            # Оборачиваем HF модель/токенизатор в outlines model
+            outlines_model = outlines.models.transformers(model, tokenizer)
+            generator = outlines.generate.json(outlines_model, response_schema)
+            generated = generator(prompt)
+
+            # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
+            if isinstance(generated, (dict, list)):
+                import json as _json
+                return _json.dumps(generated, ensure_ascii=False, indent=2)
+            return str(generated).strip()
+        except Exception as e:
+            raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
     generate_kwargs = {
@@ -763,7 +808,16 @@ def generate_standard(model, tokenizer, prompt: str, max_new_tokens: int = 1024,
     return text.strip()
 
 
-def generate_qwen(model, tokenizer, prompt: str, max_new_tokens: int = 512, repetition_penalty: float = None) -> str:
+def generate_qwen(
+    model, 
+    tokenizer, 
+    prompt: str, 
+    max_new_tokens: int = 512, 
+    repetition_penalty: float = None,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    use_outlines: bool = False
+) -> str:
     """
     Функция генерации для Qwen с дополнительными стоп-строками
     
@@ -773,6 +827,9 @@ def generate_qwen(model, tokenizer, prompt: str, max_new_tokens: int = 512, repe
         prompt: промпт
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
+        structured_output: флаг для structured output (игнорируется для Qwen)
+        response_schema: схема для structured output (игнорируется для Qwen)
+        use_outlines: использовать ли outlines (игнорируется для Qwen)
     """
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
@@ -806,7 +863,16 @@ def generate_qwen(model, tokenizer, prompt: str, max_new_tokens: int = 512, repe
     return text.strip()
 
 
-def generate_t5(model, tokenizer_or_processor, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
+def generate_t5(
+    model, 
+    tokenizer_or_processor, 
+    prompt: str, 
+    max_new_tokens: int = 1024, 
+    repetition_penalty: float = None,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    use_outlines: bool = False
+) -> str:
     """
     Функция генерации для T5/Seq2Seq моделей
     Поддерживает как processor (AutoProcessor), так и tokenizer (T5Tokenizer)
@@ -817,6 +883,9 @@ def generate_t5(model, tokenizer_or_processor, prompt: str, max_new_tokens: int 
         prompt: промпт
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
+        structured_output: флаг для structured output (игнорируется для T5)
+        response_schema: схема для structured output (игнорируется для T5)
+        use_outlines: использовать ли outlines (игнорируется для T5)
     """
     # Определяем, это processor или tokenizer
     # Для T5Gemma processor требует явный параметр text= для текстового ввода
@@ -910,7 +979,17 @@ def generate_t5(model, tokenizer_or_processor, prompt: str, max_new_tokens: int 
     return text.strip()
 
 
-def generate_qwen_3(model, tokenizer, prompt: str, max_new_tokens: int = 32768, repetition_penalty: float = None, enable_thinking: bool = True) -> str:
+def generate_qwen_3(
+    model, 
+    tokenizer, 
+    prompt: str, 
+    max_new_tokens: int = 32768, 
+    repetition_penalty: float = None, 
+    enable_thinking: bool = True,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    use_outlines: bool = False
+) -> str:
     """
     Функция генерации для Qwen3 с поддержкой thinking mode
     
@@ -921,6 +1000,9 @@ def generate_qwen_3(model, tokenizer, prompt: str, max_new_tokens: int = 32768, 
         max_new_tokens: максимальное количество новых токенов (по умолчанию 32768 для Qwen3)
         repetition_penalty: штраф за повторения (если None, не используется)
         enable_thinking: включить thinking mode (по умолчанию True)
+        structured_output: флаг для structured output (игнорируется для Qwen3)
+        response_schema: схема для structured output (игнорируется для Qwen3)
+        use_outlines: использовать ли outlines (игнорируется для Qwen3)
     """
     # Подготавливаем сообщения для chat template
     messages = [

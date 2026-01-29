@@ -205,9 +205,75 @@ python main.py <model_key> --no-gemini
 - Вы хотите ускорить процесс оценки (анализ через Gemini занимает дополнительное время)
 - Вы не нуждаетесь в автоматическом анализе ошибок
 
-**Режим Structured Output (Pydantic валидация):**
+**Режим Structured Output:**
 
-Режим `--structured-output` использует Pydantic схемы для валидации и структурирования ответов моделей. Это обеспечивает более надежное извлечение данных и гарантирует соответствие ответов ожидаемой структуре.
+Режим `--structured-output` — это **отдельный режим работы**, который включает:
+
+1. **Промпты** — используется тот же промпт, что и в обычном режиме (например, `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`). Для локальных моделей автоматически добавляется JSON Schema из Pydantic схемы в конец промпта, что помогает модели лучше понять ожидаемую структуру ответа.
+
+2. **JSON Schema в промпте** (для локальных моделей):
+   - Pydantic схема автоматически конвертируется в JSON Schema
+   - JSON Schema добавляется в конец промпта в формате markdown блока
+   - Это помогает модели лучше понять ожидаемую структуру ответа
+
+3. **Нативная поддержка structured output** (для API моделей):
+   - Для API моделей Gemini (gemma-3-4b-api, gemma-3-12b-api, gemma-3-27b-api) JSON Schema передается напрямую в API через параметр `response_schema`
+   - API гарантирует возврат валидного JSON согласно схеме
+
+4. **Процесс валидации и парсинга:**
+   
+   **Для локальных моделей:**
+   ```
+   Ответ модели
+      ↓
+   Извлечение JSON из ответа (extract_json_from_response)
+      ↓
+   Попытка парсинга:
+     1. json.loads(json_part) — стандартный парсер
+     2. Если не удалось → parse_json_safe(json_part) — умный парсер
+     3. Если не удалось → parse_json_safe(response_text) — парсинг исходного ответа
+      ↓
+   Валидация через Pydantic:
+     - response_schema.model_validate(parsed_json)
+     - Если валидация успешна → нормализация ключей (замена подчеркиваний на пробелы)
+     - Сериализация обратно в JSON строку
+      ↓
+   Если валидация не прошла (fallback):
+     - Повторная попытка парсинга json_part
+     - Если успешно распарсился → is_valid = True
+     - Если не удалось → попытка парсинга response_text
+     - Результат сохраняется как обычный JSON (без валидации)
+   ```
+   
+   **Для API моделей:**
+   ```
+   Запрос к API с response_schema
+      ↓
+   API возвращает валидный JSON согласно схеме
+      ↓
+   Парсинг ответа (обычно уже валидный JSON)
+      ↓
+   Валидация через Pydantic (для нормализации ключей)
+      ↓
+   Если валидация не прошла (fallback):
+     - Используется обычный парсинг
+     - Результат сохраняется как обычный JSON
+   ```
+
+5. **Важные особенности:**
+   - Pydantic валидация используется в первую очередь для **нормализации ключей** (замена `массовая_доля` на `массовая доля` для совместимости с метриками)
+   - Если валидация не проходит, система автоматически использует fallback на обычный парсер
+   - Режим structured output **влияет на промпт**, а не только на валидацию
+   - Для API моделей structured output обеспечивает гарантированно валидный JSON от API
+
+**Режим Outlines (structured generation для локальных моделей):**
+
+Флаг `--outlines` включает генерацию JSON через библиотеку `outlines` по Pydantic-схеме.  
+Работает **только** для локальных моделей **вместе** с `--structured-output`.
+
+- Использует библиотеку `outlines` для гарантированной генерации валидного JSON
+- Модель генерирует токены, которые автоматически валидируются по схеме
+- Обеспечивает 100% валидность JSON на уровне генерации
 
 **Примеры запуска:**
 
@@ -235,6 +301,9 @@ python main.py qwen-2.5-3b --multi-agent simple_4agents --no-gemini
 # Одноагентный режим с structured output
 python main.py qwen-2.5-3b --structured-output
 
+# Structured output + outlines (локальные модели)
+python main.py qwen-2.5-3b --structured-output --outlines
+
 # Мультиагентный режим с structured output
 python main.py gemma-3-4b-api --multi-agent simple_4agents --structured-output
 
@@ -250,7 +319,7 @@ python main.py gemma-3-27b-api --structured-output
 - Быстрее (один запрос к модели)
 - Меньше использование памяти
 - Подходит для простых задач
-- Использует единый промпт `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`
+- Использует единый промпт `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE` (для structured output JSON Schema добавляется автоматически)
 
 **Мультиагентный подход:**
 - Более точное извлечение данных за счет специализации
@@ -258,6 +327,15 @@ python main.py gemma-3-27b-api --structured-output
 - Больше запросов к модели (зависит от режима: 3-4 запроса вместо 1)
 - Больше использование памяти и времени
 - Использует специализированные промпты для каждого этапа
+
+**Режим Structured Output:**
+- **Отдельный режим**, который может использоваться как с одноагентным, так и с мультиагентным подходом
+- Использует специальные промпты (`*_STRUCTURED`) с адаптированными инструкциями
+- Для локальных моделей добавляет JSON Schema в промпт
+- Для API моделей использует нативную поддержку structured output через API
+- Pydantic валидация используется для нормализации ключей и проверки структуры
+- Автоматический fallback на обычный парсер при ошибках валидации
+- **Влияет на промпт и процесс генерации**, а не только на валидацию результата
 
 **Режимы:**
 - `simple_4agents` - 4 запроса к модели (извлечение числовых фрагментов → массовые доли → прочие параметры → формирование JSON)
@@ -435,10 +513,10 @@ python run_all_models.py
 ### Локальные модели (загружаются с Hugging Face)
 
 **Gemma модели:**
-- **google/gemma-2-2b-it** - Gemma 2.2B Instruct (ключ: `gemma-2-2b`)
-- **google/gemma-3-1b-it** - Gemma 3 1B Instruct (ключ: `gemma-3-1b`)
-- **google/gemma-3-4b-it** - Gemma 3 4B Instruct (ключ: `gemma-3-4b`)
-- **google/codegemma-7b-it** - CodeGemma 7B Instruct (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
+- **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
+- **google/gemma-3-1b-it** - Gemma 3 1B it (ключ: `gemma-3-1b`)
+- **google/gemma-3-4b-it** - Gemma 3 4B it (ключ: `gemma-3-4b`)
+- **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
 
 **Qwen модели:**
 - **Qwen/Qwen2.5-1.5B-Instruct** - Qwen 2.5 1.5B (ключ: `qwen-2.5-1.5b`)
@@ -449,9 +527,9 @@ python run_all_models.py
 
 **Mistral модели:**
 - **mistralai/Ministral-3-3B-Reasoning-2512** - Ministral 3 3B Reasoning (ключ: `Ministral-3-3B-Reasoning-2512`)
-- **mistralai/Mistral-3-8B-Instruct** - Mistral 3 8B Instruct (ключ: `mistral-3-8b-instruct`) - требует ~16GB VRAM
-- **mistralai/Mistral-3-14B-Instruct** - Mistral 3 14B Instruct (ключ: `mistral-3-14b-instruct`) - требует ~28GB VRAM
-- **mistralai/Mistral-3-3B-Reasoning** - Mistral 3 3B Reasoning (ключ: `mistral-3-3b-reasoning`)
+- **mistralai/Ministral-3-8B-Instruct-2512** - Mistral 3 8B it (ключ: `mistral-3-8b-instruct`) - требует ~16GB VRAM
+- **mistralai/Ministral-3-14B-Instruct-2512** - Mistral 3 14B it (ключ: `mistral-3-14b-instruct`) - требует ~28GB VRAM
+- **mistralai/Ministral-3-3B-Reasoning-2512** - Mistral 3 3B Reasoning (ключ: `mistral-3-3b-reasoning`)
 
 **Другие модели:**
 - **microsoft/Phi-4-mini-instruct** - Phi 4 Mini (ключ: `phi-4-mini-instruct`)
@@ -479,7 +557,7 @@ python run_all_models.py
 
 *Через OpenRouter API:*
 - **deepseek-r1t-chimera** (ключ: `deepseek-r1t-chimera-api`) - DeepSeek R1T Chimera через OpenRouter API (free tier)
-- **mistral-small-3.1-24b-instruct** (ключ: `mistral-small-3.1-24b-api`) - Mistral Small 3.1 24B Instruct через OpenRouter API (free tier)
+- **mistral-small-3.1-24b-instruct** (ключ: `mistral-small-3.1-24b-api`) - Mistral Small 3.1 24B it через OpenRouter API (free tier)
 - **qwen/qwen3-32b** (ключ: `qwen-3-32b-api`) - Qwen3 32B через OpenRouter API
 
 **Особенности API моделей:**
@@ -588,7 +666,6 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 - **`QA_QUANTITY_PROMPT`** - промпт для извлечения количеств (массы, объемы, количество упаковок)
 
 **Для режима `--structured-output`:**
-- **`FERTILIZER_EXTRACTION_PROMPT_STRUCTURED`** - промпт для structured output (адаптирован для работы с JSON Schema)
 - **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
 - Используется Pydantic схема `FertilizerExtractionOutput` из `structured_schemas.py` для валидации ответов
 
@@ -764,14 +841,15 @@ python reevaluate.py
 
 ### Сводная таблица команд
 
-| Команда | Описание | Режим | Structured Output | Gemini анализ |
-|---------|----------|-------|-------------------|---------------|
-| `python main.py <model_key>` | Оценка одной модели | Одноагентный | Отключен | По умолчанию |
-| `python main.py <model_key> --multi-agent <mode>` | Оценка одной модели | Мультиагентный | Отключен | По умолчанию |
-| `python main.py <model_key> --structured-output` | Оценка с Pydantic валидацией | Одноагентный | Включен | По умолчанию |
-| `python main.py <model_key> --multi-agent <mode> --structured-output` | Оценка с мультиагентным режимом и Pydantic | Мультиагентный | Включен | По умолчанию |
-| `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Отключен |
-| `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | По умолчанию |
-| `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | Отключен |
-| `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | Включен |
-| `python few_shot_extractor.py <model_key> [опции]` | Извлечение few-shot примеров | - | - | - |
+| Команда | Описание | Режим | Structured Output | Verbose | Gemini анализ |
+|---------|----------|-------|-------------------|---------|---------------|
+| `python main.py <model_key>` | Оценка одной модели | Одноагентный | Отключен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --multi-agent <mode>` | Оценка одной модели | Мультиагентный | Отключен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --structured-output` | Оценка с Pydantic валидацией | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --multi-agent <mode> --structured-output` | Оценка с мультиагентным режимом и Pydantic | Мультиагентный | Включен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --structured-output --outlines` | Оценка с Pydantic + outlines (локальные модели) | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Включен (по умолчанию) | Отключен |
+| `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
+| `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | - | Отключен |
+| `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | - | Включен |
+| `python few_shot_extractor.py <model_key> [опции]` | Извлечение few-shot примеров | - | - | Опционально (`--verbose`) | - |

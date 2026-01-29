@@ -1,0 +1,159 @@
+# Конфигурация моделей для оценки
+# Каждая модель содержит:
+# - name: название модели на HuggingFace или для API
+# - hyperparameters: словарь гиперпараметров для генерации
+#
+# Остальные параметры (load_func, load_module, generate_func, generate_module)
+# определяются автоматически по имени модели:
+# - Если в ключе модели есть "-api", используется model_loaders_api, иначе model_loaders
+# - load_func определяется как: load_{model_key.replace('-', '_').lower()}
+# - generate_func определяется автоматически по паттернам:
+#   * API модели: "gemma" -> generate_gemma_api, иначе -> generate_openrouter_api
+#   * Локальные модели: "qwen-3" -> generate_qwen_3, "qwen" -> generate_qwen,
+#     "gemma" -> generate_gemma, "t5" -> generate_t5, иначе -> generate_standard
+#
+# Если нужно переопределить автоматические значения, можно указать их явно
+
+models:
+  gemma-2-2b:
+    name: "google/gemma-2-2b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  qwen-2.5-1.5b:
+    name: "Qwen/Qwen2.5-1.5B-Instruct"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  qwen-2.5-3b:
+    name: "Qwen/Qwen2.5-3B-Instruct"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      dtype: "bfloat16"
+
+  qwen-2.5-4b:
+    name: "Qwen/Qwen2.5-4B-Instruct"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      dtype: "bfloat16"
+
+  qwen-3-8b:
+    name: "Qwen/Qwen3-8B"
+    hyperparameters:
+      max_new_tokens: 32768
+      do_sample: false
+      torch_dtype: "auto"
+      enable_thinking: true
+
+  qwen-3-32b:
+    name: "Qwen/Qwen3-32B"
+    hyperparameters:
+      max_new_tokens: 32768
+      do_sample: false
+      torch_dtype: "auto"
+      enable_thinking: true
+
+  gemma-3-1b:
+    name: "google/gemma-3-1b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  gemma-3-4b:
+    name: "google/gemma-3-4b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  codegemma-7b:
+    name: "google/codegemma-7b-it"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  gemma-3-4b-api:
+    name: "gemma-3-4b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      api_model: true
+
+  gemma-3-12b-api:
+    name: "gemma-3-12b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      api_model: true
+
+  gemma-3-27b-api:
+    name: "gemma-3-27b-it"
+    hyperparameters:
+      max_new_tokens: 1024
+      api_model: true
+
+  deepseek-r1t-chimera-api:
+    name: "tngtech/deepseek-r1t-chimera:free"
+    hyperparameters:
+      max_new_tokens: 512
+      api_model: true
+
+  mistral-small-3.1-24b-api:
+    name: "mistralai/mistral-small-3.1-24b-instruct:free"
+    hyperparameters:
+      max_new_tokens: 512
+      api_model: true
+
+  qwen-3-32b-api:
+    name: "qwen/qwen3-32b"
+    hyperparameters:
+      max_new_tokens: 32768
+      api_model: true
+
+  ministral-3-3b-reasoning-2512:
+    name: "mistralai/Ministral-3-3B-Reasoning-2512"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  mistral-3-8b-instruct:
+    name: "mistralai/Ministral-3-8B-Instruct-2512"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  mistral-3-14b-instruct:
+    name: "mistralai/Ministral-3-14B-Instruct-2512"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  mistral-3-3b-reasoning:
+    name: "mistralai/Ministral-3-3B-Reasoning-2512"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  phi-4-mini-instruct:
+    name: "microsoft/Phi-4-mini-instruct"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      dtype: "bfloat16"
+
+  t5gemma-2-1b-1b:
+    name: "google/t5gemma-2-1b-1b"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      dtype: "bfloat16"
