@@ -10,158 +10,7 @@ import inspect
 import warnings
 from typing import Dict, Any, Optional
 import prompt_config
-
-
-def load_api_keys():
-    """
-    Загружает API ключи с приоритетом:
-    1. Из config_secrets.py (если файл существует)
-    2. Из переменных окружения
-    
-    Returns:
-        tuple: (HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY)
-    """
-    HF_TOKEN = None
-    GEMINI_API_KEY = None
-    OPENAI_API_KEY = None
-    
-    # Приоритет 1: Пытаемся загрузить из config_secrets.py
-    try:
-        from config_secrets import (
-            HF_TOKEN as _hf_token, 
-            GEMINI_API_KEY as _gemini_key,
-            OPENAI_API_KEY as _openai_key
-        )
-        if _hf_token and _hf_token.strip():
-            HF_TOKEN = _hf_token.strip()
-        if _gemini_key and _gemini_key.strip():
-            GEMINI_API_KEY = _gemini_key.strip()
-        if _openai_key and _openai_key.strip():
-            OPENAI_API_KEY = _openai_key.strip()
-    except ImportError:
-        # Файл config_secrets.py не найден - это нормально, используем переменные окружения
-        pass
-    except Exception as e:
-        # Если файл есть, но есть ошибка при импорте - выводим предупреждение
-        print(f"Предупреждение: не удалось загрузить config_secrets.py: {e}")
-        print("Будет использована переменная окружения, если она установлена.")
-    
-    # Приоритет 2: Если не загрузили из файла, пробуем переменные окружения
-    if not HF_TOKEN:
-        HF_TOKEN = os.environ.get("HF_TOKEN")
-        if HF_TOKEN:
-            HF_TOKEN = HF_TOKEN.strip()
-    
-    if not GEMINI_API_KEY:
-        GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-        if GEMINI_API_KEY:
-            GEMINI_API_KEY = GEMINI_API_KEY.strip()
-    
-    if not OPENAI_API_KEY:
-        OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-        if OPENAI_API_KEY:
-            OPENAI_API_KEY = OPENAI_API_KEY.strip()
-    
-    # Проверка обязательного HF_TOKEN
-    if not HF_TOKEN:
-        raise ValueError(
-            "HF_TOKEN не установлен!\n"
-            "Создайте файл config_secrets.py на основе config_secrets.py.example и заполните свои ключи,\n"
-            "или установите переменную окружения:\n"
-            "  Windows: set HF_TOKEN=your_token_here\n"
-            "  Linux/Mac: export HF_TOKEN=your_token_here"
-        )
-    
-    # Нормализуем GEMINI_API_KEY (пустая строка = None)
-    if GEMINI_API_KEY == "":
-        GEMINI_API_KEY = None
-    
-    # Нормализуем OPENAI_API_KEY (пустая строка = None)
-    if OPENAI_API_KEY == "":
-        OPENAI_API_KEY = None
-    
-    return HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY
-
-
-# Загружаем ключи при импорте модуля
-HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY = load_api_keys()
-
-
-def find_file_path(file_path: str, search_in_parent: bool = True) -> str:
-    """
-    Ищет файл в различных возможных местах.
-    
-    Args:
-        file_path: относительный путь к файлу (например, "data/udobrenia.xlsx")
-        search_in_parent: если True, ищет в родительских директориях
-    
-    Returns:
-        Абсолютный путь к файлу, если найден
-    
-    Raises:
-        FileNotFoundError: если файл не найден
-    """
-    # Если путь абсолютный и файл существует, возвращаем его
-    if os.path.isabs(file_path) and os.path.exists(file_path):
-        return os.path.abspath(file_path)
-    
-    # Если путь относительный и файл существует в текущей директории
-    if os.path.exists(file_path):
-        return os.path.abspath(file_path)
-    
-    if not search_in_parent:
-        raise FileNotFoundError(f"Файл не найден: {file_path}")
-    
-    # Пробуем несколько вариантов расположения файла
-    config_dir = os.path.dirname(os.path.abspath(__file__))
-    base_dir = os.path.dirname(config_dir)  # Родительская директория SmallLLMEvaluator
-    cwd = os.getcwd()  # Текущая рабочая директория
-    
-    # Определяем директорию запуска скрипта
-    script_dir = cwd
-    try:
-        frame = inspect.currentframe()
-        while frame:
-            frame = frame.f_back
-            if frame and frame.f_globals.get('__file__'):
-                script_file = frame.f_globals['__file__']
-                script_dir = os.path.dirname(os.path.abspath(script_file))
-                break
-    except:
-        pass
-    
-    # Список возможных путей для поиска
-    possible_paths = [
-        # Вариант 1: В родительской директории SmallLLMEvaluator (../data/)
-        os.path.join(base_dir, file_path),
-        # Вариант 2: На уровень выше от родительской директории (../../data/)
-        os.path.join(base_dir, "..", file_path),
-        # Вариант 3: В директории запуска скрипта
-        os.path.join(script_dir, file_path),
-        # Вариант 4: На уровень выше от директории запуска скрипта
-        os.path.join(script_dir, "..", file_path),
-        # Вариант 5: Относительно текущей рабочей директории
-        os.path.join(cwd, file_path),
-        # Вариант 6: На уровень выше от текущей рабочей директории
-        os.path.join(cwd, "..", file_path),
-        # Вариант 7: В директории config (на случай, если data рядом с SmallLLMEvaluator)
-        os.path.join(config_dir, "..", file_path),
-        # Вариант 8: Относительный путь
-        file_path
-    ]
-    
-    # Проверяем каждый путь
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            return abs_path
-    
-    # Если файл не найден, выводим все проверенные пути для отладки
-    error_msg = f"Файл не найден: {file_path}\n"
-    error_msg += "Проверены следующие пути:\n"
-    for path in possible_paths:
-        error_msg += f"  - {os.path.abspath(path)}\n"
-    raise FileNotFoundError(error_msg)
+from config import PROMPT_TEMPLATE_NAME, DATASET_FILENAME
 
 
 def find_dataset_path(dataset_filename: str = None) -> str:
@@ -175,167 +24,118 @@ def find_dataset_path(dataset_filename: str = None) -> str:
         Абсолютный путь к файлу датасета
     """
     if dataset_filename is None:
-        from config import DATASET_FILENAME
         dataset_filename = DATASET_FILENAME
     
     # Сначала проверяем переменную окружения (приоритет 1)
     if os.environ.get("DATASET_PATH"):
         return os.path.abspath(os.environ.get("DATASET_PATH"))
     
-    # Используем общую функцию поиска
-    return find_file_path(os.path.join("data", dataset_filename))
+    # Пробуем несколько вариантов расположения файла
+    config_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(config_dir)  # Родительская директория SmallLLMEvaluator
+    cwd = os.getcwd()  # Текущая рабочая директория
+    
+    # Определяем директорию запуска скрипта (если запускается через %run в Jupyter)
+    # Пытаемся найти директорию, где находится run_all_models.py или main.py
+    script_dir = cwd
+    try:
+        # Пытаемся найти директорию вызывающего скрипта
+        frame = inspect.currentframe()
+        while frame:
+            frame = frame.f_back
+            if frame and frame.f_globals.get('__file__'):
+                script_file = frame.f_globals['__file__']
+                script_dir = os.path.dirname(os.path.abspath(script_file))
+                break
+    except:
+        pass
+    
+    # Список возможных путей для поиска
+    possible_paths = [
+        # Вариант 1: В родительской директории SmallLLMEvaluator (../data/)
+        os.path.join(base_dir, "data", dataset_filename),
+        # Вариант 2: На уровень выше от родительской директории (../../data/)
+        os.path.join(base_dir, "..", "data", dataset_filename),
+        # Вариант 3: В директории запуска скрипта (если data рядом со скриптом)
+        os.path.join(script_dir, "data", dataset_filename),
+        # Вариант 4: На уровень выше от директории запуска скрипта
+        os.path.join(script_dir, "..", "data", dataset_filename),
+        # Вариант 5: Относительно текущей рабочей директории
+        os.path.join(cwd, "data", dataset_filename),
+        # Вариант 6: На уровень выше от текущей рабочей директории
+        os.path.join(cwd, "..", "data", dataset_filename),
+        # Вариант 7: В директории config (на случай, если data рядом с SmallLLMEvaluator)
+        os.path.join(config_dir, "..", "data", dataset_filename),
+        # Вариант 8: Относительный путь (data/results_var3.xlsx)
+        os.path.join("data", dataset_filename),
+    ]
+    
+    # Ищем первый существующий файл
+    dataset_path = None
+    checked_paths = []
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        checked_paths.append(abs_path)
+        if os.path.exists(abs_path):
+            dataset_path = abs_path
+            break
+    
+    # Если не нашли, используем первый вариант как дефолтный (для вывода ошибки)
+    if dataset_path is None:
+        dataset_path = os.path.abspath(possible_paths[0])
+    
+    # Проверяем, что файл найден, и выводим предупреждение, если нет
+    if not os.path.exists(dataset_path):
+        paths_list = "\n".join([f"   {i+1}. {path}" for i, path in enumerate(checked_paths)])
+        warnings.warn(
+            f"⚠️  Датасет не найден по пути: {dataset_path}\n"
+            f"   Проверенные пути:\n{paths_list}\n"
+            f"   Текущая рабочая директория: {cwd}\n"
+            f"   Директория config.py: {config_dir}\n"
+            f"   Родительская директория: {base_dir}\n"
+            f"   Директория запуска скрипта: {script_dir}\n"
+            f"   Убедитесь, что файл {dataset_filename} находится в папке data/\n"
+            f"   Или установите переменную окружения: export DATASET_PATH=/path/to/data/{dataset_filename}",
+            UserWarning
+        )
+    
+    return dataset_path
 
 
-def build_prompt3(text: str, structured_output: bool = False, response_schema: Any = None) -> str:
+def build_prompt3(text: str) -> str:
     """
     Генерация промпта для конкретного текста
     
     Использует промпт, указанный в config.PROMPT_TEMPLATE_NAME (название переменной из prompt_config.py)
-    Если structured_output=True, использует тот же промпт, но добавляет JSON Schema в конец
     """
-    from config import PROMPT_TEMPLATE_NAME
-    import json
-    
-    # Для structured output используем тот же промпт, что и для обычного режима
-    # JSON Schema будет добавлен автоматически в конец
-    # Для structured output используется тот же промпт, что и для обычного режима
-    # JSON Schema будет добавлен автоматически в конец
     prompt_template = getattr(prompt_config, PROMPT_TEMPLATE_NAME)
-    
-    prompt_text = prompt_template.format(text=text)
-    
-    # Для structured output добавляем JSON Schema в конец промпта (для локальных моделей)
-    if structured_output and response_schema is not None:
-        try:
-            # Конвертируем Pydantic схему в JSON Schema
-            if hasattr(response_schema, 'model_json_schema'):
-                json_schema = response_schema.model_json_schema()
-                # Добавляем JSON schema в конец промпта
-                schema_text = json.dumps(json_schema, ensure_ascii=False, indent=2)
-                prompt_text += f"\n\nТребуемая структура JSON (JSON Schema):\n```json\n{schema_text}\n```"
-        except Exception as e:
-            # Если не удалось добавить schema, просто используем промпт без него
-            pass
-    
-    return prompt_text
-
-
-def _find_last_valid_json(text: str) -> str:
-    """
-    Находит последний валидный JSON объект или массив в тексте.
-    Учитывает баланс скобок для правильного определения границ JSON.
-    
-    Args:
-        text: текст для поиска
-        
-    Returns:
-        строка с последним JSON объектом/массивом или пустая строка
-    """
-    if not text:
-        return ""
-    
-    # Ищем все возможные начала JSON объектов и массивов
-    candidates = []
-    
-    # Ищем все открывающие скобки
-    for i, char in enumerate(text):
-        if char == '{':
-            candidates.append(('object', i))
-        elif char == '[':
-            candidates.append(('array', i))
-    
-    if not candidates:
-        return ""
-    
-    # Проверяем кандидатов с конца, чтобы найти последний валидный JSON
-    for json_type, start_idx in reversed(candidates):
-        # Извлекаем фрагмент от начала до конца текста
-        fragment = text[start_idx:]
-        
-        # Пытаемся найти конец JSON объекта/массива, учитывая баланс скобок
-        depth_obj = 0
-        depth_arr = 0
-        in_string = False
-        escape = False
-        
-        end_idx = -1
-        for i, ch in enumerate(fragment):
-            # Обрабатываем escape-последовательности
-            if ch == "\\" and not escape:
-                escape = True
-                continue
-            elif escape:
-                escape = False
-                continue
-            
-            # Переключаем состояние строки только на неэкранированных кавычках
-            if ch == '"' and not escape:
-                in_string = not in_string
-                continue
-            
-            # Считаем скобки только вне строк
-            if not in_string:
-                if ch == "{":
-                    depth_obj += 1
-                elif ch == "}":
-                    if depth_obj > 0:
-                        depth_obj -= 1
-                        # Для объекта проверяем только depth_obj (массив может быть внутри)
-                        if json_type == 'object' and depth_obj == 0:
-                            # Нашли конец объекта
-                            end_idx = i + 1
-                            break
-                elif ch == "[":
-                    depth_arr += 1
-                elif ch == "]":
-                    if depth_arr > 0:
-                        depth_arr -= 1
-                        # Для массива проверяем только depth_arr (объект может быть внутри)
-                        if json_type == 'array' and depth_arr == 0:
-                            # Нашли конец массива
-                            end_idx = i + 1
-                            break
-        
-        if end_idx != -1:
-            # Нашли валидный JSON
-            extracted = fragment[:end_idx].strip()
-            if extracted:
-                return extracted
-        else:
-            # JSON обрезан, но все равно возвращаем (будет обработано в parse_json_safe)
-            extracted = fragment.strip()
-            if extracted:
-                return extracted
-    
-    return ""
+    return prompt_template.format(text=text)
 
 
 def _extract_json_like(s: str) -> str:
     """
     Извлекает JSON-подстроку:
-    1) fenced ```json ... ``` (берет последний блок, если их несколько)
-    2) если нет — ищет последний '{' и возвращает оттуда до конца (фрагмент, возможно обрезанный)
+    1) fenced ```json ... ```
+    2) если нет — ищет первый '{' и возвращает оттуда до конца (фрагмент, возможно обрезанный)
     """
     if not isinstance(s, str):
         return ""
 
-    # 1) fenced block ```json ... ``` - ищем все блоки и берем последний
-    json_blocks = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", s, flags=re.IGNORECASE | re.DOTALL))
-    if json_blocks:
-        # Берем последний блок
-        last_block = json_blocks[-1]
-        return last_block.group(1).strip()
+    # 1) fenced block ```json ... ```
+    m = re.search(r"```(?:json)?\s*(.*?)\s*```", s, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip()
 
     # убрать ведущие markdown-символы и пробелы
     s_stripped = re.sub(r"^[\s\*\-#>]+", "", s.lstrip())
 
-    # 2) найти последнюю фигурную скобку и вернуть фрагмент от неё до конца (включая возможную обрезку)
-    idx = s_stripped.rfind("{")
+    # 2) найти первую фигурную скобку и вернуть фрагмент от неё до конца (включая возможную обрезку)
+    idx = s_stripped.find("{")
     if idx != -1:
         return s_stripped[idx:].strip()
 
-    # если нет '{', пробуем последнюю '['
-    idx = s_stripped.rfind("[")
+    # если нет '{', пробуем '['
+    idx = s_stripped.find("[")
     if idx != -1:
         return s_stripped[idx:].strip()
 
@@ -581,11 +381,31 @@ def extract_json_from_response(response_text: str) -> str:
                 if extracted:
                     return extracted
             
-            # Если нет markdown блоков, ищем последний валидный JSON объект или массив
-            # Используем более умный подход: находим последний JSON, учитывая баланс скобок
-            extracted = _find_last_valid_json(json_part)
-            if extracted:
-                return extracted
+            # Если нет markdown блоков, ищем последний JSON объект или массив
+            # Ищем все вхождения открывающих фигурных скобок (для объектов)
+            brace_positions = []
+            bracket_positions = []  # Для массивов
+            
+            for i, char in enumerate(json_part):
+                if char == '{':
+                    brace_positions.append(i)
+                elif char == '[':
+                    bracket_positions.append(i)
+            
+            # Берем последний JSON (объект или массив)
+            last_obj_idx = brace_positions[-1] if brace_positions else -1
+            last_arr_idx = bracket_positions[-1] if bracket_positions else -1
+            
+            if last_obj_idx > last_arr_idx:
+                # Последний JSON - объект
+                extracted = json_part[last_obj_idx:].strip()
+                if extracted:
+                    return extracted
+            elif last_arr_idx != -1:
+                # Последний JSON - массив
+                extracted = json_part[last_arr_idx:].strip()
+                if extracted:
+                    return extracted
             
             # Если ничего не найдено, возвращаем как есть
             return json_part
@@ -599,10 +419,30 @@ def extract_json_from_response(response_text: str) -> str:
         if extracted:
             return extracted
     
-    # 3. Ищем последний валидный JSON объект или массив в тексте
-    extracted = _find_last_valid_json(response_text)
-    if extracted:
-        return extracted
+    # 3. Ищем последний JSON объект или массив в тексте
+    brace_positions = []  # Для объектов
+    bracket_positions = []  # Для массивов
+    
+    for i, char in enumerate(response_text):
+        if char == '{':
+            brace_positions.append(i)
+        elif char == '[':
+            bracket_positions.append(i)
+    
+    # Берем последний JSON (объект или массив)
+    last_obj_idx = brace_positions[-1] if brace_positions else -1
+    last_arr_idx = bracket_positions[-1] if bracket_positions else -1
+    
+    if last_obj_idx > last_arr_idx:
+        # Последний JSON - объект
+        extracted = response_text[last_obj_idx:].strip()
+        if extracted:
+            return extracted
+    elif last_arr_idx != -1:
+        # Последний JSON - массив
+        extracted = response_text[last_arr_idx:].strip()
+        if extracted:
+            return extracted
     
     # 4. Иначе возвращаем весь текст (будет обработано в parse_json_safe)
     return response_text.strip()

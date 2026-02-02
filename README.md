@@ -125,14 +125,16 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 **Другие настройки:**
 - `GROUND_TRUTH_PATH` - путь к файлу с ground truth (опционально, по умолчанию используется колонка `json_parsed` из датасета)
 - `OUTPUT_DIR` - директория для сохранения результатов (по умолчанию `results/`)
-- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"`):
-  - `"FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE"` - промпт с примером текста и ответа
-  - `"FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"` - базовый промпт без примера
-  - `"MINIMAL_FIVESHOT_PROMPT"` - промпт few-shot с 5 примерами
+- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"DETAILED_INSTR_ZEROSHOT"`):
+  - `"DETAILED_INSTR_ZEROSHOT_BASELINE"` - детальный zero-shot промпт без примера (baseline)
+  - `"DETAILED_INSTR_ONESHOT"` - детальный промпт с примером текста и ответа (One-shot prompt)
+  - `"MINIMAL_FIVESHOT_PROMPT"` - минималистичный few-shot промпт с 5 примерами
+  - `"MINIMAL_FIVESHOT_APIE_PROMPT"` - few-shot промпт с 5 примерами (версия APIE)
+  - `"MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED"` - few-shot промпт для structured output
   
   **Настройка в `config.py`:**
   ```python
-  PROMPT_TEMPLATE_NAME = "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"  # или любая другая переменная из prompt_config.py
+  PROMPT_TEMPLATE_NAME = "DETAILED_INSTR_ZEROSHOT"  # или любая другая переменная из prompt_config.py
   ```
 
 **Приоритет загрузки API ключей:**
@@ -319,7 +321,7 @@ python main.py gemma-3-27b-api --structured-output
 - Быстрее (один запрос к модели)
 - Меньше использование памяти
 - Подходит для простых задач
-- Использует единый промпт `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE` (для structured output JSON Schema добавляется автоматически)
+- Использует единый промпт из `config.PROMPT_TEMPLATE_NAME` (для structured output JSON Schema добавляется автоматически)
 
 **Мультиагентный подход:**
 - Более точное извлечение данных за счет специализации
@@ -634,7 +636,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 
 4. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
 
-**Примечание:** Название промпта добавляется в имя файла (например, `metrics_model_name_FERTILIZER_EXTRACTION_PROMPT_TEMPLATE_timestamp.json`), а также сохраняется в отдельном поле `prompt_designation` в JSON файле для удобного поиска и фильтрации результатов.
+**Примечание:** Название промпта добавляется в имя файла (например, `metrics_model_name_DETAILED_INSTR_ZEROSHOT_timestamp.json`), а также сохраняется в отдельном поле `prompt_designation` в JSON файле для удобного поиска и фильтрации результатов.
 
 ## Конфигурация промптов
 
@@ -643,9 +645,11 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 Все промпты находятся в `prompt_config.py`:
 
 **Для одноагентного подхода:**
-- **`FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`** - основной промпт для одноагентного подхода
-- **`FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE`** - промпт с примером текста и ответа
-- **`MINIMAL_FIVESHOT_PROMPT`** - промпт few-shot с 5 примерами
+- **`DETAILED_INSTR_ZEROSHOT_BASELINE`** - детальный zero-shot промпт без примера (baseline)
+- **`DETAILED_INSTR_ONESHOT`** - детальный промпт с примером текста и ответа (One-shot prompt)
+- **`MINIMAL_FIVESHOT_PROMPT`** - минималистичный few-shot промпт с 5 примерами
+- **`MINIMAL_FIVESHOT_APIE_PROMPT`** - few-shot промпт с 5 примерами (версия APIE)
+- **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
 
 **Для режима `simple_4agents`:**
 - **`NUMERIC_FRAGMENTS_EXTRACTION_PROMPT`** - промпт для агента извлечения числовых фрагментов
@@ -654,7 +658,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 - **`JSON_FORMATION_PROMPT`** - промпт для агента формирования JSON
 
 **Для режима `critic_3agents`:**
-- **`FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`** - промпт для агента-генератора (первоначальный ответ)
+- Используется промпт из `config.PROMPT_TEMPLATE_NAME` для агента-генератора (первоначальный ответ)
 - **`CRITIC_PROMPT`** - промпт для агента-критика (анализ ответа)
 - **`CORRECTOR_PROMPT`** - промпт для агента-исправителя (устранение ошибок)
 

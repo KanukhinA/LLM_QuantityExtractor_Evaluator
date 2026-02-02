@@ -1,0 +1,49 @@
+{
+  "timestamp": "20260201_154454",
+  "model_name": "Qwen_Qwen3-8B_FERTILIZER_EXTRACTION_PROMPT_TEMPLATE_20260129",
+  "reevaluated_from": "results/results_Qwen_Qwen3-8B_FERTILIZER_EXTRACTION_PROMPT_TEMPLATE_20260129_025306.csv",
+  "parsing_error_rate": 0.14,
+  "parsing_errors_count": 14,
+  "quality_metrics": {
+    "массовая доля": {
+      "accuracy": 0.5345238095238095,
+      "precision": 0.8471337579617835,
+      "recall": 0.42765273311897106,
+      "f1": 0.5683760683760685,
+      "tp": 133,
+      "fp": 24,
+      "fn": 178,
+      "количество_сравнений": 335
+    },
+    "прочее": {
+      "accuracy": 0.39621257785814745,
+      "precision": 0.7431192660550459,
+      "recall": 0.3698630136986301,
+      "f1": 0.4939024390243903,
+      "tp": 81,
+      "fp": 28,
+      "fn": 138,
+      "количество_сравнений": 247
+    }
+  },
+  "parsing_errors": [
+    "Текст #11: невалидный JSON. Ответ: [20, null]",
+    "Текст #17: невалидный JSON. Ответ: [0.09, 0.1]",
+    "Текст #32: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about a chemical substance, specifically potassium sulfate. The instructions are pretty detailed, so I need to be careful.\n\nFirst, I'll read through the text again to understand what's there. The main product is SULFATE OF POTASH (KALIY SERNOKISLYY TEKHNICHESKYY). It's a powder with a specific smell. Then there are several mass fractions mentioned. \n\nLooking at the mass fractions: \"МАССОВАЯ ",
+    "Текст #33: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about chemical substances and fertilizers. The example given is a fertilizer with specific nutrient percentages. \n\nFirst, I need to parse the text carefully. The text says: \"УДОБPЕНИЕ СМЕШАННОЕ СУХОЕ,СОДЕРЖАЩЕЕ ТРИ ПИТАТЕЛЬНЫХ ЭЛЕМЕНТА - АЗОТ-31%, ФОСФОР-3%,КАЛИЙ-3%,НАСЫПЬЮ.\" \n\nBreaking it down, the main elements mentioned are nitrogen (АЗОТ), phosphorus (ФОСФОР), and potassium (КАЛИЙ) with ",
+    "Текст #41: невалидный JSON. Ответ: [2, 5]",
+    "Текст #47: невалидный JSON. Ответ: [31, null]",
+    "Текст #71: невалидный JSON. Ответ: [99.8, null]",
+    "Текст #74: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about fertilizers. First, I need to parse the given text carefully.\n\nThe text mentions \"УДОБРЕНИЯ МИНЕРАЛЬНЫЕ ИЛИ ХИМИЧЕСКИЕ, СОДЕРЖАЩИЕ ДВА ПИТАТЕЛЬНЫХ ЭЛЕМЕНТА: АЗОТ И ФОСФОР (АЗОТНО-ФОСФОРНОЕ УДОБРЕНИЕ МАРКИ NP(S) 14:40(7)), ТУ2186-687-00209438-08, НИТРАТЫ ОТСУТСТBУЮТ..\"\n\nStarting with the fertilizer mark: NP(S) 14:40(7). The format here is common for fertilizer grades. The numbers likely",
+    "Текст #75: невалидный JSON. Ответ: [25,27]",
+    "Текст #77: невалидный JSON. Ответ: []",
+    "Текст #83: невалидный JSON. Ответ: [3.7, 5.2]",
+    "Текст #84: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about chemical substances and fertilizers. The text provided is about a granulated calcium-ammonium nitrate fertilizer. \n\nFirst, I need to identify all numerical data. The text mentions \"МАС.ДОЛИ АЗОТА В СУХОМ ВЕЩ-ВЕ 27%\" which translates to mass fraction of nitrogen in the dry substance being 27%. Then there's \"МАС.ДОЛИ УГЛЕКИСЛОГО КАЛЬЦИЯ 20%\" which is calcium carbonate mass fraction at 20",
+    "Текст #93: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about a chemical substance, specifically potassium sulfate. The text mentions various percentages and packaging details. \n\nFirst, I need to identify all numerical data. The main elements here are the mass fractions of different components. The text says \"МАССОВАЯ ДОЛЯ КАЛИЯ (К2О)-50.0%\", which translates to K2O with 50.0%. Then there's \"SO4 - 52,5%\" which is likely sulfate (SO4^2-), but the ",
+    "Текст #98: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about chemical substances and fertilizers. The text provided is about a product called \"АГРОХИМИКАТ МОНОКАЛИЙФОСФАТ\" (which I think is monoammonium phosphate, but maybe it's monopotassium phosphate? Wait, the name is \"МОНОКАЛИЙФОСФАТ\" which translates to monopotassium phosphate, K2HPO4. But the user might have a typo, but I'll go with the given text.\n\nFirst, I need to parse the text for any "
+  ],
+  "total_samples": 100,
+  "valid_json_count": 86,
+  "invalid_json_count": 14,
+  "gemini_analysis": null
+}

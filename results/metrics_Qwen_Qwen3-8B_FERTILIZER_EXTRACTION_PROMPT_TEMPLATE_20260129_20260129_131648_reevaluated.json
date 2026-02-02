@@ -1,0 +1,61 @@
+{
+  "timestamp": "20260129_131648",
+  "model_name": "Qwen_Qwen3-8B_FERTILIZER_EXTRACTION_PROMPT_TEMPLATE_20260129",
+  "reevaluated_from": "results/results_Qwen_Qwen3-8B_FERTILIZER_EXTRACTION_PROMPT_TEMPLATE_20260129_025306.csv",
+  "parsing_error_rate": 0.26,
+  "parsing_errors_count": 26,
+  "quality_metrics": {
+    "массовая доля": {
+      "accuracy": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "количество_сравнений": 0
+    },
+    "прочее": {
+      "accuracy": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "количество_сравнений": 0
+    }
+  },
+  "parsing_errors": [
+    "Текст #11: невалидный JSON. Ответ: [20, null]",
+    "Текст #13: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": [null, 28]},\n    {\"вещество\": \"N\", \"массовая доля\": [26.5, 27.5]}\n  ]\n}",
+    "Текст #14: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"n\", \"массовая доля\": [11, null]},\n    {\"вещество\": \"p2o5\", \"массовая доля\": [37, null]}\n  ]\n}",
+    "Текст #15: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"n\", \"массовая доля\": 27},\n    {\"вещество\": \"p\", \"массовая доля\": [6, null]},\n    {\"вещество\": \"k\", \"массовая доля\": [6, null]},\n    {\"вещество\": \"s\", \"массовая доля\": [2, null]}\n  ],\n  \"прочее\": []\n}",
+    "Текст #17: невалидный JSON. Ответ: [0.09, 0.1]",
+    "Текст #20: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": [16, null]},\n    {\"вещество\": \"P2O5\", \"массовая доля\": [16, null]},\n    {\"вещество\": \"K2O\", \"массовая доля\": 16}\n  ],\n  \"прочее\": []\n}",
+    "Текст #23: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": [19, 21], \"единица\": \"%\"},\n    {\"вещество\": \"P2O5\", \"массовая доля\": [19, 21], \"единица\": \"%\"},\n    {\"вещество\": \"S\", \"массовая доля\": [13, 15], \"единица\": \"%\"}\n  ],\n  \"прочее\": []\n}",
+    "Текст #30: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": 17},\n    {\"вещество\": \"NH4+\", \"массовая доля\": [null, 0.5]},\n    {\"вещество\": \"Ca\", \"массовая доля\": [32, null]}\n  ],\n  \"прочее\": []\n}",
+    "Текст #31: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"n\", \"массовая доля\": [17, null]},\n    {\"вещество\": \"p2o5\", \"массовая доля\": [17, null]},\n    {\"вещество\": \"k2o\", \"массовая доля\": [17, null]}\n  ],\n  \"прочее\": []\n}",
+    "Текст #32: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about a chemical substance, specifically potassium sulfate. The instructions are pretty detailed, so I need to be careful.\n\nFirst, I'll read through the text again to understand what's there. The main product is SULFATE OF POTASH (KALIY SERNOKISLYY TEKHNICHESKYY). It's a powder with a specific smell. Then there are several mass fractions mentioned. \n\nLooking at the mass fractions: \"МАССОВАЯ ",
+    "Текст #33: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about chemical substances and fertilizers. The example given is a fertilizer with specific nutrient percentages. \n\nFirst, I need to parse the text carefully. The text says: \"УДОБPЕНИЕ СМЕШАННОЕ СУХОЕ,СОДЕРЖАЩЕЕ ТРИ ПИТАТЕЛЬНЫХ ЭЛЕМЕНТА - АЗОТ-31%, ФОСФОР-3%,КАЛИЙ-3%,НАСЫПЬЮ.\" \n\nBreaking it down, the main elements mentioned are nitrogen (АЗОТ), phosphorus (ФОСФОР), and potassium (КАЛИЙ) with ",
+    "Текст #41: невалидный JSON. Ответ: [2, 5]",
+    "Текст #44: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"n\", \"массовая доля\": [11, 13]},\n    {\"вещество\": \"p2o5\", \"массовая доля\": [31, 33]},\n    {\"вещество\": \"k2o\", \"массовая доля\": [15, 17]},\n    {\"вещество\": \"s\", \"массовая доля\": [1, null]}\n  ],\n  \"прочее\": []\n}",
+    "Текст #47: невалидный JSON. Ответ: [31, null]",
+    "Текст #48: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": 33},\n    {\"вещество\": \"P2O5\", \"массовая доля\": [3, null]}\n  ]\n}",
+    "Текст #51: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": [17, null]},\n    {\"вещество\": \"K2O\", \"массовая доля\": 28}\n  ],\n  \"прочее\": []\n}",
+    "Текст #60: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": [16, null]},\n    {\"вещество\": \"P2O5\", \"массовая доля\": [16, null]},\n    {\"вещество\": \"K2O\", \"массовая доля\": [16, null]}\n  ]\n}",
+    "Текст #63: невалидный JSON. Ответ: {\n  \"массовая доля\": [\n    {\"вещество\": \"N\", \"массовая доля\": 17},\n    {\"вещество\": \"NH4+\", \"массовая доля\": [null, 0.5]},\n    {\"вещество\": \"Ca\", \"массовая доля\": [32, null]}\n  ]\n}",
+    "Текст #71: невалидный JSON. Ответ: [99.8, null]",
+    "Текст #74: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about fertilizers. First, I need to parse the given text carefully.\n\nThe text mentions \"УДОБРЕНИЯ МИНЕРАЛЬНЫЕ ИЛИ ХИМИЧЕСКИЕ, СОДЕРЖАЩИЕ ДВА ПИТАТЕЛЬНЫХ ЭЛЕМЕНТА: АЗОТ И ФОСФОР (АЗОТНО-ФОСФОРНОЕ УДОБРЕНИЕ МАРКИ NP(S) 14:40(7)), ТУ2186-687-00209438-08, НИТРАТЫ ОТСУТСТBУЮТ..\"\n\nStarting with the fertilizer mark: NP(S) 14:40(7). The format here is common for fertilizer grades. The numbers likely",
+    "Текст #75: невалидный JSON. Ответ: [25,27]",
+    "Текст #77: невалидный JSON. Ответ: []",
+    "Текст #83: невалидный JSON. Ответ: [3.7, 5.2]",
+    "Текст #84: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about chemical substances and fertilizers. The text provided is about a granulated calcium-ammonium nitrate fertilizer. \n\nFirst, I need to identify all numerical data. The text mentions \"МАС.ДОЛИ АЗОТА В СУХОМ ВЕЩ-ВЕ 27%\" which translates to mass fraction of nitrogen in the dry substance being 27%. Then there's \"МАС.ДОЛИ УГЛЕКИСЛОГО КАЛЬЦИЯ 20%\" which is calcium carbonate mass fraction at 20",
+    "Текст #93: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about a chemical substance, specifically potassium sulfate. The text mentions various percentages and packaging details. \n\nFirst, I need to identify all numerical data. The main elements here are the mass fractions of different components. The text says \"МАССОВАЯ ДОЛЯ КАЛИЯ (К2О)-50.0%\", which translates to K2O with 50.0%. Then there's \"SO4 - 52,5%\" which is likely sulfate (SO4^2-), but the ",
+    "Текст #98: невалидный JSON. Ответ: <think>\nOkay, let's tackle this query. The user wants me to extract numerical characteristics from a text about chemical substances and fertilizers. The text provided is about a product called \"АГРОХИМИКАТ МОНОКАЛИЙФОСФАТ\" (which I think is monoammonium phosphate, but maybe it's monopotassium phosphate? Wait, the name is \"МОНОКАЛИЙФОСФАТ\" which translates to monopotassium phosphate, K2HPO4. But the user might have a typo, but I'll go with the given text.\n\nFirst, I need to parse the text for any "
+  ],
+  "total_samples": 100,
+  "valid_json_count": 74,
+  "invalid_json_count": 26,
+  "gemini_analysis": null
+}

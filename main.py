@@ -58,7 +58,8 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         num_retries=num_retries,
         verbose=verbose,  # Передаем флаг verbose
         use_gemini_analysis=use_gemini,
-        gemini_api_key=GEMINI_API_KEY if use_gemini else None
+        gemini_api_key=GEMINI_API_KEY if use_gemini else None,
+        model_key=model_key  # Передаем alias модели для структуры папок
     )
     
     if result.get("status") == "error":
@@ -106,13 +107,30 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         # Сохраняем анализ в JSON, если он был выполнен
         gemini_analysis = result.get("gemini_analysis")
         if gemini_analysis and gemini_analysis.get("status") == "success":
-            timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+            timestamp = result.get("timestamp", datetime.now().strftime("%H%M%S"))
             from model_evaluator import sanitize_filename
-            model_name_safe = sanitize_filename(model_config["name"])
-            # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
+            
+            # Определяем структуру папок (такая же, как в _save_results)
+            model_key = result.get("model_key")
+            if not model_key:
+                model_key = sanitize_filename(model_config["name"])
+            else:
+                model_key = sanitize_filename(model_key)
+            
             multi_agent_mode = result.get("multi_agent_mode")
-            multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
-            analysis_path = os.path.join(OUTPUT_DIR, f"gemini_analysis_{model_name_safe}{multi_agent_suffix}_{timestamp}.json")
+            prompt_template_name = result.get("prompt_template", "unknown")
+            
+            if multi_agent_mode:
+                prompt_folder_name = sanitize_filename(multi_agent_mode)
+            else:
+                prompt_folder_name = sanitize_filename(prompt_template_name)
+            
+            # Создаем структуру папок
+            model_dir = os.path.join(OUTPUT_DIR, model_key)
+            prompt_dir = os.path.join(model_dir, prompt_folder_name)
+            os.makedirs(prompt_dir, exist_ok=True)
+            
+            analysis_path = os.path.join(prompt_dir, f"gemini_analysis_{timestamp}.json")
             
             analysis_text = gemini_analysis.get("analysis", "")
             

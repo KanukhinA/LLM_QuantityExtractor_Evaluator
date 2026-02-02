@@ -55,7 +55,7 @@ def main():
         if gemini_analysis and gemini_analysis.get("status") == "success":
             from datetime import datetime
             import json
-            timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+            timestamp = result.get("timestamp", datetime.now().strftime("%H%M%S"))
             from model_evaluator import sanitize_filename
             model_name_safe = sanitize_filename(result.get("model_name", "unknown"))
             
@@ -71,11 +71,23 @@ def main():
             prompt_template = None
             
             # Ищем исходный файл метрик (без _reevaluated)
+            # Пытаемся найти в старой структуре (плоской) и новой (вложенной)
             model_name_for_pattern = sanitize_filename(result.get("model_name", "unknown"))
-            metrics_file_pattern = os.path.join(os.path.dirname(results_csv_path), f"metrics_{model_name_for_pattern}_*.json")
+            csv_dir = os.path.dirname(results_csv_path)
+            
+            # Ищем в старой структуре (плоской)
+            metrics_file_pattern = os.path.join(csv_dir, f"metrics_{model_name_for_pattern}_*.json")
             metrics_files = glob.glob(metrics_file_pattern)
             # Исключаем файлы с _reevaluated
             original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
+            
+            # Если не нашли, ищем в новой структуре папок (model_key/prompt_name/)
+            if not original_metrics_files:
+                for root, dirs, files in os.walk(csv_dir):
+                    for file in files:
+                        if file.startswith("metrics_") and file.endswith(".json") and "_reevaluated" not in file:
+                            file_path = os.path.join(root, file)
+                            original_metrics_files.append(file_path)
             
             if original_metrics_files:
                 try:
@@ -143,9 +155,40 @@ def main():
                 } if quality_metrics else None
             }
             
-            # Добавляем информацию о мультиагентном режиме в имя файла, если он используется
-            multi_agent_suffix = f"_{multi_agent_mode}" if multi_agent_mode else ""
-            analysis_path = os.path.join(output_dir, f"gemini_analysis_{model_name_safe}{multi_agent_suffix}_{timestamp}_reevaluated.json")
+            # Определяем структуру папок (такая же, как в reevaluate_from_file)
+            from config import PROMPT_TEMPLATE_NAME
+            from model_evaluator import sanitize_filename
+            import re
+            
+            model_key = result.get("model_key")
+            if not model_key:
+                # Убираем дату из model_name_safe, если она там есть (формат: name_YYYYMMDD)
+                model_key = model_name_safe
+                # Убираем паттерны типа _20260123 или _20260123_123456
+                model_key = re.sub(r'_\d{8}(_\d{6})?$', '', model_key)
+                if not model_key:  # Если после удаления даты ничего не осталось
+                    model_key = model_name_safe
+            else:
+                model_key = sanitize_filename(model_key)
+            
+            prompt_template_name = result.get("prompt_template") or prompt_template
+            # Если в старом файле сохранено название функции (build_prompt3), заменяем на PROMPT_TEMPLATE_NAME
+            if prompt_template_name == "build_prompt3" or prompt_template_name == "build_prompt":
+                prompt_template_name = PROMPT_TEMPLATE_NAME
+            
+            if multi_agent_mode:
+                prompt_folder_name = sanitize_filename(multi_agent_mode)
+            elif prompt_template_name:
+                prompt_folder_name = sanitize_filename(prompt_template_name)
+            else:
+                prompt_folder_name = sanitize_filename(PROMPT_TEMPLATE_NAME)  # Используем текущий из config
+            
+            # Создаем структуру папок
+            model_dir = os.path.join(output_dir, model_key)
+            prompt_dir = os.path.join(model_dir, prompt_folder_name)
+            os.makedirs(prompt_dir, exist_ok=True)
+            
+            analysis_path = os.path.join(prompt_dir, f"gemini_analysis_{timestamp}_reevaluated.json")
             
             with open(analysis_path, 'w', encoding='utf-8') as f:
                 json.dump(analysis_data, f, ensure_ascii=False, indent=2)

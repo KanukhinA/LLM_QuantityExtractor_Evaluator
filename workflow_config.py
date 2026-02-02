@@ -11,7 +11,7 @@ from prompt_config import (
     MASS_FRACTION_EXTRACTION_PROMPT,
     OTHER_PARAMETERS_EXTRACTION_PROMPT,
     JSON_FORMATION_PROMPT,
-    FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE,
+    DETAILED_INSTR_ONESHOT,
     CRITIC_PROMPT,
     CORRECTOR_PROMPT,
     QA_NUTRIENTS_PROMPT,
@@ -66,7 +66,7 @@ def _get_simple_4agents_prompts(example_text: str) -> Dict[str, Any]:
 
 def _get_critic_3agents_prompts(example_text: str) -> Dict[str, Any]:
     """Генерирует примеры промптов для critic_3agents"""
-    example_prompt = FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE.format(text=example_text)
+    example_prompt = DETAILED_INSTR_ONESHOT.format(text=example_text)
     example_response = "[Пример первоначального ответа модели]"
     example_critic_analysis = "[Пример анализа критика]"
     

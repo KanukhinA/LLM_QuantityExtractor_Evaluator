@@ -41,11 +41,11 @@ OUTPUT_DIR = "results"
 # Укажите название переменной промпта из prompt_config.py
 #
 # Доступные варианты:
-# - "FERTILIZER_EXTRACTION_PROMPT_WITH_EXAMPLE" - промпт с примером
-#   текста и ответа (One-shot prompt)
-# - "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE" - baseline промпт без примера
-# - "MINIMAL_FIVESHOT_PROMPT" - промпт few-shot с 5 примерами
-PROMPT_TEMPLATE_NAME = "FERTILIZER_EXTRACTION_PROMPT_TEMPLATE"
+# - "DETAILED_INSTR_ZEROSHOT_BASELINE" - детальный zero-shot промпт без примера (baseline)
+# - "DETAILED_INSTR_ONESHOT" - детальный промпт с примером текста и ответа (One-shot prompt)
+# - "MINIMAL_FIVESHOT_PROMPT" - минималистичный few-shot промпт с 5 примерами
+# - "MINIMAL_FIVESHOT_APIE_PROMPT" - few-shot промпт с 5 примерами (версия APIE)
+PROMPT_TEMPLATE_NAME = "DETAILED_INSTR_ZEROSHOT"
 
 # ============================================================================
 # Настройки few-shot extractor
