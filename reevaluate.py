@@ -55,7 +55,7 @@ def main():
         if gemini_analysis and gemini_analysis.get("status") == "success":
             from datetime import datetime
             import json
-            timestamp = result.get("timestamp", datetime.now().strftime("%H%M%S"))
+            timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M"))
             from model_evaluator import sanitize_filename
             model_name_safe = sanitize_filename(result.get("model_name", "unknown"))
             
@@ -155,40 +155,23 @@ def main():
                 } if quality_metrics else None
             }
             
-            # Определяем структуру папок (такая же, как в reevaluate_from_file)
-            from config import PROMPT_TEMPLATE_NAME
-            from model_evaluator import sanitize_filename
-            import re
+            # Используем папку исходного CSV файла для сохранения анализа
+            csv_dir = os.path.dirname(os.path.abspath(results_csv_path))
+            os.makedirs(csv_dir, exist_ok=True)
             
-            model_key = result.get("model_key")
-            if not model_key:
-                # Убираем дату из model_name_safe, если она там есть (формат: name_YYYYMMDD)
-                model_key = model_name_safe
-                # Убираем паттерны типа _20260123 или _20260123_123456
-                model_key = re.sub(r'_\d{8}(_\d{6})?$', '', model_key)
-                if not model_key:  # Если после удаления даты ничего не осталось
-                    model_key = model_name_safe
+            # Извлекаем имя исходного CSV файла (без расширения)
+            csv_basename = os.path.basename(results_csv_path)
+            csv_name_without_ext = os.path.splitext(csv_basename)[0]
+            
+            # Формируем имя для анализа Gemini на основе исходного CSV
+            # Если исходный файл был results_model_name_timestamp.csv,
+            # то анализ будет gemini_analysis_model_name_timestamp_reevaluated_timestamp.json
+            if csv_name_without_ext.startswith("results_"):
+                analysis_base_name = csv_name_without_ext.replace("results_", "gemini_analysis_", 1)
             else:
-                model_key = sanitize_filename(model_key)
+                analysis_base_name = f"gemini_analysis_{csv_name_without_ext}"
             
-            prompt_template_name = result.get("prompt_template") or prompt_template
-            # Если в старом файле сохранено название функции (build_prompt3), заменяем на PROMPT_TEMPLATE_NAME
-            if prompt_template_name == "build_prompt3" or prompt_template_name == "build_prompt":
-                prompt_template_name = PROMPT_TEMPLATE_NAME
-            
-            if multi_agent_mode:
-                prompt_folder_name = sanitize_filename(multi_agent_mode)
-            elif prompt_template_name:
-                prompt_folder_name = sanitize_filename(prompt_template_name)
-            else:
-                prompt_folder_name = sanitize_filename(PROMPT_TEMPLATE_NAME)  # Используем текущий из config
-            
-            # Создаем структуру папок
-            model_dir = os.path.join(output_dir, model_key)
-            prompt_dir = os.path.join(model_dir, prompt_folder_name)
-            os.makedirs(prompt_dir, exist_ok=True)
-            
-            analysis_path = os.path.join(prompt_dir, f"gemini_analysis_{timestamp}_reevaluated.json")
+            analysis_path = os.path.join(csv_dir, f"{analysis_base_name}_reevaluated_{timestamp}.json")
             
             with open(analysis_path, 'w', encoding='utf-8') as f:
                 json.dump(analysis_data, f, ensure_ascii=False, indent=2)

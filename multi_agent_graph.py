@@ -63,6 +63,89 @@ def _clean_repetitive_arrays(data: Dict[str, Any]) -> Dict[str, Any]:
     return cleaned
 
 
+def _clean_none_values(parsed_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Удаляет из parsed_json записи с None или [None, None] значениями.
+    Такие записи бессмысленны и занижают F1-метрику.
+    
+    Args:
+        parsed_json: распарсенный JSON словарь
+        
+    Returns:
+        dict: очищенный JSON словарь
+    """
+    if not isinstance(parsed_json, dict):
+        return parsed_json
+    
+    cleaned = {}
+    
+    # Обрабатываем "массовая доля"
+    if "массовая доля" in parsed_json:
+        mass_fractions = parsed_json["массовая доля"]
+        if isinstance(mass_fractions, list):
+            cleaned_mass = []
+            for item in mass_fractions:
+                if isinstance(item, dict):
+                    # Проверяем значение "массовая доля"
+                    mass_value = item.get("массовая доля")
+                    # Пропускаем записи с None
+                    if mass_value is None:
+                        continue
+                    # Пропускаем [None, None]
+                    if isinstance(mass_value, list) and len(mass_value) == 2:
+                        if mass_value[0] is None and mass_value[1] is None:
+                            continue
+                    # Если все значения None, пропускаем
+                    if isinstance(mass_value, list) and all(v is None for v in mass_value):
+                        continue
+                    cleaned_mass.append(item)
+                else:
+                    # Если это не словарь, оставляем как есть
+                    cleaned_mass.append(item)
+            cleaned["массовая доля"] = cleaned_mass
+        else:
+            cleaned["массовая доля"] = mass_fractions
+    
+    # Обрабатываем "прочее"
+    if "прочее" in parsed_json:
+        other_params = parsed_json["прочее"]
+        if isinstance(other_params, list):
+            cleaned_other = []
+            for item in other_params:
+                if isinstance(item, dict):
+                    # Проверяем все значения в словаре
+                    has_valid_value = False
+                    for key, value in item.items():
+                        if value is None:
+                            continue
+                        if isinstance(value, list):
+                            # Пропускаем списки из None
+                            if all(v is None for v in value):
+                                continue
+                            # Пропускаем [None, None]
+                            if len(value) == 2 and value[0] is None and value[1] is None:
+                                continue
+                        # Если есть хотя бы одно непустое значение, оставляем запись
+                        if value is not None and value != "":
+                            has_valid_value = True
+                            break
+                    if has_valid_value:
+                        cleaned_other.append(item)
+                else:
+                    # Если это не словарь, оставляем как есть
+                    cleaned_other.append(item)
+            cleaned["прочее"] = cleaned_other
+        else:
+            cleaned["прочее"] = other_params
+    
+    # Копируем остальные ключи, если есть
+    for key in parsed_json:
+        if key not in ["массовая доля", "прочее"]:
+            cleaned[key] = parsed_json[key]
+    
+    return cleaned
+
+
 class AgentState(TypedDict):
     """Состояние графа агентов"""
     text: str  # Исходный текст
@@ -419,6 +502,8 @@ def form_json(state: AgentState) -> AgentState:
         # Валидация и очистка от повторяющихся значений
         if parsed_json:
             parsed_json = _clean_repetitive_arrays(parsed_json)
+            # Очищаем от записей с None или [None, None]
+            parsed_json = _clean_none_values(parsed_json)
             try:
                 json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
             except Exception:
@@ -645,6 +730,9 @@ def correct_response(state: AgentState) -> AgentState:
                 print(f"✅ Ошибок не найдено, возвращаем исходный ответ")
                 json_part = extract_json_from_response(initial_response)
                 parsed_json = parse_json_safe(json_part if json_part else initial_response)
+                # Очищаем от записей с None или [None, None]
+                if parsed_json and isinstance(parsed_json, dict):
+                    parsed_json = _clean_none_values(parsed_json)
                 
                 return {
                     **state,
@@ -675,6 +763,13 @@ def correct_response(state: AgentState) -> AgentState:
         
         # Парсим JSON
         parsed_json = parse_json_safe(json_part)
+        # Очищаем от записей с None или [None, None]
+        if parsed_json and isinstance(parsed_json, dict):
+            parsed_json = _clean_none_values(parsed_json)
+            try:
+                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
         
         print(f"✅ ({elapsed:.2f}с)")
         print_agent_response(3, response, corrector_prompt)
@@ -1090,6 +1185,9 @@ def assemble_qa_json(state: AgentState) -> AgentState:
             "массовая доля": mass_fractions,
             "прочее": other_params
         }
+        
+        # Очищаем от записей с None или [None, None]
+        result_json = _clean_none_values(result_json)
         
         json_str = json.dumps(result_json, ensure_ascii=False, indent=2)
         

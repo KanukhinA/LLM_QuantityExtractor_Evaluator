@@ -23,8 +23,6 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
 
-
-
 def load_gemma_2_2b() -> Tuple[Any, Any]:
     """Загрузка google/gemma-2-2b-it"""
     tokenizer = AutoTokenizer.from_pretrained(
@@ -510,10 +508,34 @@ def generate_gemma(
         prompt: промпт
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
-        structured_output: флаг для structured output (игнорируется для Gemma)
-        response_schema: схема для structured output (игнорируется для Gemma)
-        use_outlines: использовать ли outlines (игнорируется для Gemma)
+        structured_output: флаг для structured output
+        response_schema: схема для structured output
+        use_outlines: использовать ли outlines для структурированной генерации JSON
     """
+    # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
+    # Работает только для локальных HF-моделей; для API моделей outlines не используется.
+    if use_outlines and structured_output and response_schema is not None:
+        try:
+            import outlines  # type: ignore
+        except Exception as e:
+            raise ImportError(
+                "Библиотека outlines не установлена. Установите: pip install outlines"
+            ) from e
+
+        try:
+            # Оборачиваем HF модель/токенизатор в outlines model
+            outlines_model = outlines.models.transformers(model, tokenizer)
+            generator = outlines.generate.json(outlines_model, response_schema)
+            generated = generator(prompt)
+
+            # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
+            if isinstance(generated, (dict, list)):
+                import json as _json
+                return _json.dumps(generated, ensure_ascii=False, indent=2)
+            return str(generated).strip()
+        except Exception as e:
+            raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+    
     # Для Gemma 3 используем правильный формат сообщений
     # Проверяем, является ли модель Gemma3ForCausalLM
     is_gemma3 = isinstance(model, Gemma3ForCausalLM) or model.__class__.__name__ == 'Gemma3ForCausalLM'
@@ -827,10 +849,34 @@ def generate_qwen(
         prompt: промпт
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
-        structured_output: флаг для structured output (игнорируется для Qwen)
-        response_schema: схема для structured output (игнорируется для Qwen)
-        use_outlines: использовать ли outlines (игнорируется для Qwen)
+        structured_output: флаг для structured output
+        response_schema: схема для structured output
+        use_outlines: использовать ли outlines для структурированной генерации JSON
     """
+    # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
+    # Работает только для локальных HF-моделей; для API моделей outlines не используется.
+    if use_outlines and structured_output and response_schema is not None:
+        try:
+            import outlines  # type: ignore
+        except Exception as e:
+            raise ImportError(
+                "Библиотека outlines не установлена. Установите: pip install outlines"
+            ) from e
+
+        try:
+            # Оборачиваем HF модель/токенизатор в outlines model
+            outlines_model = outlines.models.transformers(model, tokenizer)
+            generator = outlines.generate.json(outlines_model, response_schema)
+            generated = generator(prompt)
+
+            # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
+            if isinstance(generated, (dict, list)):
+                import json as _json
+                return _json.dumps(generated, ensure_ascii=False, indent=2)
+            return str(generated).strip()
+        except Exception as e:
+            raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+    
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
     generate_kwargs = {
@@ -985,7 +1031,7 @@ def generate_qwen_3(
     prompt: str, 
     max_new_tokens: int = 32768, 
     repetition_penalty: float = None, 
-    enable_thinking: bool = True,
+    enable_thinking: bool = False,
     structured_output: bool = False,
     response_schema: Any = None,
     use_outlines: bool = False
@@ -999,7 +1045,7 @@ def generate_qwen_3(
         prompt: промпт
         max_new_tokens: максимальное количество новых токенов (по умолчанию 32768 для Qwen3)
         repetition_penalty: штраф за повторения (если None, не используется)
-        enable_thinking: включить thinking mode (по умолчанию True)
+        enable_thinking: включить thinking mode (по умолчанию False)
         structured_output: флаг для structured output (игнорируется для Qwen3)
         response_schema: схема для structured output (игнорируется для Qwen3)
         use_outlines: использовать ли outlines (игнорируется для Qwen3)

@@ -13,33 +13,15 @@ from typing import Dict, Any, List, Optional, Callable
 import os
 
 from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response
-from metrics import calculate_quality_metrics
+from metrics import calculate_quality_metrics, validate_with_pydantic, calculate_raw_output_metrics
 from gpu_info import get_gpu_info, get_gpu_memory_usage
 from multi_agent_graph import process_with_multi_agent
 from config import PROMPT_TEMPLATE_NAME
+from metrics_printer import MetricsPrinter
+from file_manager import FileManager
 import re
 
 
-def sanitize_filename(name: str) -> str:
-    """
-    Санитизирует имя для использования в имени файла.
-    Заменяет все недопустимые символы на подчеркивания.
-    
-    Args:
-        name: исходное имя
-        
-    Returns:
-        безопасное имя для файла
-    """
-    # Недопустимые символы для имен файлов в Windows и Linux: < > : " / \ | ? *
-    # Также заменяем пробелы и другие проблемные символы
-    invalid_chars = r'[<>:"/\\|?*\s]'
-    sanitized = re.sub(invalid_chars, '_', name)
-    # Удаляем множественные подчеркивания
-    sanitized = re.sub(r'_+', '_', sanitized)
-    # Удаляем подчеркивания в начале и конце
-    sanitized = sanitized.strip('_')
-    return sanitized
 try:
     from gemini_analyzer import analyze_errors_with_gemini
 except ImportError:
@@ -66,7 +48,9 @@ class ModelEvaluator:
         self.output_dir = output_dir
         
         # Создаем директорию для результатов
-        os.makedirs(output_dir, exist_ok=True)
+        # Создаем FileManager для работы с файлами
+        self.file_manager = FileManager()
+        self.file_manager.ensure_directory(output_dir)
         
         # Загружаем датасет
         print(f"📂 Загрузка датасета из: {dataset_path}")
@@ -139,6 +123,330 @@ class ModelEvaluator:
         gc.collect()
         torch.cuda.empty_cache()
         print("✅ Память очищена")
+    
+    def _generate_response_with_retries(self, 
+                                       model, tokenizer, prompt, generate_func,
+                                       hyperparameters, max_new_tokens, num_retries,
+                                       is_api_model, verbose, text_index, total_texts, text,
+                                       times, memory_samples, parsing_errors):
+        """
+        Генерирует ответ модели с повторными попытками при ошибках.
+        
+        Args:
+            text: исходный текст (для сохранения в ошибках)
+        
+        Returns:
+            tuple: (response_text, elapsed_time, error_msg) или (None, 0, error_msg) при ошибке
+        """
+        response_text = ""
+        error_msg = None
+        
+        for attempt in range(num_retries):
+            try:
+                start_time = time.time()
+                # Извлекаем параметры для structured output и outlines
+                structured_output = hyperparameters.get("structured_output", False)
+                use_outlines = hyperparameters.get("use_outlines", False)
+                response_schema = None
+                
+                # Создаем response_schema для structured output (только для локальных моделей с outlines или для API моделей)
+                if structured_output:
+                    from structured_schemas import FertilizerExtractionOutput
+                    response_schema = FertilizerExtractionOutput
+                
+                # Передаем repetition_penalty из гиперпараметров, если есть
+                repetition_penalty = hyperparameters.get("repetition_penalty")
+                
+                # Для API моделей передаем model_name и structured_output из hyperparameters
+                if is_api_model and "model_name" in hyperparameters:
+                    response_text = generate_func(
+                        model, tokenizer, prompt, max_new_tokens, 
+                        model_name=hyperparameters["model_name"],
+                        structured_output=structured_output,
+                        response_schema=response_schema
+                    )
+                # Для локальных моделей с structured_output и outlines
+                elif structured_output and use_outlines and not is_api_model and response_schema is not None:
+                    response_text = generate_func(
+                        model, tokenizer, prompt, max_new_tokens,
+                        structured_output=structured_output,
+                        response_schema=response_schema,
+                        use_outlines=use_outlines
+                    )
+                # Для локальных моделей с structured_output (без outlines)
+                elif structured_output and not is_api_model and response_schema is not None:
+                    response_text = generate_func(
+                        model, tokenizer, prompt, max_new_tokens,
+                        structured_output=structured_output,
+                        response_schema=response_schema,
+                        use_outlines=False
+                    )
+                elif repetition_penalty is not None:
+                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
+                elif "enable_thinking" in hyperparameters:
+                    # Для Qwen3 передаем enable_thinking из hyperparameters (по умолчанию False)
+                    enable_thinking_value = hyperparameters.get("enable_thinking", False)
+                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=enable_thinking_value)
+                else:
+                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
+                elapsed = time.time() - start_time
+                times.append(elapsed)
+                
+                # Измеряем память во время инференса (только для локальных моделей)
+                if not is_api_model:
+                    memory_sample = get_gpu_memory_usage()
+                    memory_samples.append(memory_sample["allocated"])
+                
+                return response_text, elapsed, None
+                
+            except KeyboardInterrupt:
+                # Пробрасываем KeyboardInterrupt наверх для обработки в основном цикле
+                raise
+            except Exception as e:
+                error_msg = str(e)
+                # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
+                if is_api_model:
+                    print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
+                    print(f"     {error_msg}")
+                else:
+                    # Для локальных моделей обрезаем при не verbose режиме
+                    error_display = error_msg if verbose else error_msg[:100]
+                    print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}): {error_display}")
+                if attempt < num_retries - 1:
+                    time.sleep(4 + attempt * 2)
+                else:
+                    # Если все попытки исчерпаны, сохраняем детальную информацию об ошибке
+                    import traceback
+                    traceback_str = traceback.format_exc()
+                    # Для API моделей сохраняем полный traceback
+                    traceback_display = traceback_str if is_api_model else traceback_str[:200]
+                    parsing_errors.append({
+                        "text_index": text_index,
+                        "text": text,
+                        "error": f"Критическая ошибка генерации после {num_retries} попыток: {error_msg}. Traceback: {traceback_display}",
+                        "response": ""
+                    })
+        
+        return None, 0, error_msg
+    
+    def _print_verbose_output(self, text, response_text, is_api_model, text_index, total_texts):
+        """Выводит исходный текст и полный ответ в консоль (только при verbose)"""
+        print(f"\n   📝 Ответ #{text_index + 1}/{total_texts} - Исходный текст для анализа:")
+        print(f"   {'─'*76}")
+        for line in text.split('\n'):
+            print(f"   {line}")
+        print(f"   {'─'*76}")
+        model_type_label = "API модели" if is_api_model else "модели"
+        print(f"   📋 Ответ #{text_index + 1}/{total_texts} - Полный ответ {model_type_label}:")
+        print(f"   {'─'*76}")
+        for line in response_text.split('\n'):
+            print(f"   {line}")
+        print(f"   {'─'*76}")
+    
+    def _clean_parsed_json(self, parsed_json):
+        """
+        Удаляет из parsed_json записи с None или [None, None] значениями.
+        Такие записи бессмысленны и занижают F1-метрику.
+        
+        Args:
+            parsed_json: распарсенный JSON словарь
+            
+        Returns:
+            dict: очищенный JSON словарь
+        """
+        if not isinstance(parsed_json, dict):
+            return parsed_json
+        
+        cleaned = {}
+        
+        # Обрабатываем "массовая доля"
+        if "массовая доля" in parsed_json:
+            mass_fractions = parsed_json["массовая доля"]
+            if isinstance(mass_fractions, list):
+                cleaned_mass = []
+                for item in mass_fractions:
+                    if isinstance(item, dict):
+                        # Проверяем значение "массовая доля"
+                        mass_value = item.get("массовая доля")
+                        # Пропускаем записи с None
+                        if mass_value is None:
+                            continue
+                        # Пропускаем [None, None]
+                        if isinstance(mass_value, list) and len(mass_value) == 2:
+                            if mass_value[0] is None and mass_value[1] is None:
+                                continue
+                        # Если все значения None, пропускаем
+                        if isinstance(mass_value, list) and all(v is None for v in mass_value):
+                            continue
+                        cleaned_mass.append(item)
+                    else:
+                        # Если это не словарь, оставляем как есть
+                        cleaned_mass.append(item)
+                cleaned["массовая доля"] = cleaned_mass
+            else:
+                cleaned["массовая доля"] = mass_fractions
+        else:
+            # Если ключа нет, не добавляем его
+            pass
+        
+        # Обрабатываем "прочее"
+        if "прочее" in parsed_json:
+            other_params = parsed_json["прочее"]
+            if isinstance(other_params, list):
+                cleaned_other = []
+                for item in other_params:
+                    if isinstance(item, dict):
+                        # Проверяем все значения в словаре
+                        has_valid_value = False
+                        for key, value in item.items():
+                            if value is None:
+                                continue
+                            if isinstance(value, list):
+                                # Пропускаем списки из None
+                                if all(v is None for v in value):
+                                    continue
+                                # Пропускаем [None, None]
+                                if len(value) == 2 and value[0] is None and value[1] is None:
+                                    continue
+                            # Если есть хотя бы одно непустое значение, оставляем запись
+                            if value is not None and value != "":
+                                has_valid_value = True
+                                break
+                        if has_valid_value:
+                            cleaned_other.append(item)
+                    else:
+                        # Если это не словарь, оставляем как есть
+                        cleaned_other.append(item)
+                cleaned["прочее"] = cleaned_other
+            else:
+                cleaned["прочее"] = other_params
+        else:
+            # Если ключа нет, не добавляем его
+            pass
+        
+        # Копируем остальные ключи, если есть
+        for key in parsed_json:
+            if key not in ["массовая доля", "прочее"]:
+                cleaned[key] = parsed_json[key]
+        
+        return cleaned
+    
+    def _process_response(self, response_text, text, text_index, is_api_model, verbose, parsing_errors):
+        """
+        Обрабатывает ответ модели: валидация, парсинг JSON, извлечение данных.
+        
+        Returns:
+            dict: словарь с результатами обработки
+        """
+        # Валидация raw output через Pydantic (этап 1)
+        raw_validation = validate_with_pydantic(response_text, stage="raw")
+        
+        # Извлекаем JSON
+        json_part = extract_json_from_response(response_text)
+        parsed_json = parse_json_safe(json_part)
+        is_valid = is_valid_json(json_part)
+        
+        # Очищаем parsed_json от записей с None или [None, None]
+        if parsed_json and isinstance(parsed_json, dict):
+            parsed_json = self._clean_parsed_json(parsed_json)
+            # Обновляем json_part после очистки
+            try:
+                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+            except Exception:
+                pass  # Если не удалось сериализовать, оставляем исходный json_part
+        
+        # Валидация после парсинга через Pydantic (этап 2)
+        parsed_validation = validate_with_pydantic(parsed_json, stage="parsed")
+        
+        if not is_valid:
+            # Для API моделей при verbose выводим полный JSON, иначе обрезаем
+            json_display = json_part if (is_api_model and verbose) else (json_part[:200] if len(json_part) > 200 else json_part)
+            parsing_errors.append({
+                "text_index": text_index,
+                "text": text,
+                "error": f"Невалидный JSON. Ответ: {json_display}",
+                "response": json_part[:500]
+            })
+        
+        return {
+            "text": text,
+            "json": json_part,
+            "json_parsed": parsed_json,
+            "is_valid": is_valid,
+            "raw_output": response_text,  # Сохраняем raw output для метрик
+            "raw_validation": raw_validation,  # Результат валидации raw output
+            "parsed_validation": parsed_validation  # Результат валидации после парсинга
+        }
+    
+    def _handle_no_response(self, text, text_index, total_texts, error_msg, is_api_model, verbose, parsing_errors):
+        """
+        Обрабатывает случай, когда ответ не был получен.
+        
+        Returns:
+            dict: словарь с пустым результатом
+        """
+        print(f"  ❌ Ответ #{text_index+1}/{total_texts} - Ответ не получен — пропуск")
+        if error_msg:
+            # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
+            if is_api_model:
+                print(f"     Последняя ошибка: {error_msg}")
+            else:
+                # Для локальных моделей обрезаем при не verbose режиме
+                error_display = error_msg if verbose else error_msg[:200]
+                print(f"     Последняя ошибка: {error_display}")
+        parsing_errors.append(f"Текст #{text_index}: не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}")
+        return {
+            "text": text,
+            "json": "",
+            "json_parsed": {},
+            "is_valid": False
+        }
+    
+    def _print_progress(self, i, total_texts, results, times, total_start_time, verbose):
+        """Выводит прогресс обработки"""
+        elapsed_total = time.time() - total_start_time
+        avg_time = sum(times) / len(times) if times else 0
+        progress_pct = ((i + 1) / total_texts) * 100
+        remaining = total_texts - (i + 1)
+        eta_seconds = avg_time * remaining if avg_time > 0 else 0
+        eta_minutes = eta_seconds / 60
+        
+        valid_count = sum(1 for r in results if r["is_valid"])
+        invalid_count = (i + 1) - valid_count
+        
+        # Форматируем время
+        if eta_minutes < 1:
+            eta_str = f"{eta_seconds:.0f} сек"
+        else:
+            eta_str = f"{eta_minutes:.1f} мин"
+        
+        # Выводим статус после каждого запроса (зависит от verbose)
+        if verbose:
+            # Подробный вывод при verbose=True
+            status_line = (
+                f"  ✅ Ответ #{i + 1}/{total_texts} обработан ({progress_pct:.1f}%) | "
+                f"Валидных: {valid_count} | Невалидных: {invalid_count} | "
+                f"ETA: {eta_str}"
+            )
+            print(status_line)
+        else:
+            # Короткий вывод при verbose=False (только счетчик и основные метрики)
+            status_line = (
+                f"  Ответ #{i + 1}/{total_texts} | "
+                f"✓: {valid_count} ✗: {invalid_count} | "
+                f"ETA: {eta_str}"
+            )
+            print(f"\r{status_line}", end="", flush=True)
+        
+        # Подробный прогресс каждые 10 текстов или в конце (только при verbose)
+        if verbose and ((i + 1) % 10 == 0 or (i + 1) == total_texts):
+            print()  # Новая строка для подробного вывода
+            print(f"     📊 Детальная статистика:")
+            print(f"        • Прогресс: {progress_pct:.1f}% ({i + 1}/{total_texts})")
+            print(f"        • Валидных JSON: {valid_count} | Невалидных: {invalid_count}")
+            print(f"        • Средняя скорость: {avg_time:.3f} сек/ответ")
+            print(f"        • Прошло времени: {elapsed_total/60:.1f} мин | Осталось: ~{eta_minutes:.1f} мин")
+            print()
     
     def evaluate_model(self,
                       model_name: str,
@@ -306,6 +614,10 @@ class ModelEvaluator:
         
         try:
             for i, text in enumerate(self.texts):
+                # Выводим номер обрабатываемого ответа
+                if not verbose:
+                    print(f"\r  🔄 Обработка ответа #{i+1}/{len(self.texts)}...", end="", flush=True)
+                
                 response_text = ""
                 error_msg = None
                 
@@ -314,7 +626,7 @@ class ModelEvaluator:
                     try:
                         # Выводим сообщение только при verbose режиме
                         if verbose:
-                            print(f"   🔄 Мультиагентная обработка текста {i+1}/{len(self.texts)}:")
+                            print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - Мультиагентная обработка текста:")
                         start_time = time.time()
                         result = process_with_multi_agent(
                             text=text,
@@ -333,6 +645,14 @@ class ModelEvaluator:
                         response_text = result.get("response", "")
                         json_part = result.get("json", "")
                         parsed_json = result.get("json_parsed", {})
+                        # Очищаем parsed_json от записей с None или [None, None]
+                        if parsed_json and isinstance(parsed_json, dict):
+                            parsed_json = self._clean_parsed_json(parsed_json)
+                            # Обновляем json_part после очистки
+                            try:
+                                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                            except Exception:
+                                pass  # Если не удалось сериализовать, оставляем исходный json_part
                         is_valid = result.get("is_valid", False)
                         error_msg = result.get("error")
                         
@@ -354,11 +674,22 @@ class ModelEvaluator:
                                 "response": json_part[:500]
                             })
                         
+                        # Для мультиагентного режима нужно добавить raw_output, raw_validation и parsed_validation
+                        # response_text содержит сырой ответ модели
+                        raw_output_for_result = response_text
+                        # Валидация raw output через Pydantic
+                        raw_validation_for_result = validate_with_pydantic(raw_output_for_result, stage="raw")
+                        # Валидация после парсинга через Pydantic
+                        parsed_validation_for_result = validate_with_pydantic(parsed_json, stage="parsed")
+                        
                         results.append({
                             "text": text,
                             "json": json_part,
                             "json_parsed": parsed_json,
-                            "is_valid": is_valid
+                            "is_valid": is_valid,
+                            "raw_output": raw_output_for_result,
+                            "raw_validation": raw_validation_for_result,
+                            "parsed_validation": parsed_validation_for_result
                         })
                     except Exception as e:
                         error_msg = str(e)
@@ -382,161 +713,35 @@ class ModelEvaluator:
                     # Одноагентный подход (оригинальный)
                     prompt = prompt_template(text)
                     
-                    # Попытки генерации
-                    for attempt in range(num_retries):
-                        try:
-                            start_time = time.time()
-                            # Передаем repetition_penalty из гиперпараметров, если есть
-                            repetition_penalty = hyperparameters.get("repetition_penalty")
-                            # Для API моделей передаем model_name из hyperparameters
-                            if is_api_model and "model_name" in hyperparameters:
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, model_name=hyperparameters["model_name"])
-                            elif repetition_penalty is not None:
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
-                            elif "enable_thinking" in hyperparameters:
-                                # Для Qwen3 передаем enable_thinking из hyperparameters
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=hyperparameters.get("enable_thinking", True))
-                            else:
-                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
-                            elapsed = time.time() - start_time
-                            times.append(elapsed)
-                            
-                            # Выводим исходный текст и полный ответ в консоль (только при verbose)
-                            if verbose:
-                                print(f"   📝 Исходный текст для анализа:")
-                                print(f"   {'─'*76}")
-                                for line in text.split('\n'):
-                                    print(f"   {line}")
-                                print(f"   {'─'*76}")
-                                model_type_label = "API модели" if is_api_model else "модели"
-                                print(f"   📋 Полный ответ {model_type_label}:")
-                                print(f"   {'─'*76}")
-                                for line in response_text.split('\n'):
-                                    print(f"   {line}")
-                                print(f"   {'─'*76}")
-                            
-                            # Измеряем память во время инференса (только для локальных моделей)
-                            if not is_api_model:
-                                memory_sample = get_gpu_memory_usage()
-                                memory_samples.append(memory_sample["allocated"])
-                            break
-                        except KeyboardInterrupt:
-                            # Пробрасываем KeyboardInterrupt наверх для обработки в основном цикле
-                            raise
-                        except Exception as e:
-                            error_msg = str(e)
-                            # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
-                            if is_api_model:
-                                print(f"  ⚠️ [{i+1}/{len(self.texts)}] Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
-                                print(f"     {error_msg}")
-                            else:
-                                # Для локальных моделей обрезаем при не verbose режиме
-                                error_display = error_msg if verbose else error_msg[:100]
-                                print(f"  ⚠️ [{i+1}/{len(self.texts)}] Ошибка при генерации (попытка {attempt+1}/{num_retries}): {error_display}")
-                            if attempt < num_retries - 1:
-                                time.sleep(4 + attempt * 2)
-                            else:
-                                # Если все попытки исчерпаны, сохраняем детальную информацию об ошибке
-                                import traceback
-                                traceback_str = traceback.format_exc()
-                                # Для API моделей сохраняем полный traceback
-                                traceback_display = traceback_str if is_api_model else traceback_str[:200]
-                                parsing_errors.append({
-                                    "text_index": i,
-                                    "text": text,
-                                    "error": f"Критическая ошибка генерации после {num_retries} попыток: {error_msg}. Traceback: {traceback_display}",
-                                    "response": ""
-                                })
+                    # Генерируем ответ с повторными попытками
+                    response_text, elapsed, error_msg = self._generate_response_with_retries(
+                        model, tokenizer, prompt, generate_func,
+                        hyperparameters, max_new_tokens, num_retries,
+                        is_api_model, verbose, i, len(self.texts), text,
+                        times, memory_samples, parsing_errors
+                    )
+                    
+                    # Выводим исходный текст и полный ответ в консоль (только при verbose)
+                    if verbose and response_text:
+                        self._print_verbose_output(text, response_text, is_api_model, i, len(self.texts))
                     
                     if not response_text:
-                        print(f"  ❌ [{i+1}/{len(self.texts)}] Ответ не получен — пропуск")
-                        if error_msg:
-                            # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
-                            if is_api_model:
-                                print(f"     Последняя ошибка: {error_msg}")
-                            else:
-                                # Для локальных моделей обрезаем при не verbose режиме
-                                error_display = error_msg if verbose else error_msg[:200]
-                                print(f"     Последняя ошибка: {error_display}")
-                        parsing_errors.append(f"Текст #{i}: не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}")
-                        results.append({
-                            "text": text,
-                            "json": "",
-                            "json_parsed": {},
-                            "is_valid": False
-                        })
+                        result = self._handle_no_response(
+                            text, i, len(self.texts), error_msg,
+                            is_api_model, verbose, parsing_errors
+                        )
+                        results.append(result)
                         continue
                     
-                    # Извлекаем JSON
-                    json_part = extract_json_from_response(response_text)
-                    parsed_json = parse_json_safe(json_part)
-                    is_valid = is_valid_json(json_part)
-                    
-                    if not is_valid:
-                        # Для API моделей при verbose выводим полный JSON, иначе обрезаем
-                        json_display = json_part if (is_api_model and verbose) else (json_part[:200] if len(json_part) > 200 else json_part)
-                        parsing_errors.append({
-                            "text_index": i,
-                            "text": text,
-                            "error": f"Невалидный JSON. Ответ: {json_display}",
-                            "response": json_part[:500]
-                        })
-                    
-                    results.append({
-                        "text": text,
-                        "json": json_part,
-                        "json_parsed": parsed_json,
-                        "is_valid": is_valid
-                    })
+                    # Обрабатываем ответ: валидация, парсинг JSON
+                    result = self._process_response(
+                        response_text, text, i, is_api_model, verbose, parsing_errors
+                    )
+                    results.append(result)
             
             # Выводим прогресс после каждого запроса
-            elapsed_total = time.time() - total_start_time
-            avg_time = sum(times) / len(times) if times else 0
-            progress_pct = ((i + 1) / len(self.texts)) * 100
-            remaining = len(self.texts) - (i + 1)
-            eta_seconds = avg_time * remaining if avg_time > 0 else 0
-            eta_minutes = eta_seconds / 60
-            
-            valid_count = sum(1 for r in results if r["is_valid"])
-            invalid_count = (i + 1) - valid_count
-            
-            # Форматируем время
-            if eta_minutes < 1:
-                eta_str = f"{eta_seconds:.0f} сек"
-            else:
-                eta_str = f"{eta_minutes:.1f} мин"
-            
-            # Выводим статус после каждого запроса (зависит от verbose)
-            if verbose:
-                # Подробный вывод при verbose=True
-                status_line = (
-                    f"  ✅ [{i + 1}/{len(self.texts)}] ({progress_pct:.1f}%) | "
-                    f"Валидных: {valid_count} | Невалидных: {invalid_count} | "
-                    f"ETA: {eta_str}"
-                )
-                print(status_line)
-            else:
-                # Короткий вывод при verbose=False (только счетчик и основные метрики)
-                status_line = (
-                    f"  [{i + 1}/{len(self.texts)}] "
-                    f"✓: {valid_count} ✗: {invalid_count} | "
-                    f"ETA: {eta_str}"
-                )
-                print(f"\r{status_line}", end="", flush=True)
-            
-            # Подробный прогресс каждые 10 текстов или в конце (только при verbose)
-            if verbose and ((i + 1) % 10 == 0 or (i + 1) == len(self.texts)):
-                print()  # Новая строка для подробного вывода
-                print(f"     📊 Детальная статистика:")
-                print(f"        • Прогресс: {progress_pct:.1f}% ({i + 1}/{len(self.texts)})")
-                print(f"        • Валидных JSON: {valid_count} | Невалидных: {invalid_count}")
-                print(f"        • Средняя скорость: {avg_time:.3f} сек/ответ")
-                print(f"        • Прошло времени: {elapsed_total/60:.1f} мин | Осталось: ~{eta_minutes:.1f} мин")
-                print()
-                
-                last_processed_index = i
-            else:
-                last_processed_index = i
+            self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
+            last_processed_index = i
         
         except KeyboardInterrupt:
             interrupted = True
@@ -561,6 +766,10 @@ class ModelEvaluator:
                         # Продолжаем цикл с того места, где остановились
                         try:
                             for i in range(last_processed_index + 1, len(self.texts)):
+                                # Выводим номер обрабатываемого ответа
+                                if not verbose:
+                                    print(f"\r  🔄 Обработка ответа #{i+1}/{len(self.texts)}...", end="", flush=True)
+                                
                                 response_text = ""
                                 error_msg = None
                                 
@@ -568,7 +777,7 @@ class ModelEvaluator:
                                     try:
                                         # Выводим сообщение только при verbose режиме
                                         if verbose:
-                                            print(f"   🔄 Мультиагентная обработка текста {i+1}/{len(self.texts)}:")
+                                            print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - Мультиагентная обработка текста:")
                                         start_time = time.time()
                                         result = process_with_multi_agent(
                                             text=self.texts[i],
@@ -585,6 +794,14 @@ class ModelEvaluator:
                                         response_text = result.get("response", "")
                                         json_part = result.get("json", "")
                                         parsed_json = result.get("json_parsed", {})
+                                        # Очищаем parsed_json от записей с None или [None, None]
+                                        if parsed_json and isinstance(parsed_json, dict):
+                                            parsed_json = self._clean_parsed_json(parsed_json)
+                                            # Обновляем json_part после очистки
+                                            try:
+                                                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                                            except Exception:
+                                                pass  # Если не удалось сериализовать, оставляем исходный json_part
                                         is_valid = result.get("is_valid", False)
                                         error_msg = result.get("error")
                                         
@@ -596,11 +813,22 @@ class ModelEvaluator:
                                             json_display = json_part if (is_api_model and verbose) else (json_part[:200] if len(json_part) > 200 else json_part)
                                             parsing_errors.append(f"Текст #{i}: невалидный JSON. Ответ: {json_display}")
                                         
+                                        # Для мультиагентного режима нужно добавить raw_output, raw_validation и parsed_validation
+                                        # response_text содержит сырой ответ модели
+                                        raw_output_for_result = response_text
+                                        # Валидация raw output через Pydantic
+                                        raw_validation_for_result = validate_with_pydantic(raw_output_for_result, stage="raw")
+                                        # Валидация после парсинга через Pydantic
+                                        parsed_validation_for_result = validate_with_pydantic(parsed_json, stage="parsed")
+                                        
                                         results.append({
                                             "text": self.texts[i],
                                             "json": json_part,
                                             "json_parsed": parsed_json,
-                                            "is_valid": is_valid
+                                            "is_valid": is_valid,
+                                            "raw_output": raw_output_for_result,
+                                            "raw_validation": raw_validation_for_result,
+                                            "parsed_validation": parsed_validation_for_result
                                         })
                                     except Exception as e:
                                         error_msg = str(e)
@@ -615,141 +843,34 @@ class ModelEvaluator:
                                 else:
                                     prompt = prompt_template(self.texts[i])
                                     
-                                    for attempt in range(num_retries):
-                                        try:
-                                            start_time = time.time()
-                                            repetition_penalty = hyperparameters.get("repetition_penalty")
-                                            # Для API моделей передаем model_name из hyperparameters
-                                            if is_api_model and "model_name" in hyperparameters:
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, model_name=hyperparameters["model_name"])
-                                            elif repetition_penalty is not None:
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
-                                            elif "enable_thinking" in hyperparameters:
-                                                # Для Qwen3 передаем enable_thinking из hyperparameters
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=hyperparameters.get("enable_thinking", True))
-                                            else:
-                                                response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
-                                            elapsed = time.time() - start_time
-                                            times.append(elapsed)
-                                            
-                                            # Выводим исходный текст и полный ответ в консоль (только при verbose)
-                                            if verbose:
-                                                print(f"   📝 Исходный текст для анализа:")
-                                                print(f"   {'─'*76}")
-                                                for line in self.texts[i].split('\n'):
-                                                    print(f"   {line}")
-                                                print(f"   {'─'*76}")
-                                                model_type_label = "API модели" if is_api_model else "модели"
-                                                print(f"   📋 Полный ответ {model_type_label}:")
-                                                print(f"   {'─'*76}")
-                                                for line in response_text.split('\n'):
-                                                    print(f"   {line}")
-                                                print(f"   {'─'*76}")
-                                            
-                                            # Измеряем память во время инференса (только для локальных моделей)
-                                            if not is_api_model:
-                                                memory_sample = get_gpu_memory_usage()
-                                                memory_samples.append(memory_sample["allocated"])
-                                            break
-                                        except Exception as e:
-                                            error_msg = str(e)
-                                            # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
-                                            if is_api_model:
-                                                print(f"  ⚠️ [{i+1}/{len(self.texts)}] Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
-                                                print(f"     {error_msg}")
-                                            else:
-                                                # Для локальных моделей обрезаем при не verbose режиме
-                                                error_display = error_msg if verbose else error_msg[:100]
-                                                print(f"  ⚠️ [{i+1}/{len(self.texts)}] Ошибка при генерации (попытка {attempt+1}/{num_retries}): {error_display}")
-                                            if attempt < num_retries - 1:
-                                                time.sleep(4 + attempt * 2)
-                                            else:
-                                                import traceback
-                                                traceback_str = traceback.format_exc()
-                                                # Для API моделей сохраняем полный traceback
-                                                if is_api_model:
-                                                    parsing_errors.append(f"Текст #{i}: критическая ошибка генерации после {num_retries} попыток. Ошибка: {error_msg}. Traceback: {traceback_str}")
-                                                else:
-                                                    parsing_errors.append(f"Текст #{i}: критическая ошибка генерации после {num_retries} попыток. Ошибка: {error_msg}. Traceback: {traceback_str[:200]}")
-                                
+                                    # Генерируем ответ с повторными попытками
+                                    response_text, elapsed, error_msg = self._generate_response_with_retries(
+                                        model, tokenizer, prompt, generate_func,
+                                        hyperparameters, max_new_tokens, num_retries,
+                                        is_api_model, verbose, i, len(self.texts), self.texts[i],
+                                        times, memory_samples, parsing_errors
+                                    )
+                                    
+                                    # Выводим исходный текст и полный ответ в консоль (только при verbose)
+                                    if verbose and response_text:
+                                        self._print_verbose_output(self.texts[i], response_text, is_api_model, i, len(self.texts))
+                                    
                                     if not response_text:
-                                        print(f"  ❌ [{i+1}/{len(self.texts)}] Ответ не получен — пропуск")
-                                        if error_msg:
-                                            # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
-                                            if is_api_model:
-                                                print(f"     Последняя ошибка: {error_msg}")
-                                            else:
-                                                # Для локальных моделей обрезаем при не verbose режиме
-                                                error_display = error_msg if verbose else error_msg[:200]
-                                                print(f"     Последняя ошибка: {error_display}")
-                                        parsing_errors.append({
-                                            "text_index": i,
-                                            "text": self.texts[i],
-                                            "error": f"Не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}",
-                                            "response": ""
-                                        })
-                                        results.append({
-                                            "text": self.texts[i],
-                                            "json": "",
-                                            "json_parsed": {},
-                                            "is_valid": False
-                                        })
+                                        result = self._handle_no_response(
+                                            self.texts[i], i, len(self.texts), error_msg,
+                                            is_api_model, verbose, parsing_errors
+                                        )
+                                        results.append(result)
                                         continue
                                     
-                                    json_part = extract_json_from_response(response_text)
-                                    parsed_json = parse_json_safe(json_part)
-                                    is_valid = is_valid_json(json_part)
-                                    
-                                    if not is_valid:
-                                        # Для API моделей при verbose выводим полный JSON, иначе обрезаем
-                                        json_display = json_part if (is_api_model and verbose) else (json_part[:200] if len(json_part) > 200 else json_part)
-                                        parsing_errors.append({
-                                            "text_index": i,
-                                            "text": self.texts[i],
-                                            "error": f"Невалидный JSON. Ответ: {json_display}",
-                                            "response": response_text[:500] if response_text else json_part[:500]
-                                        })
-                                    
-                                    results.append({
-                                        "text": self.texts[i],
-                                        "json": json_part,
-                                        "json_parsed": parsed_json,
-                                        "is_valid": is_valid
-                                    })
+                                    # Обрабатываем ответ: валидация, парсинг JSON
+                                    result = self._process_response(
+                                        response_text, self.texts[i], i, is_api_model, verbose, parsing_errors
+                                    )
+                                    results.append(result)
                                 
                                 # Выводим прогресс
-                                elapsed_total = time.time() - total_start_time
-                                avg_time = sum(times) / len(times) if times else 0
-                                progress_pct = ((i + 1) / len(self.texts)) * 100
-                                remaining = len(self.texts) - (i + 1)
-                                eta_seconds = avg_time * remaining if avg_time > 0 else 0
-                                eta_minutes = eta_seconds / 60
-                                
-                                valid_count = sum(1 for r in results if r["is_valid"])
-                                invalid_count = (i + 1) - valid_count
-                                
-                                if eta_minutes < 1:
-                                    eta_str = f"{eta_seconds:.0f} сек"
-                                else:
-                                    eta_str = f"{eta_minutes:.1f} мин"
-                                
-                                status_line = (
-                                    f"  [{i + 1}/{len(self.texts)}] "
-                                    f"✓: {valid_count} ✗: {invalid_count} | "
-                                    f"Скорость: {avg_time:.2f}с/ответ | "
-                                    f"Осталось: ~{eta_str}"
-                                )
-                                print(f"\r{status_line}", end="", flush=True)
-                                
-                                # Детальная статистика только при verbose
-                                if verbose and ((i + 1) % 10 == 0 or (i + 1) == len(self.texts)):
-                                    print()
-                                    print(f"     📊 Детальная статистика:")
-                                    print(f"        • Прогресс: {progress_pct:.1f}% ({i + 1}/{len(self.texts)})")
-                                    print(f"        • Валидных JSON: {valid_count} | Невалидных: {invalid_count}")
-                                    print(f"        • Средняя скорость: {avg_time:.3f} сек/ответ")
-                                    print(f"        • Прошло времени: {elapsed_total/60:.1f} мин | Осталось: ~{eta_minutes:.1f} мин")
-                                    print()
+                                self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
                         except KeyboardInterrupt:
                             print(f"\n\n⚠️  Повторное прерывание. Сохранение промежуточных результатов...")
                             interrupted = True
@@ -891,11 +1012,18 @@ class ModelEvaluator:
         
         # Качество ответов (если есть ground truth)
         quality_metrics = None
+        raw_output_metrics = None
+        validation_stats = None
+        
         if self.ground_truths and len(self.ground_truths) == len(results):
             try:
                 print(f"🎯 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА...")
                 # Фильтруем и нормализуем predictions: должны быть словарями
                 predictions = []
+                raw_outputs = []
+                texts_for_metrics = []
+                responses_for_metrics = []
+                
                 for r in results:
                     json_parsed = r.get("json_parsed", {})
                     # Если это список, пропускаем или преобразуем в словарь
@@ -917,12 +1045,21 @@ class ModelEvaluator:
                     else:
                         ground_truths_normalized.append({})
                 
-                # Извлекаем тексты и ответы из results
-                texts_for_metrics = []
-                responses_for_metrics = []
+                # Извлекаем тексты, ответы и raw outputs из results
                 for r in results:
                     texts_for_metrics.append(r.get("text", ""))
                     responses_for_metrics.append(r.get("json", ""))  # json содержит ответ модели
+                    # Для raw output используем только реальный raw_output, без fallback на json
+                    # так как json уже прошел через умный парсер
+                    raw_output = r.get("raw_output", "")
+                    if not raw_output:
+                        # Если raw_output отсутствует (например, в мультиагентном режиме),
+                        # используем response, который должен содержать сырой ответ
+                        raw_output = r.get("response", "")
+                    if not raw_output:
+                        # Если и response отсутствует, используем пустую строку
+                        raw_output = ""
+                    raw_outputs.append(raw_output)
                 
                 quality_metrics = calculate_quality_metrics(
                     predictions, ground_truths_normalized,
@@ -930,31 +1067,74 @@ class ModelEvaluator:
                     responses=responses_for_metrics
                 )
                 
+                # Собираем статистику валидации
+                raw_validations = [r.get("raw_validation", {}) for r in results]
+                parsed_validations = [r.get("parsed_validation", {}) for r in results]
+                
+                # Фильтруем пустые валидации (если они не были вычислены)
+                raw_validations = [v for v in raw_validations if v]
+                parsed_validations = [v for v in parsed_validations if v]
+                
+                if raw_validations or parsed_validations:
+                    raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False)) if raw_validations else 0
+                    parsed_valid_count = sum(1 for v in parsed_validations if v.get("is_valid", False)) if parsed_validations else 0
+                    
+                    validation_stats = {
+                        "raw_output": {
+                            "valid_count": raw_valid_count,
+                            "invalid_count": len(raw_validations) - raw_valid_count if raw_validations else 0,
+                            "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0,
+                            "total_count": len(raw_validations)
+                        },
+                        "parsed": {
+                            "valid_count": parsed_valid_count,
+                            "invalid_count": len(parsed_validations) - parsed_valid_count if parsed_validations else 0,
+                            "validation_rate": parsed_valid_count / len(parsed_validations) if parsed_validations else 0.0,
+                            "total_count": len(parsed_validations)
+                        }
+                    }
+                else:
+                    validation_stats = None
+                
                 # Проверяем, что quality_metrics - это словарь
                 if not isinstance(quality_metrics, dict):
                     print(f"   ⚠️ Ошибка: calculate_quality_metrics вернула не словарь, а {type(quality_metrics)}")
                     quality_metrics = None
                 else:
-                    mass_dolya = quality_metrics.get('массовая доля', {})
-                    prochee = quality_metrics.get('прочее', {})
-                    
-                    print(f"   ✅ Метрики качества вычислены:")
-                    print(f"   📊 Группа 'массовая доля':")
-                    print(f"      • Accuracy: {mass_dolya.get('accuracy', 0):.2%}")
-                    print(f"      • Precision: {mass_dolya.get('precision', 0):.2%}")
-                    print(f"      • Recall: {mass_dolya.get('recall', 0):.2%}")
-                    print(f"      • F1-score: {mass_dolya.get('f1', 0):.2%}")
-                    print(f"      • TP: {mass_dolya.get('tp', 0)}, FP: {mass_dolya.get('fp', 0)}, FN: {mass_dolya.get('fn', 0)}")
-                    print(f"      • Количество сравнений: {mass_dolya.get('количество_сравнений', 0)}")
-                    print(f"      • Примеры ошибок: {len(mass_dolya.get('ошибки', []))}")
-                    print(f"   📊 Группа 'прочее':")
-                    print(f"      • Accuracy: {prochee.get('accuracy', 0):.2%}")
-                    print(f"      • Precision: {prochee.get('precision', 0):.2%}")
-                    print(f"      • Recall: {prochee.get('recall', 0):.2%}")
-                    print(f"      • F1-score: {prochee.get('f1', 0):.2%}")
-                    print(f"      • TP: {prochee.get('tp', 0)}, FP: {prochee.get('fp', 0)}, FN: {prochee.get('fn', 0)}")
-                    print(f"      • Количество сравнений: {prochee.get('количество_сравнений', 0)}")
-                    print(f"      • Примеры ошибок: {len(prochee.get('ошибки', []))}")
+                    # Выводим метрики качества через MetricsPrinter (cleaned output)
+                    MetricsPrinter.print_quality_metrics(quality_metrics)
+                
+                # Выводим статистику валидации cleaned output, если она была вычислена
+                if validation_stats:
+                    MetricsPrinter.print_validation_stats(validation_stats)
+                else:
+                    print(f"\n   ⚠️ Статистика валидации не была вычислена (raw_validation или parsed_validation отсутствуют в results)")
+                
+                # Вычисляем метрики для raw output (без допущений, кроме регистра)
+                print(f"\n🎯 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА ДЛЯ RAW OUTPUT...")
+                print(f"   • Количество raw_outputs: {len(raw_outputs)}")
+                print(f"   • Количество непустых raw_outputs: {sum(1 for ro in raw_outputs if ro)}")
+                print(f"   • Количество пустых raw_outputs: {sum(1 for ro in raw_outputs if not ro)}")
+                if sum(1 for ro in raw_outputs if not ro) > 0:
+                    print(f"   ⚠️ ВНИМАНИЕ: {sum(1 for ro in raw_outputs if not ro)} raw_outputs пустые! Это может быть проблемой в мультиагентном режиме.")
+                try:
+                    raw_output_metrics = calculate_raw_output_metrics(
+                        raw_outputs, ground_truths_normalized,
+                        texts=texts_for_metrics,
+                        responses=raw_outputs  # Используем raw_outputs как responses
+                    )
+                    print(f"   ✅ Метрики raw output вычислены")
+                    if raw_output_metrics:
+                        print(f"   • Raw метрики содержат: {list(raw_output_metrics.keys())}")
+                        # Выводим raw метрики через MetricsPrinter
+                        MetricsPrinter.print_raw_output_metrics(raw_output_metrics)
+                    else:
+                        print(f"   ⚠️ Raw метрики пустые")
+                except Exception as e:
+                    print(f"   ⚠️ Ошибка при вычислении метрик raw output: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raw_output_metrics = None
             except Exception as e:
                 print(f"   ⚠️ Ошибка при вычислении метрик качества: {e}")
                 import traceback
@@ -1026,13 +1206,29 @@ class ModelEvaluator:
         # Создаем копию гиперпараметров для сохранения (чтобы гарантировать сохранение всех значений)
         hyperparameters_to_save = copy.deepcopy(hyperparameters)
         
+        # Формируем итоговый результат с правильным порядком полей
+        # 1. Сначала метрики парсинга и валидации
+        # 2. Затем quality_metrics
+        # 3. Затем raw_output_metrics
+        # 4. Потом все остальное
         evaluation_result = {
-            "timestamp": datetime.now().strftime("%H%M%S"),
+            "timestamp": datetime.now().strftime("%Y%m%d_%H%M"),
             "model_name": model_name,
             "model_key": model_key,  # Alias модели из конфигурации (например, "gemma-2-2b")
             "interrupted": interrupted,
-            "processed_count": len(results),
-            "total_count": len(self.texts),
+            "total_count": len(self.texts),  # Общее количество текстов в датасете
+            "total_samples": len(results),  # Количество обработанных результатов (может быть меньше total_count при прерывании)
+            # Метрики парсинга и валидации (первыми)
+            "valid_json_count": valid_count,  # Количество валидных JSON (можно вычислить: total_samples - invalid_json_count)
+            "invalid_json_count": invalid_count,  # Количество невалидных JSON
+            "parsing_error_rate": parsing_error_rate,  # Процент ошибок парсинга (можно вычислить: invalid_json_count / total_samples)
+            "parsing_errors_count": len(parsing_errors),  # Количество записей об ошибках (может отличаться от invalid_json_count)
+            "validation_stats": validation_stats,  # Статистика валидации через Pydantic
+            # Метрики качества (вторыми)
+            "quality_metrics": quality_metrics,
+            # Метрики raw output (третьими)
+            "raw_output_metrics": raw_output_metrics,  # Метрики для raw output
+            # Остальные поля
             "multi_agent_mode": multi_agent_mode if use_multi_agent else None,
             "gpu_info": gpu_info_before if not is_api_model else {"api": True},
             "gpu_memory_after_load_gb": memory_after_load["allocated"] if not is_api_model else 0.0,
@@ -1041,17 +1237,11 @@ class ModelEvaluator:
             "gpu_memory_during_inference_min_gb": memory_during_inference_min if not is_api_model else 0.0,
             "api_model": is_api_model,
             "average_response_time_seconds": avg_speed,
-            "parsing_error_rate": parsing_error_rate,
-            "parsing_errors_count": len(parsing_errors),
-            "quality_metrics": quality_metrics,
             "hyperparameters": hyperparameters_to_save,
             "prompt_template": PROMPT_TEMPLATE_NAME if not use_multi_agent else multi_agent_mode,
             "prompt_full_text": full_prompt_example,
             "prompt_info": prompt_info,
             "parsing_errors": parsing_errors,
-            "total_samples": len(results),
-            "valid_json_count": len(results) - invalid_count,
-            "invalid_json_count": invalid_count,
             "gemini_analysis": gemini_analysis
         }
         
@@ -1071,152 +1261,18 @@ class ModelEvaluator:
     def _save_results(self, evaluation_result: Dict[str, Any], results: List[Dict[str, Any]]):
         """Сохраняет результаты в файлы с организованной структурой папок"""
         timestamp = evaluation_result["timestamp"]
-        model_name_safe = sanitize_filename(evaluation_result["model_name"])
         
-        # Определяем alias модели (model_key) или используем sanitized model_name
-        model_key = evaluation_result.get("model_key")
-        if not model_key:
-            # Если model_key не передан, используем sanitized model_name
-            model_key = model_name_safe
-        else:
-            model_key = sanitize_filename(model_key)
+        print(f"\n💾 СОХРАНЕНИЕ РЕЗУЛЬТАТОВ...")
         
-        # Определяем название подпапки для промпта/мультиагентного режима
-        multi_agent_mode = evaluation_result.get("multi_agent_mode")
-        prompt_template_name = evaluation_result.get("prompt_template", "unknown")
+        # Используем высокоуровневый метод FileManager для сохранения всех результатов
+        saved_files = self.file_manager.save_evaluation_results(
+            evaluation_result=evaluation_result,
+            results=results,
+            output_dir=self.output_dir,
+            timestamp=timestamp
+        )
         
-        if multi_agent_mode:
-            # Если используется мультиагентный режим, используем его название
-            prompt_folder_name = sanitize_filename(multi_agent_mode)
-        else:
-            # Иначе используем название переменной из prompt_config (например, "DETAILED_INSTR_ZEROSHOT")
-            prompt_folder_name = sanitize_filename(prompt_template_name)
-        
-        # Создаем структуру папок: output_dir/model_key/prompt_folder_name/
-        model_dir = os.path.join(self.output_dir, model_key)
-        prompt_dir = os.path.join(model_dir, prompt_folder_name)
-        os.makedirs(prompt_dir, exist_ok=True)
-        
-        # Сохраняем детальные результаты
-        df_results = pd.DataFrame(results)
-        csv_path = os.path.join(prompt_dir, f"results_{timestamp}.csv")
-        df_results.to_csv(csv_path, index=False, encoding='utf-8-sig')
-        print(f"💾 Детальные результаты сохранены: {csv_path}")
-        
-        # Сохраняем метрики
-        # Создаем копию для сохранения в JSON
-        evaluation_result_for_json = copy.deepcopy(evaluation_result)
-        quality_metrics_for_json = evaluation_result_for_json.get("quality_metrics")
-        
-        # Собираем все ошибки из quality_metrics (они уже в формате словарей)
-        all_quality_errors = []
-        if quality_metrics_for_json:
-            for group in ["массовая доля", "прочее"]:
-                if group in quality_metrics_for_json:
-                    # Берем все ошибки (не только первые 10)
-                    group_errors = quality_metrics_for_json[group].get("все_ошибки", [])
-                    # Проверяем, что ошибки уже в формате словарей
-                    for error in group_errors:
-                        if isinstance(error, dict):
-                            all_quality_errors.append(error)
-                        else:
-                            # Для обратной совместимости: преобразуем строку в словарь
-                            all_quality_errors.append({"error": str(error)})
-                    # Удаляем поле "все_ошибки" и "ошибки" перед сохранением в JSON (чтобы не дублировать)
-                    quality_metrics_for_json[group].pop("все_ошибки", None)
-                    quality_metrics_for_json[group].pop("ошибки", None)
-        
-        # Подготавливаем ошибки для сохранения
-        parsing_errors_list = evaluation_result_for_json.get("parsing_errors", [])
-        
-        # Объединяем parsing_errors и quality_errors
-        all_errors = parsing_errors_list + all_quality_errors
-        
-        # Группируем ошибки по текстам
-        errors_by_text = {}  # {text_index: {"text": str, "response": str, "errors": [str]}}
-        
-        for error in all_errors:
-            if isinstance(error, dict):
-                text_idx = error.get("text_index", 0)
-                text = error.get("text", "")
-                response = error.get("response", "")
-                error_msg = error.get("error", "")
-                
-                if text_idx not in errors_by_text:
-                    errors_by_text[text_idx] = {
-                        "text_index": text_idx,
-                        "text": text,
-                        "response": response,
-                        "errors": []
-                    }
-                
-                # Добавляем ошибку в список ошибок для этого текста
-                if error_msg:
-                    errors_by_text[text_idx]["errors"].append(error_msg)
-                
-                # Обновляем text и response, если они есть (могут быть разными для разных ошибок одного текста)
-                if text and not errors_by_text[text_idx]["text"]:
-                    errors_by_text[text_idx]["text"] = text
-                if response and not errors_by_text[text_idx]["response"]:
-                    errors_by_text[text_idx]["response"] = response
-        
-        # Преобразуем в список записей (каждая запись - текст с его ошибками)
-        errors_for_save = list(errors_by_text.values())
-        
-        # Добавляем ошибки в результат для сохранения
-        # Все ошибки сохраняются в структурированном виде: список записей {text_index, text, response, errors}
-        evaluation_result_for_json["ошибки"] = errors_for_save
-        
-        metrics_path = os.path.join(prompt_dir, f"metrics_{timestamp}.json")
-        with open(metrics_path, 'w', encoding='utf-8') as f:
-            json.dump(evaluation_result_for_json, f, ensure_ascii=False, indent=2)
-        print(f"💾 Метрики сохранены: {metrics_path}")
-        print(f"   📋 Сохраненные гиперпараметры: {list(evaluation_result.get('hyperparameters', {}).keys())}")
-        
-        # Обновляем общий файл со всеми прогонами (в корневой папке results)
-        summary_path = os.path.join(self.output_dir, "evaluation_summary.jsonl")
-        with open(summary_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(evaluation_result, ensure_ascii=False) + '\n')
-        print(f"💾 Результат добавлен в общий файл: {summary_path}")
-        
-        # Сохраняем ошибки качества в отдельный файл
-        quality_metrics = evaluation_result.get("quality_metrics")
-        if quality_metrics:
-            errors_path = os.path.join(prompt_dir, f"quality_errors_{timestamp}.txt")
-            with open(errors_path, 'w', encoding='utf-8') as f:
-                f.write(f"Ошибки качества для модели: {evaluation_result['model_name']}\n")
-                f.write(f"Дата: {timestamp}\n")
-                f.write(f"{'='*80}\n\n")
-                
-                # Ошибки для группы "массовая доля" (используем все_ошибки, если есть, иначе ошибки)
-                mass_dolya = quality_metrics.get('массовая доля', {})
-                mass_errors = mass_dolya.get('все_ошибки', mass_dolya.get('ошибки', []))
-                if mass_errors:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: МАССОВАЯ ДОЛЯ\n")
-                    f.write(f"Всего ошибок: {len(mass_errors)}\n")
-                    f.write(f"{'─'*80}\n")
-                    for i, error in enumerate(mass_errors, 1):
-                        f.write(f"{i}. {error}\n")
-                    f.write(f"\n")
-                else:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: МАССОВАЯ ДОЛЯ\n")
-                    f.write(f"Ошибок не обнаружено.\n\n")
-                
-                # Ошибки для группы "прочее" (используем все_ошибки, если есть, иначе ошибки)
-                prochee = quality_metrics.get('прочее', {})
-                prochee_errors = prochee.get('все_ошибки', prochee.get('ошибки', []))
-                if prochee_errors:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: ПРОЧЕЕ\n")
-                    f.write(f"Всего ошибок: {len(prochee_errors)}\n")
-                    f.write(f"{'─'*80}\n")
-                    for i, error in enumerate(prochee_errors, 1):
-                        f.write(f"{i}. {error}\n")
-                    f.write(f"\n")
-                else:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: ПРОЧЕЕ\n")
-                    f.write(f"Ошибок не обнаружено.\n\n")
-            
-            print(f"💾 Ошибки качества сохранены: {errors_path}")
+        print(f"✅ Все результаты сохранены успешно!")
     
     @staticmethod
     def reevaluate_from_file(
@@ -1258,7 +1314,6 @@ class ModelEvaluator:
             raise ValueError(f"Отсутствуют необходимые колонки: {missing_columns}")
         
         # Загружаем ground truth из датасета
-        print(f"📂 Загрузка ground truth из: {dataset_path}")
         df_full = pd.read_excel(dataset_path)
         
         if "json_parsed" not in df_full.columns:
@@ -1332,7 +1387,6 @@ class ModelEvaluator:
             responses_for_metrics = df_results["json"].tolist()
         
         # Пересчитываем метрики качества
-        print(f"\n📊 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА...")
         try:
             # Передаем тексты и ответы из CSV, если они доступны
             quality_metrics = calculate_quality_metrics(
@@ -1341,12 +1395,148 @@ class ModelEvaluator:
                 texts=texts_for_metrics if texts_for_metrics else None, 
                 responses=responses_for_metrics if responses_for_metrics else None
             )
-            print(f"✅ Метрики успешно вычислены")
+            
+            # Выводим детальные метрики качества через MetricsPrinter (cleaned output)
+            if quality_metrics:
+                MetricsPrinter.print_quality_metrics(quality_metrics)
         except Exception as e:
             print(f"⚠️  Ошибка при вычислении метрик качества: {e}")
             import traceback
             traceback.print_exc()
             quality_metrics = None
+        
+        # Вычисляем статистику валидации (если есть колонки raw_validation и parsed_validation)
+        validation_stats = None
+        if "raw_validation" in df_results.columns or "parsed_validation" in df_results.columns:
+            print(f"\n📊 ВЫЧИСЛЕНИЕ СТАТИСТИКИ ВАЛИДАЦИИ...")
+            try:
+                # Загружаем данные валидации из CSV
+                raw_validations = []
+                parsed_validations = []
+                
+                if "raw_validation" in df_results.columns:
+                    for idx, row in df_results.iterrows():
+                        raw_val = row.get("raw_validation", "")
+                        # Пытаемся распарсить, если это строка
+                        if isinstance(raw_val, str) and raw_val:
+                            # Убираем пробелы и проверяем, не пустая ли строка
+                            raw_val = raw_val.strip()
+                            if raw_val and raw_val != "nan" and raw_val != "None":
+                                try:
+                                    raw_val = json.loads(raw_val)
+                                except (json.JSONDecodeError, ValueError):
+                                    # Если не JSON, пытаемся распарсить как Python dict literal
+                                    try:
+                                        raw_val = eval(raw_val) if raw_val else {}
+                                    except:
+                                        raw_val = {}
+                            else:
+                                raw_val = {}
+                        elif not isinstance(raw_val, dict):
+                            raw_val = {}
+                        raw_validations.append(raw_val)
+                else:
+                    raw_validations = [{}] * len(df_results)
+                
+                if "parsed_validation" in df_results.columns:
+                    for idx, row in df_results.iterrows():
+                        parsed_val = row.get("parsed_validation", "")
+                        # Пытаемся распарсить, если это строка
+                        if isinstance(parsed_val, str) and parsed_val:
+                            # Убираем пробелы и проверяем, не пустая ли строка
+                            parsed_val = parsed_val.strip()
+                            if parsed_val and parsed_val != "nan" and parsed_val != "None":
+                                try:
+                                    parsed_val = json.loads(parsed_val)
+                                except (json.JSONDecodeError, ValueError):
+                                    # Если не JSON, пытаемся распарсить как Python dict literal
+                                    try:
+                                        parsed_val = eval(parsed_val) if parsed_val else {}
+                                    except:
+                                        parsed_val = {}
+                            else:
+                                parsed_val = {}
+                        elif not isinstance(parsed_val, dict):
+                            parsed_val = {}
+                        parsed_validations.append(parsed_val)
+                else:
+                    parsed_validations = [{}] * len(df_results)
+                
+                # Подсчитываем статистику
+                raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False))
+                parsed_valid_count = sum(1 for v in parsed_validations if v.get("is_valid", False))
+                
+                validation_stats = {
+                    "raw_output": {
+                        "valid_count": raw_valid_count,
+                        "invalid_count": len(raw_validations) - raw_valid_count,
+                        "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0
+                    },
+                    "parsed": {
+                        "valid_count": parsed_valid_count,
+                        "invalid_count": len(parsed_validations) - parsed_valid_count,
+                        "validation_rate": parsed_valid_count / len(parsed_validations) if parsed_validations else 0.0
+                    }
+                }
+                
+                print(f"   ✅ Статистика валидации вычислена")
+                # Выводим статистику валидации cleaned output через MetricsPrinter
+                MetricsPrinter.print_validation_stats(validation_stats)
+            except Exception as e:
+                print(f"   ⚠️ Ошибка при вычислении статистики валидации: {e}")
+                import traceback
+                traceback.print_exc()
+                validation_stats = None
+        else:
+            print(f"\n⚠️  Колонки 'raw_validation' и 'parsed_validation' не найдены в CSV, пропускаем вычисление статистики валидации")
+        
+        # Вычисляем метрики для raw output (если есть колонка raw_output)
+        raw_output_metrics = None
+        
+        if "raw_output" in df_results.columns:
+            print(f"\n🎯 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА ДЛЯ RAW OUTPUT...")
+            try:
+                # Заменяем NaN и None на пустые строки, затем конвертируем в список
+                raw_outputs = df_results["raw_output"].fillna("").astype(str).tolist()
+                # Убираем строки "nan" и "None"
+                raw_outputs = [ro if ro not in ["nan", "None", ""] else "" for ro in raw_outputs]
+                print(f"   • Количество raw_outputs: {len(raw_outputs)}")
+                print(f"   • Количество непустых raw_outputs: {sum(1 for ro in raw_outputs if ro)}")
+                
+                # Нормализуем ground_truths для raw метрик
+                ground_truths_normalized = []
+                for gt in ground_truths:
+                    if isinstance(gt, list):
+                        ground_truths_normalized.append({})
+                    elif isinstance(gt, dict):
+                        ground_truths_normalized.append(gt)
+                    else:
+                        ground_truths_normalized.append({})
+                
+                # Обрезаем до минимальной длины
+                min_len = min(len(raw_outputs), len(ground_truths_normalized))
+                raw_outputs = raw_outputs[:min_len]
+                ground_truths_normalized = ground_truths_normalized[:min_len]
+                
+                raw_output_metrics = calculate_raw_output_metrics(
+                    raw_outputs, ground_truths_normalized,
+                    texts=texts_for_metrics[:min_len] if texts_for_metrics else None,
+                    responses=raw_outputs  # Используем raw_outputs как responses
+                )
+                print(f"   ✅ Метрики raw output вычислены")
+                if raw_output_metrics:
+                    print(f"   • Raw метрики содержат: {list(raw_output_metrics.keys())}")
+                    # Выводим raw метрики через MetricsPrinter
+                    MetricsPrinter.print_raw_output_metrics(raw_output_metrics)
+                else:
+                    print(f"   ⚠️ Raw метрики пустые")
+            except Exception as e:
+                print(f"   ⚠️ Ошибка при вычислении метрик raw output: {e}")
+                import traceback
+                traceback.print_exc()
+                raw_output_metrics = None
+        else:
+            print(f"\n⚠️  Колонка 'raw_output' не найдена в CSV, пропускаем вычисление raw метрик")
         
         # Подсчитываем статистику по парсингу
         valid_count = sum(1 for p in predictions if p and isinstance(p, dict))
@@ -1368,14 +1558,15 @@ class ModelEvaluator:
         
         # Извлекаем имя модели из имени файла, если не указано
         if model_name is None:
-            filename = os.path.basename(results_csv_path)
+            file_manager = FileManager()
+            filename = file_manager.get_basename(results_csv_path)
             # Формат: results_model_name_timestamp.csv или results_timestamp.csv (новая структура)
             # Убираем префикс "results_" и расширение ".csv"
             name_without_ext = filename.replace("results_", "").replace(".csv", "")
             # Убираем timestamp в конце (формат: _HHMMSS или _YYYYMMDD_HHMMSS)
             import re
             # Убираем паттерны типа _123456 или _20260123_123456
-            name_without_timestamp = re.sub(r'_\d{6}$|_\d{8}_\d{6}$', '', name_without_ext)
+            name_without_timestamp = re.sub(r'_\d{4}$|_\d{8}_\d{4}$', '', name_without_ext)
             if name_without_timestamp:
                 model_name = name_without_timestamp
             else:
@@ -1401,8 +1592,9 @@ class ModelEvaluator:
                     hyperparameters = {"reevaluated": True}
                     
                     # Пытаемся загрузить гиперпараметры из исходного файла метрик, если он существует
-                    metrics_file_pattern = f"metrics_{sanitize_filename(model_name)}_*.json"
-                    metrics_files = glob.glob(os.path.join(os.path.dirname(results_csv_path), metrics_file_pattern))
+                    metrics_file_pattern = f"metrics_{FileManager.sanitize_filename(model_name)}_*.json"
+                    file_manager = FileManager()
+                    metrics_files = file_manager.find_files(metrics_file_pattern, file_manager.get_dirname(results_csv_path))
                     if metrics_files:
                         # Берем последний файл метрик
                         try:
@@ -1450,7 +1642,7 @@ class ModelEvaluator:
         print()
         
         # Формируем обновленный результат
-        timestamp = datetime.now().strftime("%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         evaluation_result = {
             "timestamp": timestamp,
             "model_name": model_name,
@@ -1458,6 +1650,8 @@ class ModelEvaluator:
             "parsing_error_rate": parsing_error_rate,
             "parsing_errors_count": len(parsing_errors),
             "quality_metrics": quality_metrics,
+            "raw_output_metrics": raw_output_metrics,  # Метрики для raw output
+            "validation_stats": validation_stats,  # Статистика валидации через Pydantic
             "parsing_errors": parsing_errors,
             "total_samples": len(predictions),
             "valid_json_count": valid_count,
@@ -1467,163 +1661,21 @@ class ModelEvaluator:
         
         # Сохраняем обновленные метрики
         print(f"\n💾 СОХРАНЕНИЕ ОБНОВЛЕННЫХ РЕЗУЛЬТАТОВ...")
-        os.makedirs(output_dir, exist_ok=True)
         
-        model_name_safe = sanitize_filename(model_name)
+        # Используем высокоуровневый метод FileManager для сохранения всех результатов переоценки
+        file_manager = FileManager()
+        saved_files = file_manager.save_reevaluation_results(
+            evaluation_result=evaluation_result,
+            results_csv_path=results_csv_path,
+            df_results=df_results,
+            predictions=predictions,
+            quality_metrics=quality_metrics,
+            raw_output_metrics=raw_output_metrics,
+            timestamp=timestamp,
+            model_name=model_name
+        )
         
-        # Пытаемся определить структуру папок из пути к CSV файлу
-        # Если CSV находится в структуре model_key/prompt_name/, извлекаем их из пути
-        csv_dir = os.path.dirname(os.path.abspath(results_csv_path))
-        output_dir_abs = os.path.abspath(output_dir)
-        
-        model_key = None
-        prompt_folder_name = None
-        multi_agent_mode = None
-        prompt_template_name = None
-        
-        # Пытаемся извлечь model_key и prompt_folder_name из пути
-        # Формат: output_dir/model_key/prompt_folder_name/results_*.csv
-        try:
-            # Проверяем, является ли csv_dir подпапкой output_dir
-            csv_dir_relative = os.path.relpath(csv_dir, output_dir_abs)
-            path_parts = csv_dir_relative.replace("\\", "/").split("/")
-            
-            # Убираем пустые части и "."
-            path_parts = [p for p in path_parts if p and p != "."]
-            
-            if len(path_parts) >= 2:
-                # Если путь содержит минимум 2 уровня, это может быть model_key/prompt_name
-                potential_model_key = path_parts[-2]
-                potential_prompt_name = path_parts[-1]
-                # Проверяем, что это не просто "results"
-                if potential_model_key != "results" and potential_prompt_name:
-                    model_key = sanitize_filename(potential_model_key)
-                    prompt_folder_name = sanitize_filename(potential_prompt_name)
-        except ValueError:
-            # Если не удалось вычислить относительный путь (разные диски на Windows), пропускаем
-            pass
-        
-        # Если не удалось определить из пути, ищем исходный файл метрик
-        if not model_key or not prompt_folder_name:
-            # Ищем исходный файл метрик для извлечения model_key, multi_agent_mode и prompt_template
-            # Сначала ищем в той же папке, где находится CSV
-            metrics_file_pattern = os.path.join(csv_dir, "metrics_*.json")
-            metrics_files = glob.glob(metrics_file_pattern)
-            original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
-            
-            # Если не нашли, ищем в старой структуре (плоской)
-            if not original_metrics_files:
-                metrics_file_pattern = os.path.join(output_dir, f"metrics_{model_name_safe}_*.json")
-                metrics_files = glob.glob(metrics_file_pattern)
-                original_metrics_files = [f for f in metrics_files if "_reevaluated" not in f]
-            
-            # Также ищем в структуре папок model_key/prompt_name/
-            if not original_metrics_files:
-                for root, dirs, files in os.walk(output_dir):
-                    for file in files:
-                        if file.startswith("metrics_") and file.endswith(".json") and "_reevaluated" not in file:
-                            file_path = os.path.join(root, file)
-                            original_metrics_files.append(file_path)
-            
-            if original_metrics_files:
-                try:
-                    with open(original_metrics_files[-1], 'r', encoding='utf-8') as f:
-                        original_metrics = json.load(f)
-                    if not model_key:
-                        model_key = original_metrics.get("model_key")
-                    if not prompt_folder_name:
-                        multi_agent_mode = original_metrics.get("multi_agent_mode")
-                        prompt_template_name = original_metrics.get("prompt_template")
-                        # Если в старом файле сохранено название функции (build_prompt3), заменяем на PROMPT_TEMPLATE_NAME
-                        if prompt_template_name == "build_prompt3" or prompt_template_name == "build_prompt":
-                            prompt_template_name = PROMPT_TEMPLATE_NAME
-                except Exception:
-                    pass  # Если не удалось загрузить, просто пропускаем
-        
-        # Если model_key не найден, используем sanitized model_name (без даты)
-        if not model_key:
-            # Убираем дату из model_name_safe, если она там есть (формат: name_YYYYMMDD)
-            model_key = model_name_safe
-            # Пытаемся убрать дату в формате _YYYYMMDD или _YYYYMMDD_HHMMSS
-            import re
-            # Убираем паттерны типа _20260123 или _20260123_123456
-            model_key = re.sub(r'_\d{8}(_\d{6})?$', '', model_key)
-            if not model_key:  # Если после удаления даты ничего не осталось
-                model_key = model_name_safe
-        else:
-            model_key = sanitize_filename(model_key)
-        
-        # Определяем название подпапки для промпта/мультиагентного режима
-        if not prompt_folder_name:
-            if multi_agent_mode:
-                prompt_folder_name = sanitize_filename(multi_agent_mode)
-            elif prompt_template_name:
-                # Если это старое название функции, заменяем на PROMPT_TEMPLATE_NAME
-                if prompt_template_name == "build_prompt3" or prompt_template_name == "build_prompt":
-                    prompt_folder_name = sanitize_filename(PROMPT_TEMPLATE_NAME)
-                else:
-                    prompt_folder_name = sanitize_filename(prompt_template_name)
-            else:
-                prompt_folder_name = sanitize_filename(PROMPT_TEMPLATE_NAME)  # Используем текущий из config
-        
-        # Создаем структуру папок: output_dir/model_key/prompt_folder_name/
-        model_dir = os.path.join(output_dir, model_key)
-        prompt_dir = os.path.join(model_dir, prompt_folder_name)
-        os.makedirs(prompt_dir, exist_ok=True)
-        
-        metrics_path = os.path.join(prompt_dir, f"metrics_{timestamp}_reevaluated.json")
-        
-        # Создаем копию для сохранения в JSON без поля "все_ошибки" (чтобы не перегружать файл)
-        evaluation_result_for_json = copy.deepcopy(evaluation_result)
-        quality_metrics_for_json = evaluation_result_for_json.get("quality_metrics")
-        if quality_metrics_for_json:
-            for group in ["массовая доля", "прочее"]:
-                if group in quality_metrics_for_json:
-                    # Удаляем поле "все_ошибки" перед сохранением в JSON
-                    quality_metrics_for_json[group].pop("все_ошибки", None)
-        
-        with open(metrics_path, 'w', encoding='utf-8') as f:
-            json.dump(evaluation_result_for_json, f, ensure_ascii=False, indent=2)
-        print(f"💾 Обновленные метрики сохранены: {metrics_path}")
-        
-        # Сохраняем ошибки качества в отдельный файл
-        if quality_metrics:
-            errors_path = os.path.join(prompt_dir, f"quality_errors_{timestamp}_reevaluated.txt")
-            with open(errors_path, 'w', encoding='utf-8') as f:
-                f.write(f"Ошибки качества для модели: {model_name}\n")
-                f.write(f"Дата: {timestamp}\n")
-                f.write(f"Переоценено из: {results_csv_path}\n")
-                f.write(f"{'='*80}\n\n")
-                
-                # Ошибки для группы "массовая доля" (используем все_ошибки, если есть, иначе ошибки)
-                mass_dolya = quality_metrics.get('массовая доля', {})
-                mass_errors = mass_dolya.get('все_ошибки', mass_dolya.get('ошибки', []))
-                if mass_errors:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: МАССОВАЯ ДОЛЯ\n")
-                    f.write(f"Всего ошибок: {len(mass_errors)}\n")
-                    f.write(f"{'─'*80}\n")
-                    for i, error in enumerate(mass_errors, 1):
-                        f.write(f"{i}. {error}\n")
-                    f.write(f"\n")
-                else:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: МАССОВАЯ ДОЛЯ\n")
-                    f.write(f"Ошибок не обнаружено.\n\n")
-                
-                # Ошибки для группы "прочее" (используем все_ошибки, если есть, иначе ошибки)
-                prochee = quality_metrics.get('прочее', {})
-                prochee_errors = prochee.get('все_ошибки', prochee.get('ошибки', []))
-                if prochee_errors:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: ПРОЧЕЕ\n")
-                    f.write(f"Всего ошибок: {len(prochee_errors)}\n")
-                    f.write(f"{'─'*80}\n")
-                    for i, error in enumerate(prochee_errors, 1):
-                        f.write(f"{i}. {error}\n")
-                    f.write(f"\n")
-                else:
-                    f.write(f"ОШИБКИ КАЧЕСТВА: ПРОЧЕЕ\n")
-                    f.write(f"Ошибок не обнаружено.\n\n")
-            
-            print(f"💾 Ошибки качества сохранены: {errors_path}")
+        print(f"✅ Все результаты переоценки сохранены успешно!")
         
         # Выводим сводку
         print(f"\n{'='*80}")

@@ -2,7 +2,7 @@
 
 Проект для автоматизированной оценки различных LLM моделей на датасете по обработке данных об удобрениях.
 
-## Описание
+## 1. Описание
 
 Проект позволяет:
 - Загружать и оценивать различные LLM модели из Hugging Face
@@ -13,18 +13,18 @@
 - Переоценивать результаты из сохраненных файлов без повторного запуска модели
 - Использовать одноагентный или мультиагентный подход для извлечения данных (на основе LangGraph)
 
-## Архитектура системы
+## 2. Архитектура системы
 
 Проект поддерживает два подхода к извлечению данных:
 
-### 1. Одноагентный подход (по умолчанию)
+### 2.1. Одноагентный подход (по умолчанию)
 
 Использует единый промпт для извлечения всех данных за один проход:
 - Один запрос к модели с полным промптом
 - Модель извлекает все данные (массовые доли и прочие параметры) одновременно
 - Формирует JSON ответ
 
-### 2. Мультиагентный подход (LangGraph)
+### 2.2. Мультиагентный подход (LangGraph)
 
 Разделяет задачу на несколько специализированных агентов:
 
@@ -38,7 +38,7 @@
 - Более точное извлечение данных за счет специализации
 - Возможность независимой настройки каждого агента
 
-### Модуль `core/`
+### 2.3. Модуль `core/`
 
 Модуль `core/` содержит минимальную ООП архитектуру для генераторов:
 
@@ -52,9 +52,9 @@
 - `BaseGenerator` и `StandardGenerator` из `core/` используются только в мультиагентном подходе (когда `use_multi_agent=True`)
 - Основной код использует функциональный подход из `model_loaders.py`
 
-## Установка и настройка
+## 3. Установка и настройка
 
-### Установка зависимостей
+### 3.1. Установка зависимостей
 
 1. Клонируйте репозиторий или скопируйте проект
 
@@ -63,7 +63,7 @@
 pip install -r requirements.txt
 ```
 
-### Настройка API ключей
+### 3.2. Настройка API ключей
 
 Создайте файл `config_secrets.py` на основе примера:
 ```bash
@@ -99,7 +99,7 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 - OpenRouter API Key: https://openrouter.ai/keys
   - Используется для запуска моделей через OpenRouter API (например, deepseek-r1t-chimera-api, mistral-small-3.1-24b-api, qwen-3-32b-api)
 
-### Конфигурация проекта
+### 3.3. Конфигурация проекта
 
 Основные настройки находятся в `config.py`:
 
@@ -141,7 +141,7 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 1. Файл `config_secrets.py` (если существует)
 2. Переменные окружения
 
-## Структура проекта
+## 4. Структура проекта
 
 ```
 SmallLLMEvaluator/
@@ -149,8 +149,13 @@ SmallLLMEvaluator/
 ├── run_all_models.py       # Скрипт для запуска оценки всех моделей
 ├── reevaluate.py           # Скрипт для переоценки результатов из файла
 ├── model_evaluator.py      # Класс для оценки моделей
-├── model_loaders.py        # Функции загрузки различных моделей
+├── model_loaders.py        # Функции загрузки локальных моделей
+├── model_loaders_api.py    # Функции загрузки и генерации для API моделей
+├── model_config_loader.py  # Загрузчик конфигураций моделей из YAML
+├── models.yaml             # Конфигурация всех моделей (YAML)
 ├── metrics.py              # Функции расчета метрик качества
+├── metrics_printer.py      # Класс для вывода метрик в консоль
+├── file_manager.py         # Класс для работы с файлами
 ├── utils.py                # Утилиты для парсинга JSON и построения промптов
 ├── gemini_analyzer.py      # Интеграция с Gemini API для анализа ошибок
 ├── gpu_info.py             # Функции для получения информации о GPU
@@ -158,6 +163,8 @@ SmallLLMEvaluator/
 ├── prompt_config.py        # Конфигурация промптов для агентов
 ├── multi_agent_graph.py    # Мультиагентная система на LangGraph
 ├── few_shot_extractor.py   # Модуль для извлечения few-shot примеров на основе Dual-Level Introspective Uncertainty
+├── structured_schemas.py  # Pydantic схемы для structured output
+├── workflow_config.py      # Конфигурация мультиагентных workflow
 ├── requirements.txt        # Зависимости проекта
 ├── core/                   # ООП архитектура для генераторов
 │   ├── __init__.py
@@ -166,9 +173,9 @@ SmallLLMEvaluator/
 └── README.md               # Документация
 ```
 
-## Использование
+## 5. Использование
 
-### Оценка одной модели
+### 5.1. Оценка одной или нескольких моделей
 
 Запустите `main.py` с указанием модели:
 
@@ -180,6 +187,28 @@ python main.py <model_key>
 ```bash
 python main.py qwen-2.5-3b
 ```
+
+**Запуск нескольких моделей:**
+
+Вы можете указать несколько моделей для последовательной оценки. Модели можно указать через запятую или через пробел:
+
+```bash
+# Через запятую
+python main.py qwen-2.5-3b,qwen-2.5-4b,gemma-3-4b
+
+# Через пробел
+python main.py qwen-2.5-3b qwen-2.5-4b gemma-3-4b
+
+# С флагами (применяются ко всем моделям)
+python main.py qwen-2.5-3b qwen-2.5-4b --no-gemini
+python main.py gemma-3-4b gemma-3-12b-api --structured-output
+```
+
+**Примечания:**
+- Все указанные модели будут оценены последовательно
+- Флаги (например, `--multi-agent`, `--structured-output`, `--no-gemini`) применяются ко всем моделям
+- Для каждой модели выводится отдельная сводка результатов
+- В конце выводится итоговая сводка по всем моделям
 
 **Запуск в мультиагентном режиме:**
 
@@ -283,6 +312,16 @@ python main.py <model_key> --no-gemini
 # Одноагентный режим (по умолчанию)
 python main.py qwen-2.5-3b
 
+# Несколько моделей (через пробел)
+python main.py qwen-2.5-3b qwen-2.5-4b gemma-3-4b
+
+# Несколько моделей (через запятую)
+python main.py qwen-2.5-3b,qwen-2.5-4b,gemma-3-4b
+
+# Несколько моделей с флагами
+python main.py qwen-2.5-3b qwen-2.5-4b --no-gemini
+python main.py gemma-3-4b gemma-3-12b-api --structured-output
+
 # Мультиагентный режим
 python main.py qwen-2.5-3b --multi-agent simple_4agents
 python main.py qwen-2.5-3b --multi-agent critic_3agents
@@ -315,7 +354,7 @@ python main.py gemma-3-27b-api --structured-output
 
 Доступные модели можно посмотреть, запустив `main.py` без аргументов.
 
-### Сравнение подходов
+### 5.2. Сравнение подходов
 
 **Одноагентный подход:**
 - Быстрее (один запрос к модели)
@@ -333,10 +372,7 @@ python main.py gemma-3-27b-api --structured-output
 **Режим Structured Output:**
 - **Отдельный режим**, который может использоваться как с одноагентным, так и с мультиагентным подходом
 - Использует специальные промпты (`*_STRUCTURED`) с адаптированными инструкциями
-- Для локальных моделей добавляет JSON Schema в промпт
-- Для API моделей использует нативную поддержку structured output через API
-- Pydantic валидация используется для нормализации ключей и проверки структуры
-- Автоматический fallback на обычный парсер при ошибках валидации
+- Добавляет JSON Schema в промпт
 - **Влияет на промпт и процесс генерации**, а не только на валидацию результата
 
 **Режимы:**
@@ -349,7 +385,7 @@ python main.py gemma-3-27b-api --structured-output
 - Поле `prompt_info` содержит информацию о промптах для мультиагентного режима
 - Поле `prompt_designation` содержит обозначение использованного промпта (из `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
 
-### Оценка всех моделей
+### 5.3. Оценка всех моделей
 
 Запустите скрипт для оценки всех настроенных моделей:
 
@@ -363,7 +399,7 @@ python run_all_models.py
 - Пропустит модели, которые не удалось загрузить
 - Сохранит результаты для каждой модели
 
-### Переоценка результатов
+### 5.4. Переоценка результатов
 
 Если нужно пересчитать метрики качества из сохраненного CSV файла без повторного запуска модели:
 
@@ -383,7 +419,7 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 
 **Примечание:** Для использования анализа через Gemini необходим `GEMINI_API_KEY` в `config_secrets.py` или в переменных окружения.
 
-### Извлечение few-shot примеров
+### 5.5. Извлечение few-shot примеров
 
 Модуль `few_shot_extractor.py` реализует алгоритм **Dual-Level Introspective Uncertainty** для активного обучения и выбора наиболее информативных примеров для аннотации.
 
@@ -436,7 +472,7 @@ python few_shot_extractor.py gemma-3-4b \
 **Аргументы командной строки:**
 
 Обязательные:
-- `model_key` - ключ модели из MODEL_CONFIGS (например, `gemma-3-4b`, `qwen-2.5-3b`)
+- `model_key` - ключ модели из `models.yaml` (например, `gemma-3-4b`, `qwen-2.5-3b`)
 
 Опциональные:
 - `--n-examples` - количество примеров для извлечения (по умолчанию: 10)
@@ -480,7 +516,7 @@ CSV файл с колонками:
 - `total_uncertainty`: общая неопределенность (отсортировано по убыванию)
 - `responses`: список из k сгенерированных ответов (JSON строка)
 
-### Режим вывода (verbose)
+### 5.6. Режим вывода (verbose)
 
 Проект поддерживает два режима вывода информации в консоль:
 
@@ -508,11 +544,11 @@ python main.py qwen-2.5-3b
 python run_all_models.py
 ```
 
-## Доступные модели
+## 6. Доступные модели
 
-Проект поддерживает следующие модели:
+Проект поддерживает следующие модели. Полный список моделей и их конфигураций можно найти в файле `models.yaml`:
 
-### Локальные модели (загружаются с Hugging Face)
+### 6.1. Локальные модели (загружаются с Hugging Face)
 
 **Gemma модели:**
 - **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
@@ -540,7 +576,7 @@ python run_all_models.py
 - Требуется `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
 - Требуется `mistral-common>=1.8.6`: `pip install mistral-common --upgrade`
 
-### API модели
+### 6.2. API модели
 
 **Требования и особенности API моделей:**
 - Для моделей Gemma 3 требуется `GEMINI_API_KEY` в `config_secrets.py` или переменных окружения
@@ -562,13 +598,6 @@ python run_all_models.py
 - **mistral-small-3.1-24b-instruct** (ключ: `mistral-small-3.1-24b-api`) - Mistral Small 3.1 24B it через OpenRouter API (free tier)
 - **qwen/qwen3-32b** (ключ: `qwen-3-32b-api`) - Qwen3 32B через OpenRouter API
 
-**Особенности API моделей:**
-- Не используют локальную GPU память
-- В логах вместо информации о GPU выводится "API"
-- Поддерживают автоматическую обработку ошибок rate limit (429)
-- Извлекают время ожидания из сообщений об ошибках (например, "Please retry in 12.12324s")
-- Все ошибки и ответы выводятся полностью в консоль (без обрезки)
-
 **Пример запуска API модели:**
 ```bash
 # Модели через Google Generative AI API
@@ -585,9 +614,9 @@ python main.py qwen-3-32b-api --multi-agent simple_4agents
 python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 ```
 
-## Метрики и результаты
+## 7. Метрики и результаты
 
-### Метрики оценки
+### 7.1. Метрики оценки
 
 Для каждой модели автоматически собираются следующие метрики:
 
@@ -611,7 +640,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 - False Positives (FP)
 - False Negatives (FN)
 
-### Формат результатов
+### 7.2. Формат результатов
 
 Результаты сохраняются в директории `results/`:
 
@@ -638,9 +667,9 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 
 **Примечание:** Название промпта добавляется в имя файла (например, `metrics_model_name_DETAILED_INSTR_ZEROSHOT_timestamp.json`), а также сохраняется в отдельном поле `prompt_designation` в JSON файле для удобного поиска и фильтрации результатов.
 
-## Конфигурация промптов
+## 8. Конфигурация промптов
 
-### Конфигурация промптов
+### 8.1. Конфигурация промптов
 
 Все промпты находятся в `prompt_config.py`:
 
@@ -673,9 +702,9 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 - **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
 - Используется Pydantic схема `FertilizerExtractionOutput` из `structured_schemas.py` для валидации ответов
 
-### Поток данных в мультиагентном подходе
+### 8.2. Поток данных в мультиагентном подходе
 
-#### Режим `simple_4agents`:
+#### 8.2.1. Режим `simple_4agents`:
 
 ```
 Исходный текст
@@ -693,7 +722,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
                                                  Финальный JSON
 ```
 
-#### Режим `critic_3agents`:
+#### 8.2.2. Режим `critic_3agents`:
 
 ```
 Исходный текст + промпт
@@ -711,7 +740,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 Исправленный JSON
 ```
 
-#### Режим `qa_workflow`:
+#### 8.2.3. Режим `qa_workflow`:
 
 ```
 Исходный текст
@@ -745,7 +774,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 Финальный JSON
 ```
 
-### Формат данных
+### 8.3. Формат данных
 
 Все агенты работают с текстовыми данными и извлекают структурированную информацию в формате JSON:
 
@@ -762,9 +791,13 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 }
 ```
 
-## Добавление новой модели
+## 9. Добавление новой модели
 
-1. Добавьте функцию загрузки в `model_loaders.py`:
+Модели добавляются через YAML файл `models.yaml`. Система автоматически определяет функции загрузки и генерации на основе имени модели.
+
+### 9.1. Добавление локальной модели
+
+1. **Добавьте функцию загрузки в `model_loaders.py`** (если нужна специализированная):
 ```python
 def load_your_model() -> Tuple[Any, Any]:
     tokenizer = AutoTokenizer.from_pretrained("model/name", token=HF_TOKEN)
@@ -778,35 +811,139 @@ def load_your_model() -> Tuple[Any, Any]:
     return model, tokenizer
 ```
 
-2. Добавьте функцию генерации (если нужна специализированная):
+2. **Добавьте функцию генерации в `model_loaders.py`** (если нужна специализированная):
 ```python
 def generate_your_model(model, tokenizer, prompt: str, max_new_tokens: int = 1024, repetition_penalty: float = None) -> str:
     # Ваша логика генерации
     pass
 ```
 
-3. Добавьте конфигурацию в `main.py` в словарь `MODEL_CONFIGS`:
+3. **Добавьте конфигурацию в `models.yaml`**:
+```yaml
+models:
+  your-model-key:
+    name: "model/name"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+      # или dtype: "bfloat16" (в зависимости от модели)
+```
+
+**Автоматическое определение функций:**
+- `load_func` определяется автоматически как: `load_{model_key.replace('-', '_').replace('.', '_').lower()}`
+  - Например, для `your-model-key` будет использована функция `load_your_model_key`
+  - Если функция не найдена, система попытается использовать стандартные функции по паттернам
+- `generate_func` определяется автоматически по паттернам:
+  - `qwen-3` → `generate_qwen_3`
+  - `qwen` → `generate_qwen`
+  - `gemma` → `generate_gemma`
+  - `t5` или `t5gemma` → `generate_t5`
+  - иначе → `generate_standard`
+
+**Переопределение автоматических значений:**
+Если нужно использовать другую функцию, укажите её явно:
+```yaml
+models:
+  your-model-key:
+    name: "model/name"
+    load_module: "model_loaders"  # по умолчанию для локальных моделей
+    load_func: "load_your_custom_function"  # явное указание функции
+    generate_module: "model_loaders"  # по умолчанию для локальных моделей
+    generate_func: "generate_your_custom_function"  # явное указание функции
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+```
+
+### 9.2. Добавление API модели
+
+1. **Добавьте функцию загрузки в `model_loaders_api.py`** (если нужна специализированная):
 ```python
-"your-model-key": {
-    "name": "model/name",
-    "load_func": ml.load_your_model,
-    "generate_func": ml.generate_standard,  # или ml.generate_your_model
-    "hyperparameters": {
-        "max_new_tokens": 1024,
-        "do_sample": False,
-        "dtype": "bfloat16"
-    }
-}
+def load_your_api_model() -> Tuple[Any, Any]:
+    # Для API моделей обычно возвращаются заглушки или клиенты API
+    return None, None
 ```
 
-Для запуска в мультиагентном режиме используйте флаг `--multi-agent`:
+2. **Добавьте функцию генерации в `model_loaders_api.py`** (если нужна специализированная):
+```python
+def generate_your_api_model(model, tokenizer, prompt: str, max_new_tokens: int = 1024, **kwargs) -> str:
+    # Ваша логика генерации через API
+    pass
+```
+
+3. **Добавьте конфигурацию в `models.yaml`**:
+```yaml
+models:
+  your-model-api:
+    name: "model/name"  # название модели для API
+    hyperparameters:
+      max_new_tokens: 512
+      api_model: true  # обязательно для API моделей
+```
+
+**Автоматическое определение для API моделей:**
+- Если в ключе модели есть `-api`, автоматически используется модуль `model_loaders_api`
+- `generate_func` определяется автоматически:
+  - `gemma` → `generate_gemma_api`
+  - иначе → `generate_openrouter_api`
+
+### 9.3. Примеры
+
+**Локальная модель:**
+```yaml
+models:
+  my-custom-model:
+    name: "organization/my-custom-model"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+```
+
+**API модель:**
+```yaml
+models:
+  my-custom-model-api:
+    name: "organization/my-custom-model"
+    hyperparameters:
+      max_new_tokens: 512
+      api_model: true
+```
+
+**С явным указанием функций:**
+```yaml
+models:
+  my-custom-model:
+    name: "organization/my-custom-model"
+    load_func: "load_my_custom_model"
+    generate_func: "generate_my_custom_model"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+```
+
+### 9.4. Запуск новой модели
+
+После добавления модели в `models.yaml` её можно запустить:
 ```bash
+# Одноагентный режим
+python main.py your-model-key
+
+# Мультиагентный режим
 python main.py your-model-key --multi-agent simple_4agents
+
+# С structured output
+python main.py your-model-key --structured-output
 ```
 
-## Требования
+**Примечание:** Доступные модели можно посмотреть, запустив `python main.py` без аргументов.
 
-### Основные требования
+## 10. Требования
+
+### 10.1. Основные требования
 
 - Python 3.8+
 - PyTorch с поддержкой CUDA (для локальных моделей)
@@ -814,12 +951,12 @@ python main.py your-model-key --multi-agent simple_4agents
 - LangGraph (для мультиагентного подхода)
 - Другие зависимости из requirements.txt
 
-### Требования для локальных моделей
+### 10.2. Требования для локальных моделей
 
 - CUDA-совместимая GPU (рекомендуется 8GB+ VRAM)
 - Hugging Face Token (`HF_TOKEN`)
 
-### Требования для API моделей
+### 10.3. Требования для API моделей
 
 - Google Generative AI API Key (`GEMINI_API_KEY`) для моделей Gemma 3
 - OpenRouter API Key (`OPENAI_API_KEY`) для моделей через OpenRouter
@@ -827,13 +964,13 @@ python main.py your-model-key --multi-agent simple_4agents
 - Библиотека `openai` (устанавливается через `pip install openai`) для моделей через OpenRouter
 - Локальная GPU не требуется
 
-### Специальные требования
+### 10.4. Специальные требования
 
 **Для Mistral 3 моделей:**
 - `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
 - `mistral-common>=1.8.6`: `pip install mistral-common --upgrade`
 
-## Справка по использованию
+## 11. Справка по использованию
 
 ```bash
 # Показать справку по main.py
@@ -843,11 +980,13 @@ python main.py
 python reevaluate.py
 ```
 
-### Сводная таблица команд
+### 11.1. Сводная таблица команд
 
 | Команда | Описание | Режим | Structured Output | Verbose | Gemini анализ |
 |---------|----------|-------|-------------------|---------|---------------|
 | `python main.py <model_key>` | Оценка одной модели | Одноагентный | Отключен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key1> <model_key2> ...` | Оценка нескольких моделей | Одноагентный | Отключен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key1>,<model_key2>,...` | Оценка нескольких моделей (через запятую) | Одноагентный | Отключен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --multi-agent <mode>` | Оценка одной модели | Мультиагентный | Отключен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --structured-output` | Оценка с Pydantic валидацией | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --multi-agent <mode> --structured-output` | Оценка с мультиагентным режимом и Pydantic | Мультиагентный | Включен | Включен (по умолчанию) | По умолчанию |

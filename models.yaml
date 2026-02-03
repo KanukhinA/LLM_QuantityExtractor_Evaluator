@@ -49,7 +49,7 @@ models:
       max_new_tokens: 32768
       do_sample: false
       torch_dtype: "auto"
-      enable_thinking: true
+      enable_thinking: false
 
   qwen-3-32b:
     name: "Qwen/Qwen3-32B"
@@ -57,7 +57,7 @@ models:
       max_new_tokens: 32768
       do_sample: false
       torch_dtype: "auto"
-      enable_thinking: true
+      enable_thinking: false
 
   gemma-3-1b:
     name: "google/gemma-3-1b-it"

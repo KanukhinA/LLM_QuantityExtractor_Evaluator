@@ -107,13 +107,18 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         # Сохраняем анализ в JSON, если он был выполнен
         gemini_analysis = result.get("gemini_analysis")
         if gemini_analysis and gemini_analysis.get("status") == "success":
-            timestamp = result.get("timestamp", datetime.now().strftime("%H%M%S"))
+            timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M"))
             from model_evaluator import sanitize_filename
             
             # Определяем структуру папок (такая же, как в _save_results)
+            import re
             model_key = result.get("model_key")
             if not model_key:
                 model_key = sanitize_filename(model_config["name"])
+                # Убираем дату из model_key, если она там есть (формат: _YYYYMMDD или _YYYYMMDD_HHMM)
+                model_key = re.sub(r'_\d{8}(_\d{4})?$', '', model_key)
+                if not model_key:  # Если после удаления даты ничего не осталось
+                    model_key = sanitize_filename(model_config["name"])
             else:
                 model_key = sanitize_filename(model_key)
             
@@ -130,7 +135,10 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
             prompt_dir = os.path.join(model_dir, prompt_folder_name)
             os.makedirs(prompt_dir, exist_ok=True)
             
-            analysis_path = os.path.join(prompt_dir, f"gemini_analysis_{timestamp}.json")
+            # Получаем санитизированное название модели для имен файлов
+            model_name_for_file = sanitize_filename(result.get("model_name", model_config.get("name", "unknown")))
+            
+            analysis_path = os.path.join(prompt_dir, f"gemini_analysis_{model_name_for_file}_{timestamp}.json")
             
             analysis_text = gemini_analysis.get("analysis", "")
             
@@ -408,7 +416,7 @@ def main():
                     
                     quality = result.get('quality_metrics')
                     if quality:
-                        print(f"\n🎯 Метрики качества:")
+                        print(f"\n🎯 Метрики качества (с умным парсером):")
                         mass = quality.get('массовая доля', {})
                         prochee = quality.get('прочее', {})
                         print(f"   • 'массовая доля':")
@@ -417,6 +425,19 @@ def main():
                         print(f"   • 'прочее':")
                         print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
                         print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
+                    
+                    # Выводим raw метрики (строгий парсинг без допущений)
+                    raw_metrics = result.get('raw_output_metrics')
+                    if raw_metrics:
+                        print(f"\n📊 Метрики качества (raw output, строгий парсинг):")
+                        raw_mass = raw_metrics.get('массовая доля', {})
+                        raw_prochee = raw_metrics.get('прочее', {})
+                        print(f"   • 'массовая доля':")
+                        print(f"     - Accuracy: {raw_mass.get('accuracy', 0):.2%}")
+                        print(f"     - Precision: {raw_mass.get('precision', 0):.2%}, Recall: {raw_mass.get('recall', 0):.2%}, F1: {raw_mass.get('f1', 0):.2%}")
+                        print(f"   • 'прочее':")
+                        print(f"     - Accuracy: {raw_prochee.get('accuracy', 0):.2%}")
+                        print(f"     - Precision: {raw_prochee.get('precision', 0):.2%}, Recall: {raw_prochee.get('recall', 0):.2%}, F1: {raw_prochee.get('f1', 0):.2%}")
                     
                     print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")
                     print(f"{'='*80}\n")
@@ -470,8 +491,16 @@ def main():
                 if quality:
                     mass = quality.get('массовая доля', {})
                     prochee = quality.get('прочее', {})
-                    print(f"     - Метрики 'массовая доля': Accuracy={mass.get('accuracy', 0):.2%}, F1={mass.get('f1', 0):.2%}")
-                    print(f"     - Метрики 'прочее': Accuracy={prochee.get('accuracy', 0):.2%}, F1={prochee.get('f1', 0):.2%}")
+                    print(f"     - Метрики 'массовая доля' (умный парсер): Accuracy={mass.get('accuracy', 0):.2%}, F1={mass.get('f1', 0):.2%}")
+                    print(f"     - Метрики 'прочее' (умный парсер): Accuracy={prochee.get('accuracy', 0):.2%}, F1={prochee.get('f1', 0):.2%}")
+                
+                # Выводим raw метрики (строгий парсинг без допущений)
+                raw_metrics = result.get('raw_output_metrics')
+                if raw_metrics:
+                    raw_mass = raw_metrics.get('массовая доля', {})
+                    raw_prochee = raw_metrics.get('прочее', {})
+                    print(f"     - Метрики 'массовая доля' (raw output): Accuracy={raw_mass.get('accuracy', 0):.2%}, F1={raw_mass.get('f1', 0):.2%}")
+                    print(f"     - Метрики 'прочее' (raw output): Accuracy={raw_prochee.get('accuracy', 0):.2%}, F1={raw_prochee.get('f1', 0):.2%}")
                 print()
         
         if failed:
