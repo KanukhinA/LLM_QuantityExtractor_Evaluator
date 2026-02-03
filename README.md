@@ -552,7 +552,6 @@ python run_all_models.py
 
 **Gemma модели:**
 - **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
-- **google/gemma-3-1b-it** - Gemma 3 1B it (ключ: `gemma-3-1b`)
 - **google/gemma-3-4b-it** - Gemma 3 4B it (ключ: `gemma-3-4b`)
 - **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
 

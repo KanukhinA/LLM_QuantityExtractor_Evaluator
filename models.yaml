@@ -52,13 +52,6 @@ models:
       torch_dtype: "auto"
       enable_thinking: false
 
-  gemma-3-1b:
-    name: "google/gemma-3-1b-it"
-    hyperparameters:
-      max_new_tokens: 512
-      do_sample: false
-      torch_dtype: "bfloat16"
-
   gemma-3-4b:
     name: "google/gemma-3-4b-it"
     hyperparameters:
@@ -109,12 +102,6 @@ models:
       max_new_tokens: 32768
       api_model: true
 
-  ministral-3-3b-reasoning-2512:
-    name: "mistralai/Ministral-3-3B-Reasoning-2512"
-    hyperparameters:
-      max_new_tokens: 512
-      do_sample: false
-      torch_dtype: "bfloat16"
 
   mistral-3-8b-instruct:
     name: "mistralai/Ministral-3-8B-Instruct-2512"
