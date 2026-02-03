@@ -22,13 +22,6 @@ models:
       do_sample: false
       torch_dtype: "bfloat16"
 
-  qwen-2.5-1.5b:
-    name: "Qwen/Qwen2.5-1.5B-Instruct"
-    hyperparameters:
-      max_new_tokens: 512
-      do_sample: false
-      torch_dtype: "bfloat16"
-
   qwen-2.5-3b:
     name: "Qwen/Qwen2.5-3B-Instruct"
     hyperparameters:
@@ -39,14 +32,14 @@ models:
   qwen-2.5-4b:
     name: "Qwen/Qwen2.5-4B-Instruct"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1024
       do_sample: false
       dtype: "bfloat16"
 
   qwen-3-8b:
     name: "Qwen/Qwen3-8B"
     hyperparameters:
-      max_new_tokens: 32768
+      max_new_tokens: 1024
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
@@ -54,7 +47,7 @@ models:
   qwen-3-32b:
     name: "Qwen/Qwen3-32B"
     hyperparameters:
-      max_new_tokens: 32768
+      max_new_tokens: 1024
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false

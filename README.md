@@ -557,7 +557,6 @@ python run_all_models.py
 - **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
 
 **Qwen модели:**
-- **Qwen/Qwen2.5-1.5B-Instruct** - Qwen 2.5 1.5B (ключ: `qwen-2.5-1.5b`)
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B (ключ: `qwen-2.5-3b`)
 - **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B (ключ: `qwen-2.5-4b`)
 - **Qwen/Qwen3-8B** - Qwen 3 8B (ключ: `qwen-3-8b`) - поддерживает thinking mode
