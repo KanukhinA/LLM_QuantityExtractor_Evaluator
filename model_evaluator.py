@@ -1064,20 +1064,31 @@ class ModelEvaluator:
                 quality_metrics = calculate_quality_metrics(
                     predictions, ground_truths_normalized,
                     texts=texts_for_metrics,
-                    responses=responses_for_metrics
+                    responses=responses_for_metrics,
+                    prompt=full_prompt_example
                 )
                 
                 # Собираем статистику валидации
                 raw_validations = [r.get("raw_validation", {}) for r in results]
-                parsed_validations = [r.get("parsed_validation", {}) for r in results]
+                # Для parsed учитываем все ответы, но валидация вычисляется только для успешно распарсенных
+                parsed_validations = [r.get("parsed_validation", {}) for r in results if r.get("is_valid", False)]
                 
                 # Фильтруем пустые валидации (если они не были вычислены)
                 raw_validations = [v for v in raw_validations if v]
                 parsed_validations = [v for v in parsed_validations if v]
                 
+                # Подсчитываем количество успешно распарсенных ответов (is_valid = True)
+                total_parsed_count = sum(1 for r in results if r.get("is_valid", False))
+                
                 if raw_validations or parsed_validations:
                     raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False)) if raw_validations else 0
                     parsed_valid_count = sum(1 for v in parsed_validations if v.get("is_valid", False)) if parsed_validations else 0
+                    
+                    # Для parsed: invalid_count = невалидные среди распарсенных + не распарсенные ответы
+                    parsed_invalid_count = (len(parsed_validations) - parsed_valid_count) if parsed_validations else 0
+                    # Добавляем количество не распарсенных ответов
+                    not_parsed_count = len(results) - total_parsed_count
+                    parsed_invalid_count += not_parsed_count
                     
                     validation_stats = {
                         "raw_output": {
@@ -1088,9 +1099,9 @@ class ModelEvaluator:
                         },
                         "parsed": {
                             "valid_count": parsed_valid_count,
-                            "invalid_count": len(parsed_validations) - parsed_valid_count if parsed_validations else 0,
-                            "validation_rate": parsed_valid_count / len(parsed_validations) if parsed_validations else 0.0,
-                            "total_count": len(parsed_validations)
+                            "invalid_count": parsed_invalid_count,
+                            "validation_rate": parsed_valid_count / len(results) if len(results) > 0 else 0.0,
+                            "total_count": len(results)  # Общее количество всех ответов
                         }
                     }
                 else:
@@ -1121,7 +1132,8 @@ class ModelEvaluator:
                     raw_output_metrics = calculate_raw_output_metrics(
                         raw_outputs, ground_truths_normalized,
                         texts=texts_for_metrics,
-                        responses=raw_outputs  # Используем raw_outputs как responses
+                        responses=raw_outputs,  # Используем raw_outputs как responses
+                        prompt=full_prompt_example
                     )
                     print(f"   ✅ Метрики raw output вычислены")
                     if raw_output_metrics:
@@ -1440,6 +1452,11 @@ class ModelEvaluator:
                 
                 if "parsed_validation" in df_results.columns:
                     for idx, row in df_results.iterrows():
+                        # Для parsed учитываем только успешно распарсенные ответы (is_valid = True)
+                        is_valid = row.get("is_valid", False)
+                        if not is_valid:
+                            continue  # Пропускаем невалидные ответы
+                        
                         parsed_val = row.get("parsed_validation", "")
                         # Пытаемся распарсить, если это строка
                         if isinstance(parsed_val, str) and parsed_val:
@@ -1460,22 +1477,38 @@ class ModelEvaluator:
                             parsed_val = {}
                         parsed_validations.append(parsed_val)
                 else:
-                    parsed_validations = [{}] * len(df_results)
+                    # Если колонки parsed_validation нет, но есть is_valid, учитываем только валидные
+                    if "is_valid" in df_results.columns:
+                        parsed_validations = [{}] * sum(1 for _, row in df_results.iterrows() if row.get("is_valid", False))
+                    else:
+                        parsed_validations = []
                 
                 # Подсчитываем статистику
                 raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False))
                 parsed_valid_count = sum(1 for v in parsed_validations if v.get("is_valid", False))
                 
+                # Подсчитываем количество успешно распарсенных ответов (is_valid = True)
+                total_parsed_count = sum(1 for _, row in df_results.iterrows() if row.get("is_valid", False))
+                total_results_count = len(df_results)
+                
+                # Для parsed: invalid_count = невалидные среди распарсенных + не распарсенные ответы
+                parsed_invalid_count = (len(parsed_validations) - parsed_valid_count) if parsed_validations else 0
+                # Добавляем количество не распарсенных ответов
+                not_parsed_count = total_results_count - total_parsed_count
+                parsed_invalid_count += not_parsed_count
+                
                 validation_stats = {
                     "raw_output": {
                         "valid_count": raw_valid_count,
                         "invalid_count": len(raw_validations) - raw_valid_count,
-                        "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0
+                        "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0,
+                        "total_count": len(raw_validations)
                     },
                     "parsed": {
                         "valid_count": parsed_valid_count,
-                        "invalid_count": len(parsed_validations) - parsed_valid_count,
-                        "validation_rate": parsed_valid_count / len(parsed_validations) if parsed_validations else 0.0
+                        "invalid_count": parsed_invalid_count,
+                        "validation_rate": parsed_valid_count / total_results_count if total_results_count > 0 else 0.0,
+                        "total_count": total_results_count  # Общее количество всех ответов
                     }
                 }
                 

@@ -29,8 +29,8 @@ models:
       do_sample: false
       dtype: "bfloat16"
 
-  qwen-2.5-4b:
-    name: "Qwen/Qwen2.5-4B-Instruct"
+  qwen-3-4b:
+    name: "Qwen/Qwen3-4B-Instruct"
     hyperparameters:
       max_new_tokens: 1024
       do_sample: false
@@ -101,7 +101,6 @@ models:
     hyperparameters:
       max_new_tokens: 32768
       api_model: true
-
 
   mistral-3-8b-instruct:
     name: "mistralai/Ministral-3-8B-Instruct-2512"
