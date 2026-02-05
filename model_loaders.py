@@ -232,6 +232,22 @@ def load_qwen_2_5_4b() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
+def load_qwen_3_4b() -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3-4B-Instruct с bfloat16"""
+    tokenizer = AutoTokenizer.from_pretrained(
+        "Qwen/Qwen3-4B-Instruct",
+        token=HF_TOKEN
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        "Qwen/Qwen3-4B-Instruct",
+        device_map="auto",
+        dtype=torch.bfloat16,
+        token=HF_TOKEN,
+        trust_remote_code=True
+    )
+    return model, tokenizer
+
+
 def load_qwen_3_8b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen3-8B с автоматическим выбором dtype"""
     tokenizer = AutoTokenizer.from_pretrained(
