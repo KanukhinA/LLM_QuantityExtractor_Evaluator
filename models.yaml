@@ -6,7 +6,16 @@
 # Остальные параметры (load_func, load_module, generate_func, generate_module)
 # определяются автоматически по имени модели:
 # - Если в ключе модели есть "-api", используется model_loaders_api, иначе model_loaders
-# - load_func определяется как: load_{model_key.replace('-', '_').lower()}
+# - load_func определяется как: load_{model_key.replace('-', '_').replace('.', '_').lower()}
+#   * Если индивидуальная функция не найдена, используется универсальная load_standard_model
+#   * Индивидуальные функции могут использовать групповые функции:
+#     - load_gemma_3() - для всех Gemma 3 моделей (1b, 4b, 12b, 27b)
+#     - load_mistral_3() - для всех Mistral 3 моделей
+#     - load_standard_model() - для стандартных моделей (Qwen, Gemma 2, и т.д.)
+#   * Индивидуальные функции нужны только для особых случаев:
+#     - Модели с специальными классами (Gemma3ForCausalLM, Mistral3ForConditionalGeneration, T5ForConditionalGeneration)
+#     - Модели с особыми настройками или обработкой ошибок
+#     - Модели с предупреждениями о требованиях к VRAM
 # - generate_func определяется автоматически по паттернам:
 #   * API модели: "gemma" -> generate_gemma_api, иначе -> generate_openrouter_api
 #   * Локальные модели: "qwen-3" -> generate_qwen_3, "qwen" -> generate_qwen,
@@ -59,6 +68,13 @@ models:
       do_sample: false
       torch_dtype: "bfloat16"
 
+  codegemma-7b:
+    name: "google/codegemma-7b-it"
+    hyperparameters:
+      max_new_tokens: 1024
+      do_sample: false
+      torch_dtype: "bfloat16"
+
   gemma-3-12b:
     name: "google/gemma-3-12b-it"
     hyperparameters:
@@ -70,13 +86,6 @@ models:
     name: "google/gemma-3-27b-it"
     hyperparameters:
       max_new_tokens: 512
-      do_sample: false
-      torch_dtype: "bfloat16"
-
-  codegemma-7b:
-    name: "google/codegemma-7b-it"
-    hyperparameters:
-      max_new_tokens: 1024
       do_sample: false
       torch_dtype: "bfloat16"
 

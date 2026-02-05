@@ -23,245 +23,238 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
 
-def load_gemma_2_2b() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-2-2b-it"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "google/gemma-2-2b-it",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "google/gemma-2-2b-it",
-        device_map="cuda",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN
-    )
+
+def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size_warning: Optional[str] = None) -> Tuple[Any, Any]:
+    """
+    Универсальная функция загрузки моделей Gemma 3 через Gemma3ForCausalLM.
+    Используется для всех Gemma 3 моделей (1b, 4b, 12b, 27b).
+    
+    Args:
+        model_name: название модели на HuggingFace (например, "google/gemma-3-4b-it")
+        vram_warning: предупреждение о требованиях к VRAM (опционально)
+        model_size_warning: предупреждение о размере модели (опционально)
+    
+    Returns:
+        (model, tokenizer)
+    """
+    print(f"   Загрузка токенизатора {model_name}...")
+    if vram_warning:
+        print(f"   ⚠️ Примечание: {vram_warning}")
+    
+    try:
+        start_time = time.time()
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            token=HF_TOKEN,
+            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
+            resume_download=True
+        )
+        elapsed = time.time() - start_time
+        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
+        print(f"   Возможные причины:")
+        print(f"     - Медленное интернет-соединение")
+        print(f"     - Проблемы с HuggingFace серверами")
+        print(f"     - Неверный или истекший HF_TOKEN")
+        print(f"   Попробуйте:")
+        print(f"     - Проверить интернет-соединение")
+        print(f"     - Проверить HF_TOKEN в config_secrets.py")
+        print(f"     - Увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
+        raise
+    
+    # Устанавливаем pad_token, если его нет
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
+    print(f"   Загрузка модели {model_name} (Gemma3ForCausalLM)...")
+    if model_size_warning:
+        print(f"   ⚠️ {model_size_warning}")
+    
+    try:
+        start_time = time.time()
+        model = Gemma3ForCausalLM.from_pretrained(
+            model_name,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            token=HF_TOKEN
+        ).eval()  # Переводим в режим eval для инференса
+        elapsed = time.time() - start_time
+        if elapsed > 60:
+            print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
+        else:
+            print(f"   ✓ Модель загружена за {elapsed:.1f}с")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки модели: {e}")
+        print(f"   Рекомендации:")
+        print(f"     - Используйте квантизацию (4-bit или 8-bit) для уменьшения требований к памяти")
+        if "api" not in model_name:
+            api_model = model_name.replace("google/", "").replace("-it", "-api")
+            print(f"     - Рассмотрите использование API версии: {api_model}")
+        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
+        raise
+    
     return model, tokenizer
 
-def load_ministral_3_3b_reasoning_2512() -> Tuple[Any, Any]:
+
+def load_mistral_3(model_name: str, vram_warning: Optional[str] = None) -> Tuple[Any, Any]:
     """
-    Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16
+    Универсальная функция загрузки моделей Mistral 3 через Mistral3ForConditionalGeneration.
+    Используется для всех Mistral 3 моделей.
     
     ВАЖНО: 
-    - Требуется transformers>=4.50.0.dev0:
-      pip install git+https://github.com/huggingface/transformers
-    - Требуется mistral-common >= 1.8.6 для токенизатора:
-      pip install mistral-common --upgrade
+    - Требуется transformers>=4.50.0.dev0: pip install git+https://github.com/huggingface/transformers
+    - Требуется mistral-common >= 1.8.6: pip install mistral-common --upgrade
+    
+    Args:
+        model_name: название модели на HuggingFace (например, "mistralai/Ministral-3-8B-Instruct-2512")
+        vram_warning: предупреждение о требованиях к VRAM (опционально)
+    
+    Returns:
+        (model, tokenizer)
     """
     from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
     
-    model_id = "mistralai/Ministral-3-3B-Reasoning-2512"
+    print(f"   Загрузка токенизатора {model_name}...")
+    if vram_warning:
+        print(f"   ⚠️ {vram_warning}")
     
-    # Используем MistralCommonBackend для токенизатора
-    tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
+    try:
+        start_time = time.time()
+        tokenizer = MistralCommonBackend.from_pretrained(model_name, token=HF_TOKEN)
+        elapsed = time.time() - start_time
+        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
+        raise
     
-    # Загружаем модель в bfloat16
-    model = Mistral3ForConditionalGeneration.from_pretrained(
-        model_id,
-        device_map="auto",
-        dtype=torch.bfloat16,
+    print(f"   Загрузка модели {model_name}...")
+    try:
+        start_time = time.time()
+        model = Mistral3ForConditionalGeneration.from_pretrained(
+            model_name,
+            device_map="auto",
+            dtype=torch.bfloat16,
+            token=HF_TOKEN
+        )
+        elapsed = time.time() - start_time
+        if elapsed > 60:
+            print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
+        else:
+            print(f"   ✓ Модель загружена за {elapsed:.1f}с")
+    except Exception as e:
+        print(f"   ❌ Ошибка загрузки модели: {e}")
+        print(f"   Возможные причины:")
+        if vram_warning:
+            print(f"     - Недостаточно VRAM ({vram_warning})")
+        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
+        raise
+    
+    return model, tokenizer
+
+
+def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtype: Optional[str] = None, 
+                        device_map: str = "auto", trust_remote_code: bool = True) -> Tuple[Any, Any]:
+    """
+    Универсальная функция загрузки стандартных моделей через AutoTokenizer и AutoModelForCausalLM.
+    Используется как fallback, когда индивидуальная функция загрузки не найдена.
+    
+    Индивидуальные функции загрузки нужны только для особых случаев:
+    - Модели, использующие специальные классы (Gemma3ForCausalLM, Mistral3ForConditionalGeneration, T5ForConditionalGeneration)
+    - Модели с особыми настройками или обработкой ошибок
+    - Модели с предупреждениями о требованиях к VRAM
+    
+    Для стандартных моделей (Qwen, Gemma 2, и т.д.) эта функция используется автоматически.
+    
+    Args:
+        model_name: название модели на HuggingFace
+        dtype: тип данных для модели (например, "bfloat16", "float16")
+        torch_dtype: тип данных для torch (например, "auto", "bfloat16")
+        device_map: карта устройств ("auto", "cuda", и т.д.)
+        trust_remote_code: доверять ли удаленному коду
+    
+    Returns:
+        (model, tokenizer)
+    """
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
         token=HF_TOKEN
     )
     
+    # Определяем параметры для загрузки модели
+    model_kwargs = {
+        "device_map": device_map,
+        "token": HF_TOKEN,
+        "trust_remote_code": trust_remote_code
+    }
+    
+    # Преобразуем dtype/torch_dtype в нужный формат
+    if torch_dtype:
+        if torch_dtype == "auto":
+            model_kwargs["torch_dtype"] = "auto"
+        elif torch_dtype == "bfloat16":
+            model_kwargs["torch_dtype"] = torch.bfloat16
+        elif torch_dtype == "float16":
+            model_kwargs["torch_dtype"] = torch.float16
+    elif dtype:
+        if dtype == "bfloat16":
+            model_kwargs["dtype"] = torch.bfloat16
+        elif dtype == "float16":
+            model_kwargs["dtype"] = torch.float16
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        **model_kwargs
+    )
+    
     return model, tokenizer
+
+def load_gemma_2_2b() -> Tuple[Any, Any]:
+    """Загрузка google/gemma-2-2b-it"""
+    return load_standard_model("google/gemma-2-2b-it", dtype="bfloat16", device_map="cuda")
+
+def load_ministral_3_3b_reasoning_2512() -> Tuple[Any, Any]:
+    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16"""
+    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512")
 
 
 def load_mistral_3_8b_instruct() -> Tuple[Any, Any]:
-    """
-    Загрузка mistralai/Ministral-3-8B-Instruct-2512 в bfloat16
-    
-    ВАЖНО: 
-    - Требуется transformers>=4.50.0.dev0:
-      pip install git+https://github.com/huggingface/transformers
-    - Требуется mistral-common >= 1.8.6 для токенизатора:
-      pip install mistral-common --upgrade
-    """
-    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
-    
-    model_id = "mistralai/Ministral-3-8B-Instruct-2512"
-    
-    print(f"   Загрузка токенизатора {model_id}...")
-    try:
-        start_time = time.time()
-        tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
-        elapsed = time.time() - start_time
-        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
-        raise
-    
-    print(f"   Загрузка модели {model_id}...")
-    print(f"   ⚠️ Модель требует ~16GB VRAM для полной загрузки")
-    try:
-        start_time = time.time()
-        model = Mistral3ForConditionalGeneration.from_pretrained(
-            model_id,
-            device_map="auto",
-            dtype=torch.bfloat16,
-            token=HF_TOKEN
-        )
-        elapsed = time.time() - start_time
-        print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки модели: {e}")
-        print(f"   Возможные причины:")
-        print(f"     - Недостаточно VRAM (модель требует ~16GB для полной загрузки)")
-        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
-        raise
-    
-    return model, tokenizer
+    """Загрузка mistralai/Ministral-3-8B-Instruct-2512 в bfloat16"""
+    return load_mistral_3("mistralai/Ministral-3-8B-Instruct-2512", vram_warning="Модель требует ~16GB VRAM для полной загрузки")
 
 
 def load_mistral_3_14b_instruct() -> Tuple[Any, Any]:
-    """
-    Загрузка mistralai/Ministral-3-14B-Instruct-2512 в bfloat16
-    
-    ВАЖНО: 
-    - Требуется transformers>=4.50.0.dev0:
-      pip install git+https://github.com/huggingface/transformers
-    - Требуется mistral-common >= 1.8.6 для токенизатора:
-      pip install mistral-common --upgrade
-    """
-    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
-    
-    model_id = "mistralai/Ministral-3-14B-Instruct-2512"
-    
-    print(f"   Загрузка токенизатора {model_id}...")
-    try:
-        start_time = time.time()
-        tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
-        elapsed = time.time() - start_time
-        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
-        raise
-    
-    print(f"   Загрузка модели {model_id}...")
-    print(f"   ⚠️ Модель требует ~28GB VRAM для полной загрузки")
-    try:
-        start_time = time.time()
-        model = Mistral3ForConditionalGeneration.from_pretrained(
-            model_id,
-            device_map="auto",
-            dtype=torch.bfloat16,
-            token=HF_TOKEN
-        )
-        elapsed = time.time() - start_time
-        print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки модели: {e}")
-        print(f"   Возможные причины:")
-        print(f"     - Недостаточно VRAM (модель требует ~28GB для полной загрузки)")
-        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
-        raise
-    
-    return model, tokenizer
+    """Загрузка mistralai/Ministral-3-14B-Instruct-2512 в bfloat16"""
+    return load_mistral_3("mistralai/Ministral-3-14B-Instruct-2512", vram_warning="Модель требует ~28GB VRAM для полной загрузки")
 
 
 def load_mistral_3_3b_reasoning() -> Tuple[Any, Any]:
-    """
-    Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16
-    
-    ВАЖНО: 
-    - Требуется transformers>=4.50.0.dev0:
-      pip install git+https://github.com/huggingface/transformers
-    - Требуется mistral-common >= 1.8.6 для токенизатора:
-      pip install mistral-common --upgrade
-    """
-    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
-    
-    model_id = "mistralai/Ministral-3-3B-Reasoning-2512"
-    
-    # Используем MistralCommonBackend для токенизатора
-    tokenizer = MistralCommonBackend.from_pretrained(model_id, token=HF_TOKEN)
-    
-    # Загружаем модель в bfloat16
-    model = Mistral3ForConditionalGeneration.from_pretrained(
-        model_id,
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN
-    )
-    
-    return model, tokenizer
+    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16"""
+    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512")
 
 def load_qwen_2_5_1_5b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen2.5-1.5B-Instruct"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "Qwen/Qwen2.5-1.5B-Instruct",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen2.5-1.5B-Instruct",
-        device_map="auto",
-        dtype=torch.float16,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
+    return load_standard_model("Qwen/Qwen2.5-1.5B-Instruct", dtype="float16")
 
 
 def load_qwen_2_5_3b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen2.5-3B-Instruct с bfloat16"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "Qwen/Qwen2.5-3B-Instruct",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen2.5-3B-Instruct",
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
+    return load_standard_model("Qwen/Qwen2.5-3B-Instruct", dtype="bfloat16")
 
 
 def load_qwen_2_5_4b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen2.5-4B-Instruct с bfloat16"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "Qwen/Qwen2.5-4B-Instruct",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen2.5-4B-Instruct",
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
+    return load_standard_model("Qwen/Qwen2.5-4B-Instruct", dtype="bfloat16")
 
 
 def load_qwen_3_4b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen3-4B-Instruct с bfloat16"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "Qwen/Qwen3-4B-Instruct",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen3-4B-Instruct",
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
+    return load_standard_model("Qwen/Qwen3-4B-Instruct", dtype="bfloat16")
 
 
 def load_qwen_3_8b() -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen3-8B с автоматическим выбором dtype"""
-    tokenizer = AutoTokenizer.from_pretrained(
-        "Qwen/Qwen3-8B",
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen3-8B",
-        torch_dtype="auto",
-        device_map="auto",
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
+    return load_standard_model("Qwen/Qwen3-8B", torch_dtype="auto")
 
 
 def load_qwen_3_32b() -> Tuple[Any, Any]:
@@ -320,128 +313,33 @@ def load_qwen_3_32b() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
-def load_gemma_3_4b_4bit() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-3-4b-it с 4-bit quantization"""
-    from transformers import BitsAndBytesConfig
-    
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16
-    )
-    
-    tokenizer = AutoTokenizer.from_pretrained(
-        "google/gemma-3-4b-it",
-        token=HF_TOKEN
-    )
-    # Устанавливаем pad_token, если его нет
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    model = AutoModelForCausalLM.from_pretrained(
-        "google/gemma-3-4b-it",
-        device_map="auto",
-        quantization_config=quantization_config,
-        token=HF_TOKEN,
-        trust_remote_code=True
-    )
-    return model, tokenizer
-
 
 def load_gemma_3_1b() -> Tuple[Any, Any]:
     """Загрузка google/gemma-3-1b-it БЕЗ квантизации (использует Gemma3ForCausalLM)"""
-    model_id = "google/gemma-3-1b-it"
-    
-    print(f"   Загрузка токенизатора {model_id}...")
-    print(f"   (это может занять некоторое время при первом запуске)")
-    
-    try:
-        start_time = time.time()
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_id,
-            token=HF_TOKEN,
-            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
-        )
-        elapsed = time.time() - start_time
-        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
-        print(f"   Возможные причины:")
-        print(f"     - Медленное интернет-соединение")
-        print(f"     - Проблемы с HuggingFace серверами")
-        print(f"     - Неверный или истекший HF_TOKEN")
-        print(f"     - Файрвол/прокси блокирует загрузку")
-        print(f"   Попробуйте:")
-        print(f"     - Проверить интернет-соединение")
-        print(f"     - Проверить HF_TOKEN в config_secrets.py")
-        print(f"     - Увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
-        raise
-    
-    # Устанавливаем pad_token, если его нет
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    print(f"   Загрузка модели {model_id} (Gemma3ForCausalLM)...")
-    try:
-        start_time = time.time()
-        # Используем Gemma3ForCausalLM для правильной загрузки Gemma 3
-        # timeout и resume_download используются только для tokenizer, не для модели
-        model = Gemma3ForCausalLM.from_pretrained(
-            model_id,
-            device_map="auto",
-            torch_dtype=torch.bfloat16,
-            token=HF_TOKEN
-        ).eval()  # Переводим в режим eval для инференса
-        elapsed = time.time() - start_time
-        print(f"   ✓ Модель загружена за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки модели: {e}")
-        raise
-    
-    return model, tokenizer
+    return load_gemma_3("google/gemma-3-1b-it", vram_warning=None, model_size_warning=None)
 
 
 def load_gemma_3_4b() -> Tuple[Any, Any]:
     """Загрузка google/gemma-3-4b-it БЕЗ квантизации (требует ~8GB VRAM, использует Gemma3ForCausalLM)"""
-    model_id = "google/gemma-3-4b-it"
-    
-    print(f"   Загрузка токенизатора {model_id}...")
-    try:
-        start_time = time.time()
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_id,
-            token=HF_TOKEN,
-            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
-        )
-        elapsed = time.time() - start_time
-        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
-        raise
-    
-    # Устанавливаем pad_token, если его нет
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    print(f"   Загрузка модели {model_id} (Gemma3ForCausalLM)...")
-    try:
-        start_time = time.time()
-        # Используем Gemma3ForCausalLM для правильной загрузки Gemma 3
-        # timeout и resume_download используются только для tokenizer, не для модели
-        model = Gemma3ForCausalLM.from_pretrained(
-            model_id,
-            device_map="auto",
-            torch_dtype=torch.bfloat16,
-            token=HF_TOKEN
-        ).eval()  # Переводим в режим eval для инференса
-        elapsed = time.time() - start_time
-        print(f"   ✓ Модель загружена за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки модели: {e}")
-        raise
-    
-    return model, tokenizer
+    return load_gemma_3("google/gemma-3-4b-it", vram_warning="Модель требует ~8GB VRAM для полной загрузки")
+
+
+def load_gemma_3_12b() -> Tuple[Any, Any]:
+    """Загрузка google/gemma-3-12b-it БЕЗ квантизации (требует ~24GB VRAM, использует Gemma3ForCausalLM)"""
+    return load_gemma_3(
+        "google/gemma-3-12b-it",
+        vram_warning="Модель требует значительный объем VRAM (~24GB+ для полной загрузки)",
+        model_size_warning="Это может занять значительное время из-за размера модели (~12B параметров)"
+    )
+
+
+def load_gemma_3_27b() -> Tuple[Any, Any]:
+    """Загрузка google/gemma-3-27b-it БЕЗ квантизации (требует ~54GB VRAM, использует Gemma3ForCausalLM)"""
+    return load_gemma_3(
+        "google/gemma-3-27b-it",
+        vram_warning="Модель требует очень значительный объем VRAM (~54GB+ для полной загрузки)",
+        model_size_warning="Это может занять значительное время из-за размера модели (~27B параметров)"
+    )
 
 
 def load_codegemma_7b() -> Tuple[Any, Any]:

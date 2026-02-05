@@ -87,18 +87,8 @@ def load_model_configs():
         elif generate_module_name == "model_loaders_api" and model_loaders_api_module is None:
             import model_loaders_api as model_loaders_api_module
         
-        # Получаем функции по имени
-        if load_module_name == "model_loaders":
-            load_func = getattr(model_loaders_module, load_func_name)
-        else:
-            load_func = getattr(model_loaders_api_module, load_func_name)
-        
-        if generate_module_name == "model_loaders":
-            generate_func = getattr(model_loaders_module, generate_func_name)
-        else:
-            generate_func = getattr(model_loaders_api_module, generate_func_name)
-        
         # Преобразуем гиперпараметры (конвертируем строки в нужные типы)
+        # Делаем это до создания load_func, чтобы использовать преобразованные значения
         hyperparameters = {}
         for key, value in model_config['hyperparameters'].items():
             if isinstance(value, str):
@@ -113,6 +103,33 @@ def load_model_configs():
                     hyperparameters[key] = value
             else:
                 hyperparameters[key] = value
+        
+        # Получаем функции по имени
+        # Если индивидуальная функция не найдена, используем универсальную (только для локальных моделей)
+        if load_module_name == "model_loaders":
+            try:
+                load_func = getattr(model_loaders_module, load_func_name)
+            except AttributeError:
+                # Используем универсальную функцию загрузки как fallback
+                # Создаем замыкание с параметрами из конфигурации
+                model_name = model_config['name']
+                
+                def load_func():
+                    from model_loaders import load_standard_model
+                    return load_standard_model(
+                        model_name=model_name,
+                        dtype=hyperparameters.get('dtype'),
+                        torch_dtype=hyperparameters.get('torch_dtype'),
+                        device_map=hyperparameters.get('device_map', 'auto'),
+                        trust_remote_code=hyperparameters.get('trust_remote_code', True)
+                    )
+        else:
+            load_func = getattr(model_loaders_api_module, load_func_name)
+        
+        if generate_module_name == "model_loaders":
+            generate_func = getattr(model_loaders_module, generate_func_name)
+        else:
+            generate_func = getattr(model_loaders_api_module, generate_func_name)
         
         configs[model_key] = {
             "name": model_config['name'],
