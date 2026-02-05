@@ -138,7 +138,7 @@ def values_equal(val1: Any, val2: Any, strict_mode: bool = False) -> bool:
 
 def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any], 
                        text_index: int = None, text: str = None, response: str = None,
-                       strict_mode: bool = False) -> Tuple[float, int, List[Dict[str, Any]], Dict[str, float]]:
+                       prompt: str = None, strict_mode: bool = False) -> Tuple[float, int, List[Dict[str, Any]], Dict[str, float]]:
     """
     Сравнивает группу "массовая доля" между предсказанием и истинным значением.
     
@@ -297,7 +297,7 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
                 error_msg = f"Вещество {true_subst_orig}: предсказано отсутствует, истина {true_val_orig}"
                 error_messages.append(error_msg)
     
-    # Формируем результат в нужном формате: один словарь с полями text_index, text, response, errors
+    # Формируем результат в нужном формате: один словарь с полями text_index, text, response, prompt, errors
     errors = []
     if error_messages:
         error_dict = {
@@ -309,6 +309,8 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
             error_dict["text"] = text
         if response is not None:
             error_dict["response"] = response
+        if prompt is not None:
+            error_dict["prompt"] = prompt
         errors.append(error_dict)
     
     # Вычисляем метрики
@@ -339,7 +341,7 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
 
 def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
                    text_index: int = None, text: str = None, response: str = None,
-                   strict_mode: bool = False) -> Tuple[float, int, List[Dict[str, Any]], Dict[str, float]]:
+                   prompt: str = None, strict_mode: bool = False) -> Tuple[float, int, List[Dict[str, Any]], Dict[str, float]]:
     """
     Сравнивает группу "прочее" между предсказанием и истинным значением.
     
@@ -510,7 +512,7 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
                 error_msg = f"Параметр {true_param}: предсказано отсутствует, истина {true_val}{unit_str}"
                 error_messages.append(error_msg)
     
-    # Формируем результат в нужном формате: один словарь с полями text_index, text, response, errors
+    # Формируем результат в нужном формате: один словарь с полями text_index, text, response, prompt, errors
     errors = []
     if error_messages:
         error_dict = {
@@ -522,6 +524,8 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
             error_dict["text"] = text
         if response is not None:
             error_dict["response"] = response
+        if prompt is not None:
+            error_dict["prompt"] = prompt
         errors.append(error_dict)
     
     # Вычисляем метрики
@@ -553,7 +557,8 @@ def compare_prochee(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
 def calculate_quality_metrics(predictions: List[Dict[str, Any]], 
                               ground_truths: List[Dict[str, Any]],
                               texts: List[str] = None,
-                              responses: List[str] = None) -> Dict[str, Any]:
+                              responses: List[str] = None,
+                              prompt: str = None) -> Dict[str, Any]:
     """
     Вычисляет метрики качества для всех предсказаний.
     
@@ -589,7 +594,7 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
         
         # Массовая доля
         score_mass, total_mass, errors_mass, metrics_mass = compare_mass_dolya(
-            pred, true_val, text_index=idx, text=text, response=response
+            pred, true_val, text_index=idx, text=text, response=response, prompt=prompt
         )
         # Всегда добавляем метрики, даже если total = 0 (могут быть только FP или только FN)
         mass_tp_total += metrics_mass["tp"]
@@ -603,7 +608,7 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
         
         # Прочее
         score_prochee, total_prochee, errors_prochee, metrics_prochee = compare_prochee(
-            pred, true_val, text_index=idx, text=text, response=response
+            pred, true_val, text_index=idx, text=text, response=response, prompt=prompt
         )
         # Всегда добавляем метрики, даже если total = 0 (могут быть только FP или только FN)
         prochee_tp_total += metrics_prochee["tp"]
@@ -628,6 +633,7 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
                     "text_index": text_idx,
                     "text": error_dict.get("text"),
                     "response": error_dict.get("response"),
+                    "prompt": error_dict.get("prompt"),
                     "errors": []
                 }
             # Добавляем ошибки из списка "errors"
@@ -643,6 +649,7 @@ def calculate_quality_metrics(predictions: List[Dict[str, Any]],
                     "text_index": text_idx,
                     "text": error_dict.get("text"),
                     "response": error_dict.get("response"),
+                    "prompt": error_dict.get("prompt"),
                     "errors": []
                 }
             # Добавляем ошибки из списка "errors"
@@ -771,7 +778,8 @@ def validate_with_pydantic(data: Any, stage: str = "parsed") -> Dict[str, Any]:
 def calculate_raw_output_metrics(raw_outputs: List[str], 
                                  ground_truths: List[Dict[str, Any]],
                                  texts: List[str] = None,
-                                 responses: List[str] = None) -> Dict[str, Any]:
+                                 responses: List[str] = None,
+                                 prompt: str = None) -> Dict[str, Any]:
     """
     Вычисляет метрики качества для raw output (без допущений, кроме регистра).
     Использует строгий парсинг JSON без умных исправлений.
@@ -840,7 +848,7 @@ def calculate_raw_output_metrics(raw_outputs: List[str],
         
         # Массовая доля (используем строгий режим для raw метрик)
         score_mass, total_mass, errors_mass, metrics_mass = compare_mass_dolya(
-            pred, true_val, text_index=idx, text=text, response=response, strict_mode=True
+            pred, true_val, text_index=idx, text=text, response=response, prompt=prompt, strict_mode=True
         )
         # Всегда добавляем метрики, даже если total = 0 (могут быть только FP или только FN)
         mass_tp_total += metrics_mass["tp"]
@@ -853,7 +861,7 @@ def calculate_raw_output_metrics(raw_outputs: List[str],
         
         # Прочее (используем строгий режим для raw метрик)
         score_prochee, total_prochee, errors_prochee, metrics_prochee = compare_prochee(
-            pred, true_val, text_index=idx, text=text, response=response, strict_mode=True
+            pred, true_val, text_index=idx, text=text, response=response, prompt=prompt, strict_mode=True
         )
         # Всегда добавляем метрики, даже если total = 0 (могут быть только FP или только FN)
         prochee_tp_total += metrics_prochee["tp"]

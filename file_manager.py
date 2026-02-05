@@ -340,6 +340,13 @@ class FileManager:
         if "raw_output_metrics" in evaluation_result:
             evaluation_result_for_json["raw_output_metrics"] = evaluation_result["raw_output_metrics"]
         
+        # Информация о GPU и производительности
+        for key in ["gpu_info", "gpu_memory_after_load_gb", "gpu_memory_during_inference_gb", 
+                    "gpu_memory_during_inference_max_gb", "gpu_memory_during_inference_min_gb",
+                    "average_response_time_seconds", "api_model"]:
+            if key in evaluation_result:
+                evaluation_result_for_json[key] = evaluation_result[key]
+        
         # Остальные поля
         for key in evaluation_result:
             if key not in evaluation_result_for_json:
@@ -373,6 +380,7 @@ class FileManager:
                         "text_index": text_idx,
                         "text": error.get("text", ""),
                         "response": error.get("response", ""),
+                        "prompt": error.get("prompt", ""),
                         "errors": []
                     }
                 if error.get("error"):
@@ -381,6 +389,8 @@ class FileManager:
                     errors_by_text[text_idx]["text"] = error.get("text")
                 if error.get("response") and not errors_by_text[text_idx]["response"]:
                     errors_by_text[text_idx]["response"] = error.get("response")
+                if error.get("prompt") and not errors_by_text[text_idx]["prompt"]:
+                    errors_by_text[text_idx]["prompt"] = error.get("prompt")
         
         evaluation_result_for_json["ошибки"] = list(errors_by_text.values())
         
@@ -564,6 +574,13 @@ class FileManager:
         
         if "raw_output_metrics" in evaluation_result:
             evaluation_result_for_json["raw_output_metrics"] = evaluation_result["raw_output_metrics"]
+        
+        # Информация о GPU и производительности
+        for key in ["gpu_info", "gpu_memory_after_load_gb", "gpu_memory_during_inference_gb", 
+                    "gpu_memory_during_inference_max_gb", "gpu_memory_during_inference_min_gb",
+                    "average_response_time_seconds", "api_model"]:
+            if key in evaluation_result:
+                evaluation_result_for_json[key] = evaluation_result[key]
         
         for key in evaluation_result:
             if key not in evaluation_result_for_json:

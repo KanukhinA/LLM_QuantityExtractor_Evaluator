@@ -201,42 +201,7 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
 
 def main():
     """Главная функция"""
-    # Проверяем работоспособность Gemini API в самом начале
-    print(f"\n{'='*80}")
-    print(f"ПРОВЕРКА СИСТЕМЫ")
-    print(f"{'='*80}")
-    # GEMINI_API_KEY загружается из config.py (который берет его из config_secrets.py или переменных окружения)
-    
-    if GEMINI_API_KEY:
-        print(f"Проверка работоспособности Gemini API...")
-        gemini_working, gemini_message = check_gemini_api(GEMINI_API_KEY)
-        print(f"   {gemini_message}\n")
-    else:
-        print(f"GEMINI_API_KEY не установлен, пропускаем проверку API")
-        gemini_working = False
-        print()
-    
-    use_gemini = True
-    if not gemini_working:
-        print(f"{'='*80}")
-        print(f"ВНИМАНИЕ: Gemini API недоступен")
-        print(f"{'='*80}")
-        print(f"Оценка модели будет выполнена, но анализ ошибок через Gemini будет пропущен.")
-        print(f"Вы можете продолжить без анализатора ошибок или исправить проблему и запустить заново.\n")
-        
-        while True:
-            response = input("Продолжить без анализатора ошибок? (y/n): ").strip().lower()
-            if response in ['y', 'yes', 'да', 'д']:
-                use_gemini = False
-                print("Продолжаем без анализатора ошибок...\n")
-                break
-            elif response in ['n', 'no', 'нет', 'н']:
-                print("Запуск отменён. Исправьте проблему с Gemini API и попробуйте снова.")
-                return
-            else:
-                print("Пожалуйста, введите 'y' (да) или 'n' (нет)")
-    
-    # Теперь проверяем аргументы командной строки
+    # Сначала парсим аргументы командной строки, чтобы проверить флаг --no-gemini
     if len(sys.argv) < 2:
         print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         print("\nАргументы:")
@@ -335,6 +300,47 @@ def main():
         print(f"Датасет не найден: {dataset_path}")
         print("Убедитесь, что файл results_var3.xlsx находится в папке data/")
         return
+    
+    # Проверяем работоспособность Gemini API (только если use_gemini=True)
+    if use_gemini:
+        print(f"\n{'='*80}")
+        print(f"ПРОВЕРКА СИСТЕМЫ")
+        print(f"{'='*80}")
+        # GEMINI_API_KEY загружается из config.py (который берет его из config_secrets.py или переменных окружения)
+        
+        if GEMINI_API_KEY:
+            print(f"Проверка работоспособности Gemini API...")
+            gemini_working, gemini_message = check_gemini_api(GEMINI_API_KEY)
+            print(f"   {gemini_message}\n")
+        else:
+            print(f"GEMINI_API_KEY не установлен, пропускаем проверку API")
+            gemini_working = False
+            print()
+        
+        if not gemini_working:
+            print(f"{'='*80}")
+            print(f"ВНИМАНИЕ: Gemini API недоступен")
+            print(f"{'='*80}")
+            print(f"Оценка модели будет выполнена, но анализ ошибок через Gemini будет пропущен.")
+            print(f"Вы можете продолжить без анализатора ошибок или исправить проблему и запустить заново.\n")
+            
+            while True:
+                response = input("Продолжить без анализатора ошибок? (y/n): ").strip().lower()
+                if response in ['y', 'yes', 'да', 'д']:
+                    use_gemini = False
+                    print("Продолжаем без анализатора ошибок...\n")
+                    break
+                elif response in ['n', 'no', 'нет', 'н']:
+                    print("Запуск отменён. Исправьте проблему с Gemini API и попробуйте снова.")
+                    return
+                else:
+                    print("Пожалуйста, введите 'y' (да) или 'n' (нет)")
+    else:
+        # Если use_gemini=False, пропускаем проверку
+        print(f"\n{'='*80}")
+        print(f"ПРОВЕРКА СИСТЕМЫ")
+        print(f"{'='*80}")
+        print(f"Анализ через Gemini API отключен (флаг --no-gemini)\n")
     
     # Если одна модель, выводим информацию о ней
     if len(model_keys) == 1:
