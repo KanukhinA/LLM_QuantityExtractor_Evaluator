@@ -300,10 +300,26 @@ class FileManager:
         multi_agent_mode = evaluation_result.get("multi_agent_mode")
         prompt_template_name = evaluation_result.get("prompt_template", "unknown")
         
+        # Проверяем использование structured_output и outlines
+        hyperparameters = evaluation_result.get("hyperparameters", {})
+        structured_output = hyperparameters.get("structured_output", False)
+        use_outlines = hyperparameters.get("use_outlines", False)
+        
         if multi_agent_mode:
             prompt_folder_name = FileManager.sanitize_filename(multi_agent_mode)
         else:
             prompt_folder_name = FileManager.sanitize_filename(prompt_template_name)
+        
+        # Добавляем информацию о режимах structured_output и outlines в название папки
+        mode_suffixes = []
+        if structured_output:
+            if use_outlines:
+                mode_suffixes.append("outlines")
+            else:
+                mode_suffixes.append("structured")
+        
+        if mode_suffixes:
+            prompt_folder_name = f"{prompt_folder_name}_{'_'.join(mode_suffixes)}"
         
         # Создаем структуру папок
         model_dir = self.build_path(output_dir, model_key)
