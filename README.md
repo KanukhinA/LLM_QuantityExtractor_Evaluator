@@ -390,14 +390,38 @@ python main.py gemma-3-27b-api --structured-output
 Запустите скрипт для оценки всех настроенных моделей:
 
 ```bash
+# Оценка всех моделей (локальных и API)
 python run_all_models.py
+
+# Оценка только локальных моделей (исключает API модели)
+python run_all_models.py --local-only
+
+# Оценка всех моделей в мультиагентном режиме
+python run_all_models.py --multi-agent simple_4agents
+
+# Оценка всех моделей с structured output
+python run_all_models.py --structured-output
+
+# Оценка всех локальных моделей с structured output и outlines
+python run_all_models.py --local-only --structured-output --outlines
+
+# Комбинация параметров
+python run_all_models.py --local-only --multi-agent qa_workflow --structured-output
 ```
+
+**Доступные параметры:**
+- `--local-only` - запустить оценку только для локальных моделей (исключить API модели)
+- `--multi-agent MODE` - режим мультиагентного подхода (simple_4agents, critic_3agents, qa_workflow)
+- `--structured-output` - использовать structured output через Pydantic
+- `--outlines` - использовать библиотеку outlines для структурированной генерации JSON (только для локальных моделей с --structured-output)
 
 Скрипт автоматически:
 - Проверит доступность Gemini API
-- Запустит оценку для каждой модели
+- Запустит оценку для каждой модели (или только локальных, если указан `--local-only`)
+- Применит указанные режимы (multi-agent, structured-output, outlines) ко всем моделям
 - Пропустит модели, которые не удалось загрузить
 - Сохранит результаты для каждой модели
+- Выведет статистику: общее количество моделей, количество локальных/API моделей (при использовании `--local-only`)
 
 ### 5.4. Переоценка результатов
 
@@ -649,19 +673,62 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
    - `is_valid` - валидность JSON
 
 2. **metrics_model_name_prompt_timestamp.json** - Сводные метрики:
-   - Информация о GPU
-   - Метрики производительности
-   - Метрики качества
-   - Гиперпараметры модели
-   - `prompt_template` - техническое название промпта
-   - `prompt_designation` - обозначение использованного промпта (из `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
-   - `prompt_full_text` - полный текст промпта
-   - `prompt_info` - дополнительная информация о промптах (для мультиагентного режима)
-   - Список ошибок парсинга
+   - **Информация о GPU:**
+     - `gpu_info` - характеристики видеокарты (название, CUDA версия, общая память, версия драйвера)
+     - `gpu_memory_after_load_gb` - память после загрузки модели
+     - `gpu_memory_during_inference_gb` - средняя память во время инференса
+     - `gpu_memory_during_inference_max_gb` - максимальная память во время инференса
+     - `gpu_memory_during_inference_min_gb` - минимальная память во время инференса
+   - **Метрики производительности:**
+     - `average_response_time_seconds` - средняя скорость инференса (секунды на ответ)
+     - `api_model` - флаг, является ли модель API-моделью
+   - **Метрики качества:**
+     - Метрики для групп "массовая доля" и "прочее" (accuracy, precision, recall, f1, tp, fp, fn)
+     - `ошибки` - список ошибок с полями: `text_index`, `text`, `response`, `prompt`, `errors`
+   - **Другая информация:**
+     - Гиперпараметры модели
+     - `prompt_template` - техническое название промпта
+     - `prompt_designation` - обозначение использованного промпта (из `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
+     - `prompt_full_text` - полный текст промпта
+     - `prompt_info` - дополнительная информация о промптах (для мультиагентного режима)
+     - Список ошибок парсинга
 
-3. **evaluation_summary.jsonl** - Общий файл со всеми прогонами (JSON Lines формат)
+3. **raw_metrics_model_name_prompt_timestamp.json** - Метрики для raw output (без умных исправлений):
+   - `validation` - статистика валидации через Pydantic
+   - `массовая доля` - метрики качества для массовых долей
+   - `прочее` - метрики качества для прочих параметров
+   - `ошибки` - список ошибок с полями: `text_index`, `text`, `response`, `prompt`, `errors`
 
-4. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
+4. **evaluation_summary.jsonl** - Общий файл со всеми прогонами (JSON Lines формат)
+
+5. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
+
+**Структура папок результатов:**
+
+Результаты сохраняются в следующей структуре:
+```
+results/
+  └── <model_key>/
+      └── <prompt_folder_name>/
+          ├── results_<model_name>_<timestamp>.csv
+          ├── metrics_<model_name>_<timestamp>.json
+          ├── raw_metrics_<model_name>_<timestamp>.json
+          └── quality_errors_<model_name>_<timestamp>.txt
+```
+
+**Название папки промпта (`prompt_folder_name`):**
+- Для одноагентного режима: название промпта из `config.PROMPT_TEMPLATE_NAME`
+- Для мультиагентного режима: название режима (например, `simple_4agents`, `qa_workflow`)
+- Если используется `structured_output`:
+  - С суффиксом `_structured` (если `structured_output=True`, `use_outlines=False`)
+  - С суффиксом `_outlines` (если `structured_output=True`, `use_outlines=True`)
+
+**Примеры структуры папок:**
+- `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT/` - обычный режим
+- `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT_structured/` - с structured output
+- `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT_outlines/` - с structured output и outlines
+- `results/qwen-2.5-3b/simple_4agents/` - мультиагентный режим
+- `results/qwen-2.5-3b/simple_4agents_structured/` - мультиагентный режим с structured output
 
 **Примечание:** Название промпта добавляется в имя файла (например, `metrics_model_name_DETAILED_INSTR_ZEROSHOT_timestamp.json`), а также сохраняется в отдельном поле `prompt_designation` в JSON файле для удобного поиска и фильтрации результатов.
 
@@ -960,7 +1027,6 @@ python main.py your-model-key --structured-output
 - OpenRouter API Key (`OPENAI_API_KEY`) для моделей через OpenRouter
 - Библиотека `google-genai` (устанавливается через `pip install google-genai`) для моделей Gemma 3
 - Библиотека `openai` (устанавливается через `pip install openai`) для моделей через OpenRouter
-- Локальная GPU не требуется
 
 ### 10.4. Специальные требования
 
@@ -991,6 +1057,10 @@ python reevaluate.py
 | `python main.py <model_key> --structured-output --outlines` | Оценка с Pydantic + outlines (локальные модели) | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Включен (по умолчанию) | Отключен |
 | `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --local-only` | Оценка только локальных моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --multi-agent <mode>` | Оценка всех моделей | Мультиагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --structured-output` | Оценка всех моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --local-only --structured-output --outlines` | Оценка локальных моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
 | `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | - | Отключен |
 | `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | - | Включен |
 | `python few_shot_extractor.py <model_key> [опции]` | Извлечение few-shot примеров | - | - | Опционально (`--verbose`) | - |

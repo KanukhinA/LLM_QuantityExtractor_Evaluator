@@ -2,11 +2,13 @@
 Скрипт для запуска оценки всех моделей подряд
 """
 import sys
+import argparse
 from main import run_evaluation
 from gemini_analyzer import check_gemini_api
 from config import GEMINI_API_KEY, MODEL_CONFIGS
 
-def run_all_models():
+def run_all_models(local_only: bool = False, multi_agent_mode: str = None, 
+                   structured_output: bool = False, use_outlines: bool = False):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -43,12 +45,41 @@ def run_all_models():
             else:
                 print("Пожалуйста, введите 'y' (да) или 'n' (нет)")
     
-    models = list(MODEL_CONFIGS.keys())
+    # Выводим информацию о режимах
+    if multi_agent_mode:
+        print(f"📌 Режим: Мультиагентный ({multi_agent_mode})")
+    else:
+        print(f"📌 Режим: Одноагентный")
+    if structured_output:
+        print(f"📌 Structured Output: Включен (Pydantic валидация)")
+    if use_outlines:
+        print(f"📌 Outlines: Включен")
+    print()
     
-    print(f"\n{'='*80}")
-    print(f"ЗАПУСК ОЦЕНКИ ВСЕХ МОДЕЛЕЙ")
-    print(f"{'='*80}")
-    print(f"Количество моделей: {len(models)}")
+    # Фильтруем модели, если указан флаг local_only
+    all_models = list(MODEL_CONFIGS.keys())
+    if local_only:
+        # Локальные модели - это те, у которых нет "-api" в ключе
+        models = [model_key for model_key in all_models if "-api" not in model_key]
+        print(f"\n{'='*80}")
+        print(f"ЗАПУСК ОЦЕНКИ ЛОКАЛЬНЫХ МОДЕЛЕЙ")
+        print(f"{'='*80}")
+        print(f"Всего моделей в конфигурации: {len(all_models)}")
+        print(f"Локальных моделей: {len(models)}")
+        print(f"API моделей (пропущено): {len(all_models) - len(models)}")
+    else:
+        models = all_models
+        print(f"\n{'='*80}")
+        print(f"ЗАПУСК ОЦЕНКИ ВСЕХ МОДЕЛЕЙ")
+        print(f"{'='*80}")
+        print(f"Количество моделей: {len(models)}")
+    
+    if not models:
+        print(f"⚠️  Не найдено моделей для оценки.")
+        if local_only:
+            print(f"   Попробуйте запустить без флага --local-only для оценки всех моделей.")
+        return
+    
     print(f"Модели: {', '.join(models)}\n")
     
     results_summary = []
@@ -59,8 +90,17 @@ def run_all_models():
         print(f"{'='*80}\n")
         
         try:
-            config = MODEL_CONFIGS[model_key]
-            result = run_evaluation(config, use_gemini=use_gemini, verbose=False)  # Короткий вывод для run_all_models.py
+            # Создаем копию конфигурации и добавляем параметры если указаны
+            import copy
+            config = copy.deepcopy(MODEL_CONFIGS[model_key])
+            if multi_agent_mode:
+                config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
+            if structured_output:
+                config["hyperparameters"]["structured_output"] = True
+            if use_outlines:
+                config["hyperparameters"]["use_outlines"] = True
+            
+            result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False)  # Короткий вывод для run_all_models.py
             
             if result.get("status") != "error":
                 results_summary.append({
@@ -127,5 +167,34 @@ def run_all_models():
         print()
 
 if __name__ == "__main__":
-    run_all_models()
+    parser = argparse.ArgumentParser(description="Запуск оценки всех моделей")
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Запустить оценку только для локальных моделей (исключить API модели)"
+    )
+    parser.add_argument(
+        "--multi-agent",
+        type=str,
+        metavar="MODE",
+        help="Режим мультиагентного подхода (simple_4agents, critic_3agents, qa_workflow)"
+    )
+    parser.add_argument(
+        "--structured-output",
+        action="store_true",
+        help="Использовать structured output через Pydantic"
+    )
+    parser.add_argument(
+        "--outlines",
+        action="store_true",
+        help="Использовать библиотеку outlines для структурированной генерации JSON (только для локальных моделей с --structured-output)"
+    )
+    args = parser.parse_args()
+    
+    run_all_models(
+        local_only=args.local_only,
+        multi_agent_mode=args.multi_agent,
+        structured_output=args.structured_output,
+        use_outlines=args.outlines
+    )
 

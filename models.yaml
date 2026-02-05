@@ -59,6 +59,20 @@ models:
       do_sample: false
       torch_dtype: "bfloat16"
 
+  gemma-3-12b:
+    name: "google/gemma-3-12b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
+  gemma-3-27b:
+    name: "google/gemma-3-27b-it"
+    hyperparameters:
+      max_new_tokens: 512
+      do_sample: false
+      torch_dtype: "bfloat16"
+
   codegemma-7b:
     name: "google/codegemma-7b-it"
     hyperparameters:
@@ -122,17 +136,3 @@ models:
       max_new_tokens: 512
       do_sample: false
       torch_dtype: "bfloat16"
-
-  phi-4-mini-instruct:
-    name: "microsoft/Phi-4-mini-instruct"
-    hyperparameters:
-      max_new_tokens: 1024
-      do_sample: false
-      dtype: "bfloat16"
-
-  t5gemma-2-1b-1b:
-    name: "google/t5gemma-2-1b-1b"
-    hyperparameters:
-      max_new_tokens: 1024
-      do_sample: false
-      dtype: "bfloat16"
