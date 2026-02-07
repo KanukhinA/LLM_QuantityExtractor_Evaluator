@@ -441,6 +441,13 @@ def main():
                         print(f"   • 'прочее':")
                         print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
                         print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
+                        
+                        # Выводим отношение валидных JSON
+                        valid_json_count = result.get('valid_json_count', 0)
+                        total_samples = result.get('total_samples', 0)
+                        if total_samples > 0:
+                            valid_json_rate = valid_json_count / total_samples
+                            print(f"   • Валидных JSON: {valid_json_count}/{total_samples} ({valid_json_rate:.2%})")
                     
                     # Выводим raw метрики (строгий парсинг без допущений)
                     raw_metrics = result.get('raw_output_metrics')

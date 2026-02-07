@@ -895,8 +895,7 @@ class ModelEvaluator:
                         return {
                             "status": "interrupted",
                             "message": "Обработка прервана пользователем без сохранения",
-                            "processed_count": len(results),
-                            "total_count": len(self.texts)
+                            "processed_count": len(results)
                         }
                     else:
                         print("Пожалуйста, введите 1, 2 или 3")
@@ -1106,16 +1105,12 @@ class ModelEvaluator:
                     
                     validation_stats = {
                         "raw_output": {
-                            "valid_count": raw_valid_count,
                             "invalid_count": len(raw_validations) - raw_valid_count if raw_validations else 0,
-                            "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0,
-                            "total_count": len(raw_validations)
+                            "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0
                         },
                         "parsed": {
-                            "valid_count": parsed_valid_count,
                             "invalid_count": parsed_invalid_count,
-                            "validation_rate": parsed_valid_count / len(results) if len(results) > 0 else 0.0,
-                            "total_count": len(results)  # Общее количество всех ответов
+                            "validation_rate": parsed_valid_count / len(results) if len(results) > 0 else 0.0
                         }
                     }
                 else:
@@ -1243,8 +1238,7 @@ class ModelEvaluator:
             "model_key": model_key,  # Alias модели из конфигурации (например, "gemma-2-2b")
             "interrupted": interrupted,
             "timeout_reason": timeout_reason,  # Причина прерывания (если было прерывание по времени)
-            "total_count": len(self.texts),  # Общее количество текстов в датасете
-            "total_samples": len(results),  # Количество обработанных результатов (может быть меньше total_count при прерывании)
+            "total_samples": len(results),  # Количество обработанных результатов (может быть меньше общего количества текстов при прерывании)
             # Метрики парсинга и валидации (первыми)
             "valid_json_count": valid_count,  # Количество валидных JSON (можно вычислить: total_samples - invalid_json_count)
             "invalid_json_count": invalid_count,  # Количество невалидных JSON
@@ -1514,16 +1508,12 @@ class ModelEvaluator:
                 
                 validation_stats = {
                     "raw_output": {
-                        "valid_count": raw_valid_count,
                         "invalid_count": len(raw_validations) - raw_valid_count,
-                        "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0,
-                        "total_count": len(raw_validations)
+                        "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0
                     },
                     "parsed": {
-                        "valid_count": parsed_valid_count,
                         "invalid_count": parsed_invalid_count,
-                        "validation_rate": parsed_valid_count / total_results_count if total_results_count > 0 else 0.0,
-                        "total_count": total_results_count  # Общее количество всех ответов
+                        "validation_rate": parsed_valid_count / total_results_count if total_results_count > 0 else 0.0
                     }
                 }
                 
