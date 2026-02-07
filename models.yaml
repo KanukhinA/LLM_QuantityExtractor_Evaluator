@@ -41,25 +41,34 @@ models:
   qwen-3-4b:
     name: "Qwen/Qwen3-4B-Instruct"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 512
       do_sample: false
       dtype: "bfloat16"
+      enable_thinking: false
 
   qwen-3-8b:
     name: "Qwen/Qwen3-8B"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 512
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
 
-  qwen-3-32b:
-    name: "Qwen/Qwen3-32B"
+  qwen-3-14b:
+    name: "Qwen/Qwen3-14B"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 512
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
+
+  # qwen-3-32b:
+  #   name: "Qwen/Qwen3-32B"
+  #   hyperparameters:
+  #     max_new_tokens: 1024
+  #     do_sample: false
+  #     torch_dtype: "auto"
+  #     enable_thinking: false
 
   gemma-3-4b:
     name: "google/gemma-3-4b-it"
@@ -122,7 +131,7 @@ models:
   qwen-3-32b-api:
     name: "qwen/qwen3-32b"
     hyperparameters:
-      max_new_tokens: 32768
+      max_new_tokens: 1025
       api_model: true
 
   mistral-3-8b-instruct:
