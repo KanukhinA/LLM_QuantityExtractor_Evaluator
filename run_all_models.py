@@ -103,15 +103,25 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False)  # Короткий вывод для run_all_models.py
             
             if result.get("status") != "error":
-                results_summary.append({
-                    "model": model_key,
-                    "status": "success",
-                    "multi_agent_mode": result.get("multi_agent_mode"),
-                    "avg_speed": result.get("average_response_time_seconds"),
-                    "parsing_error_rate": result.get("parsing_error_rate"),
-                    "memory_gb": result.get("gpu_memory_during_inference_gb")
-                })
-                print(f"Модель {model_key} успешно оценена\n")
+                # Проверяем, была ли модель прервана по времени
+                if result.get("interrupted") and result.get("timeout_reason"):
+                    timeout_reason = result.get("timeout_reason")
+                    print(f"Модель {model_key} прервана: {timeout_reason}\n")
+                    results_summary.append({
+                        "model": model_key,
+                        "status": "timeout",
+                        "timeout_reason": timeout_reason
+                    })
+                else:
+                    results_summary.append({
+                        "model": model_key,
+                        "status": "success",
+                        "multi_agent_mode": result.get("multi_agent_mode"),
+                        "avg_speed": result.get("average_response_time_seconds"),
+                        "parsing_error_rate": result.get("parsing_error_rate"),
+                        "memory_gb": result.get("gpu_memory_during_inference_gb")
+                    })
+                    print(f"Модель {model_key} успешно оценена\n")
             else:
                 error_msg = result.get("error", "Unknown error")
                 print(f"Модель {model_key} пропущена из-за ошибки: {error_msg}\n")
@@ -142,12 +152,20 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
     
     successful = [s for s in results_summary if s['status'] == 'success']
     failed = [s for s in results_summary if s['status'] == 'error']
+    timeout_models = [s for s in results_summary if s['status'] == 'timeout']
     
     print(f"Общая статистика:")
     print(f"   • Всего моделей: {len(results_summary)}")
     print(f"   • Успешно оценено: {len(successful)}")
     print(f"   • Пропущено из-за ошибок: {len(failed)}")
+    print(f"   • Прервано по времени: {len(timeout_models)}")
     print()
+    
+    if timeout_models:
+        print(f"МОДЕЛИ, ПРЕРВАННЫЕ ИЗ-ЗА ПРЕВЫШЕНИЯ ВРЕМЕНИ ИНФЕРЕНСА:")
+        for summary in timeout_models:
+            print(f"   • {summary['model']}: {summary.get('timeout_reason', 'Превышен лимит времени')}")
+        print()
     
     if successful:
         print(f"УСПЕШНО ОЦЕНЕННЫЕ МОДЕЛИ:")

@@ -16,7 +16,7 @@ from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_fr
 from metrics import calculate_quality_metrics, validate_with_pydantic, calculate_raw_output_metrics
 from gpu_info import get_gpu_info, get_gpu_memory_usage
 from multi_agent_graph import process_with_multi_agent
-from config import PROMPT_TEMPLATE_NAME
+from config import PROMPT_TEMPLATE_NAME, MAX_INFERENCE_TIME_MINUTES
 from metrics_printer import MetricsPrinter
 from file_manager import FileManager
 import re
@@ -611,9 +611,23 @@ class ModelEvaluator:
         
         interrupted = False
         last_processed_index = -1
+        timeout_reason = None
+        max_inference_time_seconds = MAX_INFERENCE_TIME_MINUTES * 60
         
         try:
             for i, text in enumerate(self.texts):
+                # Проверяем время перед обработкой нового текста
+                elapsed_time = time.time() - total_start_time
+                if elapsed_time > max_inference_time_seconds:
+                    interrupted = True
+                    last_processed_index = i - 1
+                    timeout_reason = f"Превышен лимит времени ({MAX_INFERENCE_TIME_MINUTES} минут)"
+                    elapsed_minutes = elapsed_time / 60
+                    print(f"\n   ⚠️ Прерывание инференса: превышен лимит времени ({MAX_INFERENCE_TIME_MINUTES} минут)")
+                    print(f"   ⏱️ Затрачено времени: {elapsed_minutes:.1f} минут")
+                    print(f"   📊 Обработано текстов: {i}/{len(self.texts)}")
+                    break
+                
                 # Выводим номер обрабатываемого ответа
                 if not verbose:
                     print(f"\r  🔄 Обработка ответа #{i+1}/{len(self.texts)}...", end="", flush=True)
@@ -1228,6 +1242,7 @@ class ModelEvaluator:
             "model_name": model_name,
             "model_key": model_key,  # Alias модели из конфигурации (например, "gemma-2-2b")
             "interrupted": interrupted,
+            "timeout_reason": timeout_reason,  # Причина прерывания (если было прерывание по времени)
             "total_count": len(self.texts),  # Общее количество текстов в датасете
             "total_samples": len(results),  # Количество обработанных результатов (может быть меньше total_count при прерывании)
             # Метрики парсинга и валидации (первыми)

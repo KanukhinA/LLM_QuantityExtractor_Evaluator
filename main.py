@@ -401,11 +401,21 @@ def main():
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)
             
             if result.get("status") != "error":
-                results_summary.append({
-                    "model_key": model_key,
-                    "status": "success",
-                    "result": result
-                })
+                # Проверяем, была ли модель прервана по времени
+                if result.get("interrupted") and result.get("timeout_reason"):
+                    timeout_reason = result.get("timeout_reason")
+                    results_summary.append({
+                        "model_key": model_key,
+                        "status": "timeout",
+                        "timeout_reason": timeout_reason,
+                        "result": result
+                    })
+                else:
+                    results_summary.append({
+                        "model_key": model_key,
+                        "status": "success",
+                        "result": result
+                    })
                 
                 if len(model_keys) == 1:
                     # Для одной модели выводим полную сводку
@@ -476,12 +486,26 @@ def main():
         
         successful = [s for s in results_summary if s['status'] == 'success']
         failed = [s for s in results_summary if s['status'] == 'error']
+        timeout_models = [s for s in results_summary if s['status'] == 'timeout']
         
         print(f"Общая статистика:")
         print(f"   • Всего моделей: {len(results_summary)}")
         print(f"   • Успешно оценено: {len(successful)}")
         print(f"   • Пропущено из-за ошибок: {len(failed)}")
+        print(f"   • Прервано по времени: {len(timeout_models)}")
         print()
+        
+        if timeout_models:
+            print(f"МОДЕЛИ, ПРЕРВАННЫЕ ИЗ-ЗА ПРЕВЫШЕНИЯ ВРЕМЕНИ ИНФЕРЕНСА:")
+            for summary in timeout_models:
+                timeout_reason = summary.get('timeout_reason', 'Превышен лимит времени')
+                result = summary.get('result', {})
+                total_samples = result.get('total_samples', 0)
+                total_count = result.get('total_count', 0)
+                print(f"   • {summary['model_key']}: {timeout_reason}")
+                if total_samples > 0:
+                    print(f"     - Обработано текстов: {total_samples}/{total_count}")
+            print()
         
         if successful:
             print(f"УСПЕШНО ОЦЕНЕННЫЕ МОДЕЛИ:")

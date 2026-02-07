@@ -11,6 +11,10 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 from config_loader import load_api_keys
 HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY = load_api_keys()
 
+# Конфигурации моделей загружаются через model_config_loader.py
+# Импортируем MODEL_CONFIGS из модуля загрузчика
+from model_config_loader import MODEL_CONFIGS
+
 # ============================================================================
 # Настройки датасета
 # ============================================================================
@@ -63,6 +67,10 @@ UNLABELED_CORPUS_PATH = "data/udobrenia_unlabeled.xlsx"
 # Путь к файлу конфигурации моделей
 MODELS_CONFIG_PATH = "models.yaml"
 
-# Конфигурации моделей загружаются через model_config_loader.py
-# Импортируем MODEL_CONFIGS из модуля загрузчика
-from model_config_loader import MODEL_CONFIGS
+# ============================================================================
+# Лимиты времени инференса
+# ============================================================================
+
+# Максимальное время инференса на одну модель (в минутах)
+# Если время превышено, инференс прерывается досрочно
+MAX_INFERENCE_TIME_MINUTES = 20
