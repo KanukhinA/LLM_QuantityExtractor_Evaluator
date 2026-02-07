@@ -312,11 +312,10 @@ class FileManager:
         
         # Добавляем информацию о режимах structured_output и outlines в название папки
         mode_suffixes = []
-        if structured_output:
-            if use_outlines:
-                mode_suffixes.append("outlines")
-            else:
-                mode_suffixes.append("structured")
+        if use_outlines:
+            mode_suffixes.append("outlines")
+        elif structured_output:
+            mode_suffixes.append("structured")
         
         if mode_suffixes:
             prompt_folder_name = f"{prompt_folder_name}_{'_'.join(mode_suffixes)}"
@@ -352,20 +351,16 @@ class FileManager:
         if "quality_metrics" in evaluation_result:
             evaluation_result_for_json["quality_metrics"] = evaluation_result["quality_metrics"]
         
-        # Метрики raw output
-        if "raw_output_metrics" in evaluation_result:
-            evaluation_result_for_json["raw_output_metrics"] = evaluation_result["raw_output_metrics"]
-        
-        # Информация о GPU и производительности
+        # Информация о GPU и производительности (перед ошибками)
         for key in ["gpu_info", "gpu_memory_after_load_gb", "gpu_memory_during_inference_gb", 
                     "gpu_memory_during_inference_max_gb", "gpu_memory_during_inference_min_gb",
                     "average_response_time_seconds", "api_model"]:
             if key in evaluation_result:
                 evaluation_result_for_json[key] = evaluation_result[key]
         
-        # Остальные поля
+        # Остальные поля (кроме raw_output_metrics, которые сохраняются отдельно)
         for key in evaluation_result:
-            if key not in evaluation_result_for_json:
+            if key not in evaluation_result_for_json and key != "raw_output_metrics":
                 evaluation_result_for_json[key] = evaluation_result[key]
         
         # Подготавливаем ошибки
@@ -409,6 +404,9 @@ class FileManager:
                     errors_by_text[text_idx]["prompt"] = error.get("prompt")
         
         evaluation_result_for_json["ошибки"] = list(errors_by_text.values())
+        
+        # Удаляем parsing_errors, так как они уже включены в объединенное поле "ошибки"
+        evaluation_result_for_json.pop("parsing_errors", None)
         
         metrics_path = self.build_path(prompt_dir, f"metrics_{model_name_for_file}_{timestamp}.json")
         self.save_json(evaluation_result_for_json, metrics_path)
@@ -588,18 +586,16 @@ class FileManager:
         if "quality_metrics" in evaluation_result:
             evaluation_result_for_json["quality_metrics"] = evaluation_result["quality_metrics"]
         
-        if "raw_output_metrics" in evaluation_result:
-            evaluation_result_for_json["raw_output_metrics"] = evaluation_result["raw_output_metrics"]
-        
-        # Информация о GPU и производительности
+        # Информация о GPU и производительности (перед ошибками)
         for key in ["gpu_info", "gpu_memory_after_load_gb", "gpu_memory_during_inference_gb", 
                     "gpu_memory_during_inference_max_gb", "gpu_memory_during_inference_min_gb",
                     "average_response_time_seconds", "api_model"]:
             if key in evaluation_result:
                 evaluation_result_for_json[key] = evaluation_result[key]
         
+        # Остальные поля (кроме raw_output_metrics, которые сохраняются отдельно)
         for key in evaluation_result:
-            if key not in evaluation_result_for_json:
+            if key not in evaluation_result_for_json and key != "raw_output_metrics":
                 evaluation_result_for_json[key] = evaluation_result[key]
         
         quality_metrics_for_json = evaluation_result_for_json.get("quality_metrics")
