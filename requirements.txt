@@ -8,8 +8,8 @@ google-genai>=0.2.0
 huggingface-hub>=0.16.0
 triton>=2.1.0  # Требуется для FP8 квантования (опционально, если недоступен - будет использована обычная загрузка)
 langgraph>=0.2.0
-mistral_common>=1.8.6
 outlines
+mistral_common>=1.8.6
 pyyaml>=6.0
 gspread>=5.0.0
 google-auth>=2.0.0
