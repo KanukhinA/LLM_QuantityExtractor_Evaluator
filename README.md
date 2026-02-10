@@ -664,7 +664,7 @@ python google_sheets_integration.py --results-dir results
 
 **Важно для Mistral 3 моделей:**
 - Требуется `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
-- Требуется `mistral-common>=2.10.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
+- Требуется `mistral-common>=1.8.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
 
 ### 6.2. API модели
 
@@ -1121,7 +1121,7 @@ pip install gspread google-auth
 
 **Для Mistral 3 моделей:**
 - `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
-- `mistral-common>=2.10.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
+- `mistral-common>=1.8.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
 
 ## 11. Справка по использованию
 
