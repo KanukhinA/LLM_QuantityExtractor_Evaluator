@@ -11,3 +11,9 @@ langgraph>=0.2.0
 mistral_common>=2.10.6
 outlines
 pyyaml>=6.0
+gspread>=5.0.0
+google-auth>=2.0.0
+
+# Опционально: Flash Attention 2 для ускорения и экономии VRAM у локальных моделей.
+# Установка: pip install flash-attn --no-build-isolation (нужны CUDA и совместимый компилятор; на Windows часто недоступен).
+# flash-attn

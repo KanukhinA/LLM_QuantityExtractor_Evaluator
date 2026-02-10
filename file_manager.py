@@ -349,7 +349,6 @@ class FileManager:
         
         # Информация о GPU и производительности (после validation_stats)
         for key in ["gpu_info", "gpu_memory_after_load_gb", "gpu_memory_during_inference_gb", 
-                    "gpu_memory_during_inference_max_gb", "gpu_memory_during_inference_min_gb",
                     "average_response_time_seconds", "api_model"]:
             if key in evaluation_result:
                 evaluation_result_for_json[key] = evaluation_result[key]
@@ -604,7 +603,6 @@ class FileManager:
         
         # Информация о GPU и производительности (после validation_stats)
         for key in ["gpu_info", "gpu_memory_after_load_gb", "gpu_memory_during_inference_gb", 
-                    "gpu_memory_during_inference_max_gb", "gpu_memory_during_inference_min_gb",
                     "average_response_time_seconds", "api_model"]:
             if key in evaluation_result:
                 evaluation_result_for_json[key] = evaluation_result[key]

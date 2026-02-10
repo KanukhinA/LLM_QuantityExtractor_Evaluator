@@ -7,7 +7,7 @@ import warnings
 import time
 from transformers import AutoTokenizer, AutoModelForCausalLM, Gemma3ForCausalLM, AutoProcessor, AutoModelForSeq2SeqLM, AutoModelForImageTextToText, T5ForConditionalGeneration, T5Tokenizer
 from typing import Tuple, Any, Optional
-from config import HF_TOKEN, GEMINI_API_KEY
+from config import HF_TOKEN, GEMINI_API_KEY, USE_FLASH_ATTENTION_2
 
 # Импорт для API моделей
 try:
@@ -22,6 +22,25 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
+
+
+def _get_flash_attn_kwargs() -> dict:
+    """
+    Возвращает kwargs для использования Flash Attention 2 при загрузке модели.
+    Если USE_FLASH_ATTENTION_2 включен и пакет flash-attn доступен, возвращает
+    {"attn_implementation": "flash_attention_2"}, иначе пустой словарь.
+    """
+    if not USE_FLASH_ATTENTION_2:
+        return {}
+    try:
+        import flash_attn  # noqa: F401  # type: ignore
+        return {"attn_implementation": "flash_attention_2"}
+    except ImportError:
+        warnings.warn(
+            "USE_FLASH_ATTENTION_2 включен, но flash-attn не установлен. "
+            "Установите: pip install flash-attn --no-build-isolation (требуется CUDA)."
+        )
+        return {}
 
 
 def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size_warning: Optional[str] = None) -> Tuple[Any, Any]:
@@ -77,7 +96,8 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
             model_name,
             device_map="auto",
             torch_dtype=torch.bfloat16,
-            token=HF_TOKEN
+            token=HF_TOKEN,
+            **_get_flash_attn_kwargs()
         ).eval()  # Переводим в режим eval для инференса
         elapsed = time.time() - start_time
         if elapsed > 60:
@@ -135,7 +155,8 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None) -> Tuple
             model_name,
             device_map="auto",
             dtype=torch.bfloat16,
-            token=HF_TOKEN
+            token=HF_TOKEN,
+            **_get_flash_attn_kwargs()
         )
         elapsed = time.time() - start_time
         if elapsed > 60:
@@ -185,7 +206,8 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     model_kwargs = {
         "device_map": device_map,
         "token": HF_TOKEN,
-        "trust_remote_code": trust_remote_code
+        "trust_remote_code": trust_remote_code,
+        **_get_flash_attn_kwargs()
     }
     
     # Преобразуем dtype/torch_dtype в нужный формат
@@ -294,7 +316,8 @@ def load_qwen_3_32b() -> Tuple[Any, Any]:
             torch_dtype="auto",
             device_map="auto",
             token=HF_TOKEN,
-            trust_remote_code=True
+            trust_remote_code=True,
+            **_get_flash_attn_kwargs()
         )
         elapsed = time.time() - start_time
         print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
@@ -385,7 +408,8 @@ def load_codegemma_7b() -> Tuple[Any, Any]:
             device_map="auto",
             torch_dtype=torch.bfloat16,
             token=HF_TOKEN,
-            trust_remote_code=True
+            trust_remote_code=True,
+            **_get_flash_attn_kwargs()
         )
         elapsed = time.time() - start_time
         print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
@@ -585,7 +609,8 @@ def load_phi_4_mini_instruct() -> Tuple[Any, Any]:
         device_map="auto",
         dtype=torch.bfloat16,
         token=HF_TOKEN,
-        trust_remote_code=True
+        trust_remote_code=True,
+        **_get_flash_attn_kwargs()
     )
     return model, tokenizer
 

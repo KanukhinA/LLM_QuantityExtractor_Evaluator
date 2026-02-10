@@ -125,7 +125,7 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 **Другие настройки:**
 - `GROUND_TRUTH_PATH` - путь к файлу с ground truth (опционально, по умолчанию используется колонка `json_parsed` из датасета)
 - `OUTPUT_DIR` - директория для сохранения результатов (по умолчанию `results/`)
-- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"DETAILED_INSTR_ZEROSHOT"`):
+- `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"DETAILED_INSTR_ZEROSHOT_BASELINE"`):
   - `"DETAILED_INSTR_ZEROSHOT_BASELINE"` - детальный zero-shot промпт без примера (baseline)
   - `"DETAILED_INSTR_ONESHOT"` - детальный промпт с примером текста и ответа (One-shot prompt)
   - `"MINIMAL_FIVESHOT_PROMPT"` - минималистичный few-shot промпт с 5 примерами
@@ -134,8 +134,10 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
   
   **Настройка в `config.py`:**
   ```python
-  PROMPT_TEMPLATE_NAME = "DETAILED_INSTR_ZEROSHOT"  # или любая другая переменная из prompt_config.py
+  PROMPT_TEMPLATE_NAME = "DETAILED_INSTR_ZEROSHOT_BASELINE"  # или любая другая переменная из prompt_config.py
   ```
+
+- **Flash Attention 2 для локальных моделей:** по умолчанию включено (`USE_FLASH_ATTENTION_2=1`). При установленном пакете `flash-attn` все поддерживаемые локальные модели загружаются с `attn_implementation="flash_attention_2"` (экономия VRAM, ускорение). Если `flash-attn` не установлен, выводится предупреждение и модели загружаются без Flash Attention 2. Отключить: `set USE_FLASH_ATTENTION_2=0` (Windows) / `export USE_FLASH_ATTENTION_2=0` (Linux). Установка flash-attn: `pip install flash-attn --no-build-isolation` (требуется CUDA; на Windows сборка часто недоступна, рекомендуется Linux/WSL).
 
 **Приоритет загрузки API ключей:**
 1. Файл `config_secrets.py` (если существует)
@@ -160,6 +162,7 @@ SmallLLMEvaluator/
 ├── gemini_analyzer.py      # Интеграция с Gemini API для анализа ошибок
 ├── gpu_info.py             # Функции для получения информации о GPU
 ├── config.py               # Конфигурация проекта
+├── config_loader.py        # Загрузка API ключей (config_secrets.py или переменные окружения)
 ├── prompt_config.py        # Конфигурация промптов для агентов
 ├── multi_agent_graph.py    # Мультиагентная система на LangGraph
 ├── few_shot_extractor.py   # Модуль для извлечения few-shot примеров на основе Dual-Level Introspective Uncertainty
@@ -568,11 +571,76 @@ python main.py qwen-2.5-3b
 python run_all_models.py
 ```
 
+### 5.7. Интеграция с Google Таблицами
+
+Модуль `google_sheets_integration.py` позволяет автоматически загружать F1 метрики из `metrics.json` файлов в Google Таблицы для удобного анализа и сравнения результатов.
+
+**Возможности:**
+- Автоматический поиск всех `metrics.json` файлов в структуре результатов
+- Извлечение F1 метрик для групп "массовая доля" и "прочее"
+- Формирование таблицы: модели по вертикали, методы по горизонтали
+- Загрузка данных в Google Таблицы через Google Sheets API
+- Экспорт данных в CSV для локального использования
+
+**Структура таблицы:**
+- **По вертикали**: alias моделей (model_key)
+- **По горизонтали**: методы (название папки = prompt_template или multi_agent_mode)
+- **Значения**: F1 метрики для выбранной группы ("массовая доля" или "прочее")
+
+**Настройка Google Sheets API:**
+
+1. Создайте проект в Google Cloud Console: https://console.cloud.google.com/
+2. Включите Google Sheets API и Google Drive API
+3. Создайте Service Account:
+   - Перейдите в "IAM & Admin" → "Service Accounts"
+   - Создайте новый Service Account
+   - Скачайте JSON файл с credentials
+4. Поделитесь Google Таблицей с email из Service Account (найдите в JSON файле, поле `client_email`)
+
+**Примеры использования:**
+
+```bash
+# Экспорт в CSV файл (без настройки Google API)
+python google_sheets_integration.py --export-csv results_f1.csv --group "массовая доля"
+
+# Экспорт метрик "прочее" в CSV
+python google_sheets_integration.py --export-csv results_f1_prochee.csv --group "прочее"
+
+# Загрузка в Google Таблицу
+python google_sheets_integration.py \
+    --credentials path/to/credentials.json \
+    --spreadsheet-id YOUR_SPREADSHEET_ID \
+    --worksheet "F1 Scores" \
+    --group "массовая доля"
+
+# Просмотр собранных данных без экспорта
+python google_sheets_integration.py --results-dir results
+```
+
+**Аргументы командной строки:**
+
+Обязательные (для загрузки в Google Таблицу):
+- `--credentials` - путь к JSON файлу с credentials для Google API
+- `--spreadsheet-id` - ID Google Таблицы (из URL: `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`)
+
+Опциональные:
+- `--results-dir` - путь к директории с результатами (по умолчанию: `results`)
+- `--worksheet` - название листа в таблице (по умолчанию: `F1 Scores`)
+- `--group` - группа метрик для экспорта: `"массовая доля"` или `"прочее"` (по умолчанию: `"массовая доля"`)
+- `--export-csv` - экспортировать в CSV файл (укажите путь к файлу)
+
+**Примечания:**
+- Модуль автоматически определяет метод из структуры папок: `results/{model_key}/{method_folder}/metrics_*.json`
+- Если для одной модели и метода найдено несколько файлов, используется самый свежий (по timestamp)
+- Для работы с Google Таблицами требуется установить зависимости: `pip install gspread google-auth`
+
 ## 6. Доступные модели
 
 Проект поддерживает следующие модели. Полный список моделей и их конфигураций можно найти в файле `models.yaml`:
 
 ### 6.1. Локальные модели (загружаются с Hugging Face)
+
+Для локальных моделей по умолчанию используется Flash Attention 2, если установлен пакет `flash-attn` (см. раздел 3.3 и 10.2).
 
 **Gemma модели:**
 - **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
@@ -596,7 +664,7 @@ python run_all_models.py
 
 **Важно для Mistral 3 моделей:**
 - Требуется `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
-- Требуется `mistral-common>=1.8.6`: `pip install mistral-common --upgrade`
+- Требуется `mistral-common>=2.10.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
 
 ### 6.2. API модели
 
@@ -862,16 +930,17 @@ results/
 
 ### 9.1. Добавление локальной модели
 
-1. **Добавьте функцию загрузки в `model_loaders.py`** (если нужна специализированная):
+1. **Добавьте функцию загрузки в `model_loaders.py`** (если нужна специализированная). Для совместимости с Flash Attention 2 передайте `**_get_flash_attn_kwargs()` в `from_pretrained` (при включённой настройке и установленном `flash-attn` подставится `attn_implementation="flash_attention_2"`):
 ```python
 def load_your_model() -> Tuple[Any, Any]:
     tokenizer = AutoTokenizer.from_pretrained("model/name", token=HF_TOKEN)
     model = AutoModelForCausalLM.from_pretrained(
         "model/name",
         device_map="auto",
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         token=HF_TOKEN,
-        trust_remote_code=True
+        trust_remote_code=True,
+        **_get_flash_attn_kwargs()
     )
     return model, tokenizer
 ```
@@ -1020,6 +1089,7 @@ python main.py your-model-key --structured-output
 
 - CUDA-совместимая GPU (рекомендуется 8GB+ VRAM)
 - Hugging Face Token (`HF_TOKEN`)
+- **Flash Attention 2 (опционально, по умолчанию включено):** для ускорения и экономии VRAM установите `pip install flash-attn --no-build-isolation`. Требуется CUDA и совместимый компилятор (обычно доступно в Linux/WSL; на Windows часто недоступно). Если пакет не установлен, локальные модели работают без Flash Attention 2 (выводится предупреждение). Отключить использование: `set USE_FLASH_ATTENTION_2=0` / `export USE_FLASH_ATTENTION_2=0`.
 
 ### 10.3. Требования для API моделей
 
@@ -1028,11 +1098,30 @@ python main.py your-model-key --structured-output
 - Библиотека `google-genai` (устанавливается через `pip install google-genai`) для моделей Gemma 3
 - Библиотека `openai` (устанавливается через `pip install openai`) для моделей через OpenRouter
 
-### 10.4. Специальные требования
+### 10.4. Требования для интеграции с Google Таблицами
+
+Для использования модуля `google_sheets_integration.py`:
+- `gspread>=5.0.0` - библиотека для работы с Google Sheets API
+- `google-auth>=2.0.0` - библиотека для аутентификации в Google API
+- Service Account в Google Cloud Console с включенными Google Sheets API и Google Drive API
+- JSON файл с credentials от Service Account
+
+**Установка зависимостей:**
+```bash
+pip install gspread google-auth
+```
+
+**Настройка Service Account:**
+1. Создайте проект в Google Cloud Console: https://console.cloud.google.com/
+2. Включите Google Sheets API и Google Drive API
+3. Создайте Service Account и скачайте JSON файл с credentials
+4. Поделитесь Google Таблицей с email из Service Account
+
+### 10.5. Специальные требования
 
 **Для Mistral 3 моделей:**
 - `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
-- `mistral-common>=1.8.6`: `pip install mistral-common --upgrade`
+- `mistral-common>=2.10.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
 
 ## 11. Справка по использованию
 

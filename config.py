@@ -3,6 +3,22 @@
 """
 import os
 
+# Убеждаемся, что есть доступная временная директория (избегаем FileNotFoundError в tempfile).
+# Ошибка "No usable temporary directory" чаще из-за отсутствия/прав каталога; реже — из-за нехватки места на диске или (если /tmp в RAM) нехватки RAM.
+_dirlist = os.environ.get("TMPDIR") or os.environ.get("TEMP") or os.environ.get("TMP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp")
+if not os.path.isdir(_dirlist):
+    try:
+        os.makedirs(_dirlist, exist_ok=True)
+    except OSError:
+        pass
+if os.path.isdir(_dirlist) and os.access(_dirlist, os.W_OK):
+    if "TMPDIR" not in os.environ:
+        os.environ["TMPDIR"] = _dirlist
+    if "TEMP" not in os.environ:
+        os.environ["TEMP"] = _dirlist
+    if "TMP" not in os.environ:
+        os.environ["TMP"] = _dirlist
+
 # Подавляем предупреждение о symlinks на Windows
 # Должно быть установлено до импорта model_loaders
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -74,3 +90,13 @@ MODELS_CONFIG_PATH = "models.yaml"
 # Максимальное время инференса на одну модель (в минутах)
 # Если время превышено, инференс прерывается досрочно
 MAX_INFERENCE_TIME_MINUTES = 20
+
+# ============================================================================
+# Flash Attention 2 для локальных моделей
+# ============================================================================
+
+# Использовать Flash Attention 2 при загрузке локальных моделей (экономия VRAM, ускорение).
+# По умолчанию включено; применяется только если установлен flash-attn (иначе предупреждение и обычная загрузка).
+# Требуется: pip install flash-attn --no-build-isolation (CUDA, Linux/WSL; на Windows может быть недоступен).
+# Отключить: set USE_FLASH_ATTENTION_2=0
+USE_FLASH_ATTENTION_2 = os.environ.get("USE_FLASH_ATTENTION_2", "1").lower() in ("1", "true", "yes")

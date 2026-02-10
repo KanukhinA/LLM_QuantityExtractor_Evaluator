@@ -926,18 +926,12 @@ class ModelEvaluator:
         if is_api_model:
             # Для API моделей не измеряем память
             memory_during_inference_avg = 0.0
-            memory_during_inference_max = 0.0
-            memory_during_inference_min = 0.0
         elif memory_samples:
             memory_during_inference_avg = sum(memory_samples) / len(memory_samples)
-            memory_during_inference_max = max(memory_samples)
-            memory_during_inference_min = min(memory_samples)
         else:
             # Fallback: измеряем сейчас, если не было измерений
             current_memory = get_gpu_memory_usage()
             memory_during_inference_avg = current_memory["allocated"]
-            memory_during_inference_max = current_memory["allocated"]
-            memory_during_inference_min = current_memory["allocated"]
         
         # Для совместимости сохраняем среднее значение как основное
         memory_during_inference = {"allocated": memory_during_inference_avg}
@@ -1002,9 +996,7 @@ class ModelEvaluator:
         else:
             print(f"💾 ИСПОЛЬЗОВАНИЕ ПАМЯТИ:")
             print(f"   • После загрузки модели: {memory_after_load['allocated']:.2f} GB")
-            print(f"   • Во время инференса (среднее): {memory_during_inference_avg:.2f} GB")
-            print(f"   • Во время инференса (максимум): {memory_during_inference_max:.2f} GB")
-            print(f"   • Во время инференса (минимум): {memory_during_inference_min:.2f} GB")
+            print(f"   • Во время инференса: {memory_during_inference_avg:.2f} GB")
             print(f"   • Изменение от загрузки: {memory_during_inference_avg - memory_after_load['allocated']:+.2f} GB")
             print()
         
@@ -1254,8 +1246,6 @@ class ModelEvaluator:
             "gpu_info": gpu_info_before if not is_api_model else {"api": True},
             "gpu_memory_after_load_gb": memory_after_load["allocated"] if not is_api_model else 0.0,
             "gpu_memory_during_inference_gb": memory_during_inference_avg if not is_api_model else 0.0,
-            "gpu_memory_during_inference_max_gb": memory_during_inference_max if not is_api_model else 0.0,
-            "gpu_memory_during_inference_min_gb": memory_during_inference_min if not is_api_model else 0.0,
             "api_model": is_api_model,
             "average_response_time_seconds": avg_speed,
             "hyperparameters": hyperparameters_to_save,
