@@ -270,8 +270,8 @@ def load_qwen_2_5_4b() -> Tuple[Any, Any]:
 
 
 def load_qwen_3_4b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen3-4B-Instruct с bfloat16"""
-    return load_standard_model("Qwen/Qwen3-4B-Instruct", dtype="bfloat16")
+    """Загрузка Qwen/Qwen3-4B-Instruct-2507 с bfloat16"""
+    return load_standard_model("Qwen/Qwen3-4B-Instruct-2507", dtype="bfloat16")
 
 
 def load_qwen_3_8b() -> Tuple[Any, Any]:

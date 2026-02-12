@@ -39,7 +39,7 @@ models:
       dtype: "bfloat16"
 
   qwen-3-4b:
-    name: "Qwen/Qwen3-4B-Instruct"
+    name: "Qwen/Qwen3-4B-Instruct-2507"
     hyperparameters:
       max_new_tokens: 512
       do_sample: false

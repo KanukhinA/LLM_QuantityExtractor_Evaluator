@@ -777,7 +777,7 @@ class ModelEvaluator:
             self.clear_memory()
             return {
                 "status": "error",
-                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message[:500]}",
+                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}",
                 "parsing_errors": parsing_errors,
             }
         except KeyboardInterrupt:

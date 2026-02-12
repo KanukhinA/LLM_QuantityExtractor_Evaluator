@@ -10,6 +10,7 @@ triton>=2.1.0  # Требуется для FP8 квантования (опци�
 langgraph>=0.2.0
 outlines
 mistral_common>=1.8.6
+pydantic>=2.0.0
 pyyaml>=6.0
 gspread>=5.0.0
 google-auth>=2.0.0
