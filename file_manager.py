@@ -313,7 +313,7 @@ class FileManager:
         # Добавляем информацию о режимах structured_output и outlines в название папки
         mode_suffixes = []
         if use_outlines:
-            mode_suffixes.append("OUTLIENS")
+            mode_suffixes.append("OUTLINES")
         elif structured_output:
             mode_suffixes.append("STRUCTURED")
         
