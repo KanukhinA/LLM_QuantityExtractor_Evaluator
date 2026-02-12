@@ -28,6 +28,15 @@ except ImportError:
     analyze_errors_with_gemini = None
 
 
+class InferenceCriticalFailure(Exception):
+    """Выбрасывается при исчерпании всех попыток генерации на одном примере; оценку модели завершаем досрочно."""
+    def __init__(self, message: str, text_index: int, num_retries: int):
+        self.message = message
+        self.text_index = text_index
+        self.num_retries = num_retries
+        super().__init__(message)
+
+
 class ModelEvaluator:
     """
     Класс для оценки LLM моделей на датасете
@@ -215,10 +224,9 @@ class ModelEvaluator:
                 if attempt < num_retries - 1:
                     time.sleep(4 + attempt * 2)
                 else:
-                    # Если все попытки исчерпаны, сохраняем детальную информацию об ошибке
+                    # Если все попытки исчерпаны — досрочно завершаем оценку этой модели
                     import traceback
                     traceback_str = traceback.format_exc()
-                    # Для API моделей сохраняем полный traceback
                     traceback_display = traceback_str if is_api_model else traceback_str[:200]
                     parsing_errors.append({
                         "text_index": text_index,
@@ -226,6 +234,7 @@ class ModelEvaluator:
                         "error": f"Критическая ошибка генерации после {num_retries} попыток: {error_msg}. Traceback: {traceback_display}",
                         "response": ""
                     })
+                    raise InferenceCriticalFailure(error_msg, text_index, num_retries)
         
         return None, 0, error_msg
     
@@ -459,7 +468,8 @@ class ModelEvaluator:
                       verbose: bool = False,
                       use_gemini_analysis: bool = False,
                       gemini_api_key: str = None,
-                      model_key: str = None) -> Dict[str, Any]:
+                      model_key: str = None,
+                      stop_all_on_interrupt: bool = False) -> Dict[str, Any]:
         """
         Оценивает модель на датасете
         
@@ -757,6 +767,19 @@ class ModelEvaluator:
             self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
             last_processed_index = i
         
+        except InferenceCriticalFailure as e:
+            print(f"\n\n{'='*80}")
+            print(f"ДОСРОЧНОЕ ЗАВЕРШЕНИЕ ОЦЕНКИ МОДЕЛИ")
+            print(f"{'='*80}")
+            print(f"Не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}.")
+            print(f"Ошибка: {e.message[:300]}{'...' if len(e.message) > 300 else ''}")
+            print(f"{'='*80}\n")
+            self.clear_memory()
+            return {
+                "status": "error",
+                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message[:500]}",
+                "parsing_errors": parsing_errors,
+            }
         except KeyboardInterrupt:
             interrupted = True
             last_processed_index = i if 'i' in locals() else -1
@@ -767,9 +790,18 @@ class ModelEvaluator:
             print(f"Последний обработанный индекс: {last_processed_index + 1}")
             print()
             
+            menu_lines = [
+                "Выберите действие:",
+                "  1 - Сохранить промежуточные результаты и завершить",
+                "  2 - Продолжить обработку",
+                "  3 - Завершить без сохранения",
+            ]
+            if stop_all_on_interrupt:
+                menu_lines.append("  4 - Прервать оценку всех моделей (выйти из run_all_models)")
+            menu_prompt = "\n".join(menu_lines) + "\nВаш выбор (1/2/3" + ("/4" if stop_all_on_interrupt else "") + "): "
             while True:
                 try:
-                    choice = input("Выберите действие:\n  1 - Сохранить промежуточные результаты и завершить\n  2 - Продолжить обработку\n  3 - Завершить без сохранения\nВаш выбор (1/2/3): ").strip()
+                    choice = input(menu_prompt).strip()
                     
                     if choice == "1":
                         print("\n💾 Сохранение промежуточных результатов...")
@@ -885,6 +917,19 @@ class ModelEvaluator:
                                 
                                 # Выводим прогресс
                                 self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
+                        except InferenceCriticalFailure as e:
+                            print(f"\n\n{'='*80}")
+                            print(f"ДОСРОЧНОЕ ЗАВЕРШЕНИЕ ОЦЕНКИ МОДЕЛИ")
+                            print(f"{'='*80}")
+                            print(f"Не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}.")
+                            print(f"Ошибка: {e.message[:300]}{'...' if len(e.message) > 300 else ''}")
+                            print(f"{'='*80}\n")
+                            self.clear_memory()
+                            return {
+                                "status": "error",
+                                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message[:500]}",
+                                "parsing_errors": parsing_errors,
+                            }
                         except KeyboardInterrupt:
                             print(f"\n\n⚠️  Повторное прерывание. Сохранение промежуточных результатов...")
                             interrupted = True
@@ -897,8 +942,11 @@ class ModelEvaluator:
                             "message": "Обработка прервана пользователем без сохранения",
                             "processed_count": len(results)
                         }
+                    elif stop_all_on_interrupt and choice == "4":
+                        print("\n❌ Прерывание оценки всех моделей...")
+                        raise KeyboardInterrupt
                     else:
-                        print("Пожалуйста, введите 1, 2 или 3")
+                        print("Пожалуйста, введите 1, 2" + (", 3, 4" if stop_all_on_interrupt else " или 3"))
                 except KeyboardInterrupt:
                     print("\n\n⚠️  Повторное прерывание. Сохранение промежуточных результатов...")
                     interrupted = True

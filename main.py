@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 
 
-def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool = True, verbose: bool = False):
+def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool = True, verbose: bool = False, stop_all_on_interrupt: bool = False):
     """
     Запускает оценку модели
     
@@ -37,6 +37,7 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         model_key: ключ модели из конфигурации (alias, используется для имен файлов)
         use_gemini: использовать ли анализ через Gemini API
         verbose: если True, выводит подробную информацию (текст и ответы) в консоль
+        stop_all_on_interrupt: если True, при Ctrl+C показывается опция "Прервать оценку всех моделей"
     """
     evaluator = ModelEvaluator(
         dataset_path=find_dataset_path(),
@@ -59,7 +60,8 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         verbose=verbose,  # Передаем флаг verbose
         use_gemini_analysis=use_gemini,
         gemini_api_key=GEMINI_API_KEY if use_gemini else None,
-        model_key=model_key  # Передаем alias модели для структуры папок
+        model_key=model_key,  # Передаем alias модели для структуры папок
+        stop_all_on_interrupt=stop_all_on_interrupt
     )
     
     if result.get("status") == "error":

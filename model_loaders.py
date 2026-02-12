@@ -462,7 +462,7 @@ def generate_gemma(
 
         try:
             # Оборачиваем HF модель/токенизатор в outlines model
-            outlines_model = outlines.models.transformers(model, tokenizer)
+            outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
             generator = outlines.generate.json(outlines_model, response_schema)
             generated = generator(prompt)
 
@@ -714,7 +714,7 @@ def generate_standard(
 
         try:
             # Оборачиваем HF модель/токенизатор в outlines model
-            outlines_model = outlines.models.transformers(model, tokenizer)
+            outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
             generator = outlines.generate.json(outlines_model, response_schema)
             generated = generator(prompt)
 
@@ -804,7 +804,7 @@ def generate_qwen(
 
         try:
             # Оборачиваем HF модель/токенизатор в outlines model
-            outlines_model = outlines.models.transformers(model, tokenizer)
+            outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
             generator = outlines.generate.json(outlines_model, response_schema)
             generated = generator(prompt)
 

@@ -100,7 +100,7 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
             if use_outlines:
                 config["hyperparameters"]["use_outlines"] = True
             
-            result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False)  # Короткий вывод для run_all_models.py
+            result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False, stop_all_on_interrupt=True)  # Короткий вывод; при Ctrl+C — опция прервать все модели
             
             if result.get("status") != "error":
                 # Проверяем, была ли модель прервана по времени
