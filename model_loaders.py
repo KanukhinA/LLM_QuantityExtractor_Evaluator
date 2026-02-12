@@ -455,6 +455,7 @@ def generate_gemma(
     if use_outlines and structured_output and response_schema is not None:
         try:
             import outlines  # type: ignore
+            from outlines import generate  # type: ignore
         except Exception as e:
             raise ImportError(
                 "Библиотека outlines не установлена. Установите: pip install outlines"
@@ -463,7 +464,7 @@ def generate_gemma(
         try:
             # Оборачиваем HF модель/токенизатор в outlines model
             outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-            generator = outlines.generate.json(outlines_model, response_schema)
+            generator = generate.json(outlines_model, response_schema)
             generated = generator(prompt)
 
             # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
@@ -707,6 +708,7 @@ def generate_standard(
     if use_outlines and structured_output and response_schema is not None:
         try:
             import outlines  # type: ignore
+            from outlines import generate  # type: ignore
         except Exception as e:
             raise ImportError(
                 "Библиотека outlines не установлена. Установите: pip install outlines"
@@ -715,7 +717,7 @@ def generate_standard(
         try:
             # Оборачиваем HF модель/токенизатор в outlines model
             outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-            generator = outlines.generate.json(outlines_model, response_schema)
+            generator = generate.json(outlines_model, response_schema)
             generated = generator(prompt)
 
             # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
@@ -797,6 +799,7 @@ def generate_qwen(
     if use_outlines and structured_output and response_schema is not None:
         try:
             import outlines  # type: ignore
+            from outlines import generate  # type: ignore
         except Exception as e:
             raise ImportError(
                 "Библиотека outlines не установлена. Установите: pip install outlines"
@@ -805,7 +808,7 @@ def generate_qwen(
         try:
             # Оборачиваем HF модель/токенизатор в outlines model
             outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-            generator = outlines.generate.json(outlines_model, response_schema)
+            generator = generate.json(outlines_model, response_schema)
             generated = generator(prompt)
 
             # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
