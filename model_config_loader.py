@@ -55,9 +55,10 @@ def load_model_configs():
         if 'load_func' in model_config:
             load_func_name = model_config['load_func']
         else:
-            # По имени модели выбираем загрузчик (только для локальных — API не трогаем)
+            # По имени модели и ключу выбираем загрузчик (только для локальных — API не трогаем)
             name = (model_config.get('name') or '').lower()
-            if not is_api_model and 'gemma-3' in name:
+            key_lower = model_key.lower()
+            if not is_api_model and ('gemma-3' in key_lower or 'gemma-3' in name):
                 load_func_name = 'load_gemma_3'
             elif not is_api_model and ('mistralai' in name or 'ministral' in name):
                 load_func_name = 'load_mistral_3'

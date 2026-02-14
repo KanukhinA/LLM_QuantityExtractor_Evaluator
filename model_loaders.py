@@ -53,13 +53,6 @@ def _load_causal_4bit(
     Загрузка causal LM в 4-bit (nf4) через BitsAndBytes. device_map="auto" распределяет по устройствам сам.
     """
     from transformers import BitsAndBytesConfig
-    name_lower = (model_name or "").lower()
-    cls_name = getattr(model_class, "__name__", "")
-    if "gemma" in name_lower and "mistral" in cls_name.lower():
-        model_class = Gemma3ForCausalLM
-    elif ("mistralai/" in name_lower or "ministral" in name_lower) and "gemma" in cls_name.lower():
-        from transformers import Mistral3ForConditionalGeneration
-        model_class = Mistral3ForConditionalGeneration
     print(f"   Загрузка токенизатора {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
@@ -172,7 +165,7 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
 def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """
     Универсальная функция загрузки моделей Mistral 3 через Mistral3ForConditionalGeneration.
-    Используется для всех Mistral 3 моделей.
+    Используется только для репозиториев mistralai/Ministral-*.
     
     ВАЖНО: 
     - Требуется transformers>=4.50.0.dev0: pip install git+https://github.com/huggingface/transformers
@@ -186,6 +179,11 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     Returns:
         (model, tokenizer)
     """
+    name_lower = (model_name or "").lower()
+    if "mistralai" not in name_lower and "ministral" not in name_lower:
+        if "gemma-3" in name_lower:
+            return load_gemma_3(model_name, hyperparameters=hyperparameters)
+        return load_standard_model(model_name, hyperparameters=hyperparameters)
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         from transformers import Mistral3ForConditionalGeneration
