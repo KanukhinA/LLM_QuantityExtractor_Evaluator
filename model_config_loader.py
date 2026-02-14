@@ -2,6 +2,7 @@
 Загрузчик конфигураций моделей из YAML файла
 """
 import os
+import inspect
 import yaml
 
 
@@ -137,7 +138,13 @@ def load_model_configs():
                 _hp = hyperparameters
                 _name = model_config["name"]
                 # Загрузчики с именем модели из конфига (не из сигнатуры)
-                if load_func_name in ("load_gemma_3", "load_mistral_3"):
+                # Защита: если у функции первый аргумент model_name — передаём (name, hp), иначе один hp
+                try:
+                    sig = inspect.signature(raw_load)
+                    first_param = next(iter(sig.parameters), None)
+                except Exception:
+                    first_param = None
+                if load_func_name in ("load_gemma_3", "load_mistral_3") or first_param == "model_name":
                     load_func = (lambda name, hp: lambda: raw_load(name, hyperparameters=hp))(_name, _hp)
                 else:
                     load_func = (lambda h: lambda: raw_load(h))(_hp)
