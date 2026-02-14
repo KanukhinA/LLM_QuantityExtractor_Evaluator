@@ -293,120 +293,50 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     
     return model, tokenizer
 
-def load_gemma_2_2b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_gemma_2_2b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка google/gemma-2-2b-it (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_standard_model("google/gemma-2-2b-it", dtype="bfloat16", device_map="cuda", hyperparameters=hyperparameters)
+    name = model_name or "google/gemma-2-2b-it"
+    return load_standard_model(name, dtype="bfloat16", device_map="cuda", hyperparameters=hyperparameters)
 
 
-def load_ministral_3_3b_reasoning_2512(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512", hyperparameters=hyperparameters)
-
-
-def load_mistral_3_8b_instruct(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_mistral_3_8b_instruct(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка mistralai/Ministral-3-8B-Instruct-2512 (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_mistral_3("mistralai/Ministral-3-8B-Instruct-2512", vram_warning="Модель требует ~16GB VRAM для полной загрузки", hyperparameters=hyperparameters)
+    name = model_name or "mistralai/Ministral-3-8B-Instruct-2512"
+    return load_mistral_3(name, vram_warning="Модель требует ~16GB VRAM для полной загрузки", hyperparameters=hyperparameters)
 
 
-def load_mistral_3_14b_instruct(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_mistral_3_14b_instruct(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка mistralai/Ministral-3-14B-Instruct-2512 (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_mistral_3("mistralai/Ministral-3-14B-Instruct-2512", vram_warning="Модель требует ~28GB VRAM для полной загрузки", hyperparameters=hyperparameters)
+    name = model_name or "mistralai/Ministral-3-14B-Instruct-2512"
+    return load_mistral_3(name, vram_warning="Модель требует ~28GB VRAM для полной загрузки", hyperparameters=hyperparameters)
 
 
-def load_mistral_3_3b_reasoning(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_mistral_3_3b_reasoning(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512", hyperparameters=hyperparameters)
+    name = model_name or "mistralai/Ministral-3-3B-Reasoning-2512"
+    return load_mistral_3(name, hyperparameters=hyperparameters)
 
-def load_qwen_2_5_1_5b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen2.5-1.5B-Instruct (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_standard_model("Qwen/Qwen2.5-1.5B-Instruct", dtype="float16", hyperparameters=hyperparameters)
-
-
-def load_qwen_2_5_3b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_qwen_2_5_3b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen2.5-3B-Instruct (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_standard_model("Qwen/Qwen2.5-3B-Instruct", dtype="bfloat16", hyperparameters=hyperparameters)
+    name = model_name or "Qwen/Qwen2.5-3B-Instruct"
+    return load_standard_model(name, dtype="bfloat16", hyperparameters=hyperparameters)
 
 
-def load_qwen_2_5_4b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen2.5-4B-Instruct (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_standard_model("Qwen/Qwen2.5-4B-Instruct", dtype="bfloat16", hyperparameters=hyperparameters)
-
-
-def load_qwen_3_4b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_qwen_3_4b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen3-4B-Instruct-2507 (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_standard_model("Qwen/Qwen3-4B-Instruct-2507", dtype="bfloat16", hyperparameters=hyperparameters)
+    name = model_name or "Qwen/Qwen3-4B-Instruct-2507"
+    return load_standard_model(name, dtype="bfloat16", hyperparameters=hyperparameters)
 
 
-def load_qwen_3_8b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_qwen_3_8b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка Qwen/Qwen3-8B (при torch_dtype nf4/4bit — 4-bit)."""
-    return load_standard_model("Qwen/Qwen3-8B", torch_dtype="auto", hyperparameters=hyperparameters)
+    name = model_name or "Qwen/Qwen3-8B"
+    return load_standard_model(name, torch_dtype="auto", hyperparameters=hyperparameters)
 
 
-def load_qwen_3_32b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen3-32B (при torch_dtype nf4/4bit — 4-bit)."""
-    model_id = "Qwen/Qwen3-32B"
-    hp = hyperparameters or {}
-    if hp.get("torch_dtype") in ("nf4", "4bit"):
-        return _load_causal_4bit(model_id, AutoModelForCausalLM, hyperparameters)
-    print(f"   Загрузка токенизатора Qwen/Qwen3-32B...")
-    print(f"   ⚠️ Примечание: Модель требует значительный объем VRAM (~64GB+ для полной загрузки)")
-    print(f"   (это может занять некоторое время при первом запуске)")
-    
-    try:
-        start_time = time.time()
-        tokenizer = AutoTokenizer.from_pretrained(
-            "Qwen/Qwen3-32B",
-            token=HF_TOKEN,
-            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
-        )
-        elapsed = time.time() - start_time
-        print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки токенизатора: {e}")
-        print(f"   Возможные причины:")
-        print(f"     - Медленное интернет-соединение")
-        print(f"     - Проблемы с HuggingFace серверами")
-        print(f"     - Неверный или истекший HF_TOKEN")
-        print(f"   Попробуйте:")
-        print(f"     - Проверить интернет-соединение")
-        print(f"     - Проверить HF_TOKEN в config_secrets.py")
-        print(f"     - Увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
-        raise
-    
-    print(f"   Загрузка модели Qwen/Qwen3-32B...")
-    print(f"   ⚠️ Это может занять значительное время из-за размера модели (~32B параметров)")
-    try:
-        start_time = time.time()
-        model = AutoModelForCausalLM.from_pretrained(
-            "Qwen/Qwen3-32B",
-            torch_dtype="auto",
-            device_map="auto",
-            token=HF_TOKEN,
-            trust_remote_code=True,
-            **_get_flash_attn_kwargs()
-        )
-        elapsed = time.time() - start_time
-        print(f"   ✓ Модель загружена за {elapsed:.1f}с ({elapsed/60:.1f} минут)")
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки модели: {e}")
-        print(f"   Возможные причины:")
-        print(f"     - Недостаточно VRAM (модель требует ~64GB+ для полной загрузки)")
-        print(f"     - Медленное интернет-соединение")
-        print(f"     - Проблемы с HuggingFace серверами")
-        print(f"   Рекомендации:")
-        print(f"     - Используйте квантизацию (4-bit или 8-bit) для уменьшения требований к памяти")
-        print(f"     - Рассмотрите использование API версии: qwen-3-32b-api")
-        print(f"     - Проверьте доступную VRAM: python gpu_info.py")
-        raise
-    
-    return model, tokenizer
-
-
-
-def load_codegemma_7b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+def load_codegemma_7b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка google/codegemma-7b-it (при torch_dtype nf4/4bit — 4-bit)."""
-    model_id = "google/codegemma-7b-it"
+    model_id = model_name or "google/codegemma-7b-it"
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         return _load_causal_4bit(model_id, AutoModelForCausalLM, hyperparameters)
@@ -638,94 +568,6 @@ def generate_gemma(
                 text = text[len(prompt):].strip()
         
         return text.strip()
-
-
-def load_phi_4_mini_instruct(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
-    """Загрузка microsoft/Phi-4-mini-instruct (при torch_dtype nf4/4bit — 4-bit)."""
-    model_id = "microsoft/Phi-4-mini-instruct"
-    hp = hyperparameters or {}
-    if hp.get("torch_dtype") in ("nf4", "4bit"):
-        return _load_causal_4bit(model_id, AutoModelForCausalLM, hyperparameters)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_id,
-        token=HF_TOKEN
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        device_map="auto",
-        dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True,
-        **_get_flash_attn_kwargs()
-    )
-    return model, tokenizer
-
-
-def load_t5gemma_2_1b_1b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
-    """
-    Загрузка google/t5gemma-2-1b-1b (мультимодальная модель Image-Text-to-Text)
-    
-    Модель поддерживает работу с текстом и изображениями, но для текстовых задач
-    можно использовать только текстовый ввод.
-    
-    См. документацию: https://huggingface.co/google/t5gemma-2-1b-1b
-    """
-    model_id = "google/t5gemma-2-1b-1b"
-    
-    print(f"   Загрузка процессора {model_id}...")
-    print(f"   ⚠️ Примечание: Модель использует XET для хранения файлов, загрузка может занять время")
-    try:
-        processor = AutoProcessor.from_pretrained(
-            model_id,
-            token=HF_TOKEN,
-            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
-        )
-        print(f"   ✓ Процессор загружен")
-    except Exception as e:
-        error_msg = str(e)
-        print(f"   ❌ Ошибка загрузки процессора: {error_msg}")
-        if "XET" in error_msg or "xet" in error_msg.lower() or "getaddrinfo failed" in error_msg:
-            print(f"   💡 Проблема с XET сервисом или сетью:")
-            print(f"      - Проверьте интернет-соединение")
-            print(f"      - Убедитесь, что вы приняли лицензию модели на https://huggingface.co/{model_id}")
-            print(f"      - Попробуйте позже или используйте альтернативную T5 модель")
-        raise
-    
-    print(f"   Загрузка модели {model_id}...")
-    print(f"   ⚠️ Это может занять некоторое время из-за размера модели (~2B параметров)")
-    try:
-        # Используем AutoModelForImageTextToText для T5Gemma 2 моделей
-        model = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            device_map="auto",
-            dtype=torch.bfloat16,
-            token=HF_TOKEN,
-            timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
-        )
-        print(f"   ✓ Модель загружена")
-    except Exception as e:
-        error_msg = str(e)
-        print(f"   ❌ Ошибка загрузки модели: {error_msg}")
-        if "XET" in error_msg or "xet" in error_msg.lower() or "getaddrinfo failed" in error_msg:
-            print(f"   💡 Проблема с XET сервисом или сетью:")
-            print(f"      - Проверьте интернет-соединение")
-            print(f"      - Убедитесь, что вы приняли лицензию модели на https://huggingface.co/{model_id}")
-            print(f"      - Модель использует XET (Git LFS расширение), что может требовать дополнительной настройки")
-            print(f"      - Попробуйте позже или используйте альтернативную T5 модель:")
-            print(f"        * google/t5-v1_1-base")
-            print(f"        * google/flan-t5-base")
-            print(f"        * google/flan-t5-small")
-        elif "pytorch_model.bin" in error_msg:
-            print(f"   💡 Модель не найдена или не загружена полностью:")
-            print(f"      - Убедитесь, что вы приняли лицензию модели на https://huggingface.co/{model_id}")
-            print(f"      - Проверьте, что HF_TOKEN установлен правильно")
-            print(f"      - Попробуйте увеличить таймаут: set HF_HUB_DOWNLOAD_TIMEOUT=600")
-        raise
-    
-    # Для T5Gemma моделей возвращаем processor как tokenizer (processor содержит tokenizer)
-    return model, processor
 
 
 def generate_standard(

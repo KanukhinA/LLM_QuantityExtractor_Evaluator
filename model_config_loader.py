@@ -2,7 +2,6 @@
 Загрузчик конфигураций моделей из YAML файла
 """
 import os
-import inspect
 import yaml
 
 
@@ -135,22 +134,10 @@ def load_model_configs():
         elif load_module_name == "model_loaders":
             try:
                 raw_load = getattr(model_loaders_module, load_func_name)
-                _hp = hyperparameters
                 _name = model_config["name"]
-                # Загрузчики с именем модели из конфига (не из сигнатуры)
-                # Если у функции есть параметр model_name — передаём (name, hp), иначе один hp
-                try:
-                    sig = inspect.signature(raw_load)
-                    params = sig.parameters
-                    first_param = next(iter(params), None)
-                    needs_model_name = "model_name" in params
-                except Exception:
-                    first_param = None
-                    needs_model_name = load_func_name in ("load_gemma_3", "load_mistral_3")
-                if load_func_name in ("load_gemma_3", "load_mistral_3") or first_param == "model_name" or needs_model_name:
-                    load_func = (lambda name, hp: lambda: raw_load(name, hyperparameters=hp))(_name, _hp)
-                else:
-                    load_func = (lambda h: lambda: raw_load(h))(_hp)
+                _hp = hyperparameters
+                # Единый вызов: всегда два аргумента (model_name, hyperparameters)
+                load_func = (lambda name, hp: lambda: raw_load(model_name=name, hyperparameters=hp))(_name, _hp)
             except AttributeError:
                 # Используем универсальную функцию загрузки как fallback
                 model_name = model_config['name']
