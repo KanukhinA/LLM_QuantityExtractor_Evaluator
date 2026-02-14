@@ -43,13 +43,18 @@ def load_model_configs():
         else:
             generate_module_name = "model_loaders_api" if is_api_model else "model_loaders"
         
-        # Определяем load_func
+        # Определяем load_func: явно в YAML или по name (для локальных моделей)
         if 'load_func' in model_config:
             load_func_name = model_config['load_func']
         else:
-            # Автоматически: load_{model_key.replace('-', '_').replace('.', '_').lower()}
-            # Приводим к нижнему регистру и заменяем дефисы и точки на подчеркивания для соответствия именам функций в коде
-            load_func_name = f"load_{model_key.replace('-', '_').replace('.', '_').lower()}"
+            # По имени модели выбираем загрузчик (только для локальных — API не трогаем)
+            name = (model_config.get('name') or '').lower()
+            if not is_api_model and 'gemma-3' in name:
+                load_func_name = 'load_gemma_3'
+            elif not is_api_model and ('ministral-3' in name or 'mistral-3' in name):
+                load_func_name = 'load_mistral_3'
+            else:
+                load_func_name = f"load_{model_key.replace('-', '_').replace('.', '_').lower()}"
         
         # Определяем generate_func
         if 'generate_func' in model_config:
@@ -108,20 +113,30 @@ def load_model_configs():
         # Если индивидуальная функция не найдена, используем универсальную (только для локальных моделей)
         if load_module_name == "model_loaders":
             try:
-                load_func = getattr(model_loaders_module, load_func_name)
+                raw_load = getattr(model_loaders_module, load_func_name)
+                _hp = hyperparameters
+                _name = model_config["name"]
+                # Загрузчики с именем модели из конфига (не из сигнатуры)
+                if load_func_name == "load_gemma_3":
+                    load_func = (lambda name, hp: lambda: raw_load(name, hyperparameters=hp))(_name, _hp)
+                elif load_func_name == "load_mistral_3":
+                    load_func = (lambda name, hp: lambda: raw_load(name, hyperparameters=hp))(_name, _hp)
+                else:
+                    load_func = (lambda h: lambda: raw_load(h))(_hp)
             except AttributeError:
                 # Используем универсальную функцию загрузки как fallback
-                # Создаем замыкание с параметрами из конфигурации
                 model_name = model_config['name']
-                
+                _hp = hyperparameters
+
                 def load_func():
                     from model_loaders import load_standard_model
                     return load_standard_model(
                         model_name=model_name,
-                        dtype=hyperparameters.get('dtype'),
-                        torch_dtype=hyperparameters.get('torch_dtype'),
-                        device_map=hyperparameters.get('device_map', 'auto'),
-                        trust_remote_code=hyperparameters.get('trust_remote_code', True)
+                        dtype=_hp.get('dtype'),
+                        torch_dtype=_hp.get('torch_dtype'),
+                        device_map=_hp.get('device_map', 'auto'),
+                        trust_remote_code=_hp.get('trust_remote_code', True),
+                        hyperparameters=_hp,
                     )
         else:
             load_func = getattr(model_loaders_api_module, load_func_name)

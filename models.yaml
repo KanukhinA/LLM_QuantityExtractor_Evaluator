@@ -8,9 +8,7 @@
 # - Если в ключе модели есть "-api", используется model_loaders_api, иначе model_loaders
 # - load_func определяется как: load_{model_key.replace('-', '_').replace('.', '_').lower()}
 #   * Если индивидуальная функция не найдена, используется универсальная load_standard_model
-#   * Индивидуальные функции могут использовать групповые функции:
-#     - load_gemma_3() - для всех Gemma 3 моделей (1b, 4b, 12b, 27b)
-#     - load_mistral_3() - для всех Mistral 3 моделей
+#   * Загрузчик выводится по name: gemma-3 -> load_gemma_3, Ministral-3 -> load_mistral_3, иначе load_standard_model.
 #     - load_standard_model() - для стандартных моделей (Qwen, Gemma 2, и т.д.)
 #   * Индивидуальные функции нужны только для особых случаев:
 #     - Модели с специальными классами (Gemma3ForCausalLM, Mistral3ForConditionalGeneration, T5ForConditionalGeneration)
@@ -91,12 +89,19 @@ models:
       do_sample: false
       torch_dtype: "bfloat16"
 
-  gemma-3-27b:
+  # gemma-3-27b:
+  #   name: "google/gemma-3-27b-it"
+  #   hyperparameters:
+  #     max_new_tokens: 512
+  #     do_sample: false
+  #     torch_dtype: "bfloat16"
+
+  gemma-3-27b-4bit:
     name: "google/gemma-3-27b-it"
     hyperparameters:
+      torch_dtype: "nf4"
       max_new_tokens: 512
       do_sample: false
-      torch_dtype: "bfloat16"
 
   gemma-3-4b-api:
     name: "gemma-3-4b-it"
@@ -114,12 +119,6 @@ models:
     name: "gemma-3-27b-it"
     hyperparameters:
       max_new_tokens: 1024
-      api_model: true
-
-  deepseek-r1t-chimera-api:
-    name: "tngtech/deepseek-r1t-chimera:free"
-    hyperparameters:
-      max_new_tokens: 512
       api_model: true
 
   mistral-small-3.1-24b-api:

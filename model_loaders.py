@@ -43,7 +43,52 @@ def _get_flash_attn_kwargs() -> dict:
         return {}
 
 
-def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size_warning: Optional[str] = None) -> Tuple[Any, Any]:
+def _load_causal_4bit(
+    model_name: str,
+    model_class: type,
+    hyperparameters: Optional[dict] = None,
+    **from_pretrained_extra
+) -> Tuple[Any, Any]:
+    """
+    Общая загрузка любой causal LM в 4-bit (nf4) по гиперпараметру torch_dtype.
+    Используется всеми загрузчиками при hyperparameters["torch_dtype"] in ("nf4", "4bit").
+    """
+    from transformers import BitsAndBytesConfig
+    hp = hyperparameters or {}
+    max_cpu_gb = hp.get("max_cpu_gb_4bit") or os.environ.get("MAX_CPU_GB_4BIT") or os.environ.get("GEMMA_27B_4BIT_MAX_CPU_GB") or "12"
+    max_cpu_gb = int(max_cpu_gb)
+    max_memory = {0: "80GiB", "cpu": f"{max_cpu_gb}GiB"}
+    print(f"   Загрузка токенизатора {model_name}...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        token=HF_TOKEN,
+        timeout=HF_HUB_DOWNLOAD_TIMEOUT,
+        resume_download=from_pretrained_extra.pop("resume_download", True),
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    print(f"   Загрузка модели {model_name} (4-bit, torch_dtype=nf4, CPU лимит {max_cpu_gb} GB)...")
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4",
+    )
+    model = model_class.from_pretrained(
+        model_name,
+        device_map="auto",
+        quantization_config=quantization_config,
+        token=HF_TOKEN,
+        max_memory=max_memory,
+        low_cpu_mem_usage=True,
+        **from_pretrained_extra,
+    )
+    if hasattr(model, "eval"):
+        model = model.eval()
+    print(f"   Модель загружена в 4-bit (nf4)")
+    return model, tokenizer
+
+
+def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size_warning: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """
     Универсальная функция загрузки моделей Gemma 3 через Gemma3ForCausalLM.
     Используется для всех Gemma 3 моделей (1b, 4b, 12b, 27b).
@@ -56,6 +101,9 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
     Returns:
         (model, tokenizer)
     """
+    hp = hyperparameters or {}
+    if hp.get("torch_dtype") in ("nf4", "4bit"):
+        return _load_causal_4bit(model_name, Gemma3ForCausalLM, hyperparameters)
     print(f"   Загрузка токенизатора {model_name}...")
     if vram_warning:
         print(f"   ⚠️ Примечание: {vram_warning}")
@@ -117,7 +165,7 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
     return model, tokenizer
 
 
-def load_mistral_3(model_name: str, vram_warning: Optional[str] = None) -> Tuple[Any, Any]:
+def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """
     Универсальная функция загрузки моделей Mistral 3 через Mistral3ForConditionalGeneration.
     Используется для всех Mistral 3 моделей.
@@ -129,10 +177,15 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None) -> Tuple
     Args:
         model_name: название модели на HuggingFace (например, "mistralai/Ministral-3-8B-Instruct-2512")
         vram_warning: предупреждение о требованиях к VRAM (опционально)
+        hyperparameters: опционально; при torch_dtype "nf4"/"4bit" модель загружается в 4-bit
     
     Returns:
         (model, tokenizer)
     """
+    hp = hyperparameters or {}
+    if hp.get("torch_dtype") in ("nf4", "4bit"):
+        from transformers import Mistral3ForConditionalGeneration
+        return _load_causal_4bit(model_name, Mistral3ForConditionalGeneration, hyperparameters)
     from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
     
     print(f"   Загрузка токенизатора {model_name}...")
@@ -175,7 +228,7 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None) -> Tuple
 
 
 def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtype: Optional[str] = None, 
-                        device_map: str = "auto", trust_remote_code: bool = True) -> Tuple[Any, Any]:
+                        device_map: str = "auto", trust_remote_code: bool = True, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """
     Универсальная функция загрузки стандартных моделей через AutoTokenizer и AutoModelForCausalLM.
     Используется как fallback, когда индивидуальная функция загрузки не найдена.
@@ -186,6 +239,7 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     - Модели с предупреждениями о требованиях к VRAM
     
     Для стандартных моделей (Qwen, Gemma 2, и т.д.) эта функция используется автоматически.
+    В hyperparameters можно передать torch_dtype: "nf4" для 4-bit квантизации любой модели.
     
     Args:
         model_name: название модели на HuggingFace
@@ -193,10 +247,14 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
         torch_dtype: тип данных для torch (например, "auto", "bfloat16")
         device_map: карта устройств ("auto", "cuda", и т.д.)
         trust_remote_code: доверять ли удаленному коду
+        hyperparameters: опционально; при torch_dtype "nf4"/"4bit" модель загружается в 4-bit
     
     Returns:
         (model, tokenizer)
     """
+    hp = hyperparameters or {}
+    if hp.get("torch_dtype") in ("nf4", "4bit"):
+        return _load_causal_4bit(model_name, AutoModelForCausalLM, hyperparameters)
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
         token=HF_TOKEN
@@ -231,56 +289,61 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     
     return model, tokenizer
 
-def load_gemma_2_2b() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-2-2b-it"""
-    return load_standard_model("google/gemma-2-2b-it", dtype="bfloat16", device_map="cuda")
-
-def load_ministral_3_3b_reasoning_2512() -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16"""
-    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512")
+def load_gemma_2_2b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка google/gemma-2-2b-it (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_standard_model("google/gemma-2-2b-it", dtype="bfloat16", device_map="cuda", hyperparameters=hyperparameters)
 
 
-def load_mistral_3_8b_instruct() -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-8B-Instruct-2512 в bfloat16"""
-    return load_mistral_3("mistralai/Ministral-3-8B-Instruct-2512", vram_warning="Модель требует ~16GB VRAM для полной загрузки")
+def load_ministral_3_3b_reasoning_2512(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512", hyperparameters=hyperparameters)
 
 
-def load_mistral_3_14b_instruct() -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-14B-Instruct-2512 в bfloat16"""
-    return load_mistral_3("mistralai/Ministral-3-14B-Instruct-2512", vram_warning="Модель требует ~28GB VRAM для полной загрузки")
+def load_mistral_3_8b_instruct(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка mistralai/Ministral-3-8B-Instruct-2512 (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_mistral_3("mistralai/Ministral-3-8B-Instruct-2512", vram_warning="Модель требует ~16GB VRAM для полной загрузки", hyperparameters=hyperparameters)
 
 
-def load_mistral_3_3b_reasoning() -> Tuple[Any, Any]:
-    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 в bfloat16"""
-    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512")
-
-def load_qwen_2_5_1_5b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen2.5-1.5B-Instruct"""
-    return load_standard_model("Qwen/Qwen2.5-1.5B-Instruct", dtype="float16")
+def load_mistral_3_14b_instruct(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка mistralai/Ministral-3-14B-Instruct-2512 (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_mistral_3("mistralai/Ministral-3-14B-Instruct-2512", vram_warning="Модель требует ~28GB VRAM для полной загрузки", hyperparameters=hyperparameters)
 
 
-def load_qwen_2_5_3b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen2.5-3B-Instruct с bfloat16"""
-    return load_standard_model("Qwen/Qwen2.5-3B-Instruct", dtype="bfloat16")
+def load_mistral_3_3b_reasoning(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка mistralai/Ministral-3-3B-Reasoning-2512 (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_mistral_3("mistralai/Ministral-3-3B-Reasoning-2512", hyperparameters=hyperparameters)
+
+def load_qwen_2_5_1_5b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen2.5-1.5B-Instruct (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_standard_model("Qwen/Qwen2.5-1.5B-Instruct", dtype="float16", hyperparameters=hyperparameters)
 
 
-def load_qwen_2_5_4b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen2.5-4B-Instruct с bfloat16"""
-    return load_standard_model("Qwen/Qwen2.5-4B-Instruct", dtype="bfloat16")
+def load_qwen_2_5_3b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen2.5-3B-Instruct (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_standard_model("Qwen/Qwen2.5-3B-Instruct", dtype="bfloat16", hyperparameters=hyperparameters)
 
 
-def load_qwen_3_4b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen3-4B-Instruct-2507 с bfloat16"""
-    return load_standard_model("Qwen/Qwen3-4B-Instruct-2507", dtype="bfloat16")
+def load_qwen_2_5_4b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen2.5-4B-Instruct (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_standard_model("Qwen/Qwen2.5-4B-Instruct", dtype="bfloat16", hyperparameters=hyperparameters)
 
 
-def load_qwen_3_8b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen3-8B с автоматическим выбором dtype"""
-    return load_standard_model("Qwen/Qwen3-8B", torch_dtype="auto")
+def load_qwen_3_4b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3-4B-Instruct-2507 (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_standard_model("Qwen/Qwen3-4B-Instruct-2507", dtype="bfloat16", hyperparameters=hyperparameters)
 
 
-def load_qwen_3_32b() -> Tuple[Any, Any]:
-    """Загрузка Qwen/Qwen3-32B с автоматическим выбором dtype"""
+def load_qwen_3_8b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3-8B (при torch_dtype nf4/4bit — 4-bit)."""
+    return load_standard_model("Qwen/Qwen3-8B", torch_dtype="auto", hyperparameters=hyperparameters)
+
+
+def load_qwen_3_32b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3-32B (при torch_dtype nf4/4bit — 4-bit)."""
+    model_id = "Qwen/Qwen3-32B"
+    hp = hyperparameters or {}
+    if hp.get("torch_dtype") in ("nf4", "4bit"):
+        return _load_causal_4bit(model_id, AutoModelForCausalLM, hyperparameters)
     print(f"   Загрузка токенизатора Qwen/Qwen3-32B...")
     print(f"   ⚠️ Примечание: Модель требует значительный объем VRAM (~64GB+ для полной загрузки)")
     print(f"   (это может занять некоторое время при первом запуске)")
@@ -337,38 +400,12 @@ def load_qwen_3_32b() -> Tuple[Any, Any]:
 
 
 
-def load_gemma_3_1b() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-3-1b-it БЕЗ квантизации (использует Gemma3ForCausalLM)"""
-    return load_gemma_3("google/gemma-3-1b-it", vram_warning=None, model_size_warning=None)
-
-
-def load_gemma_3_4b() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-3-4b-it БЕЗ квантизации (требует ~8GB VRAM, использует Gemma3ForCausalLM)"""
-    return load_gemma_3("google/gemma-3-4b-it", vram_warning="Модель требует ~8GB VRAM для полной загрузки")
-
-
-def load_gemma_3_12b() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-3-12b-it БЕЗ квантизации (требует ~24GB VRAM, использует Gemma3ForCausalLM)"""
-    return load_gemma_3(
-        "google/gemma-3-12b-it",
-        vram_warning="Модель требует значительный объем VRAM (~24GB+ для полной загрузки)",
-        model_size_warning="Это может занять значительное время из-за размера модели (~12B параметров)"
-    )
-
-
-def load_gemma_3_27b() -> Tuple[Any, Any]:
-    """Загрузка google/gemma-3-27b-it БЕЗ квантизации (требует ~54GB VRAM, использует Gemma3ForCausalLM)"""
-    return load_gemma_3(
-        "google/gemma-3-27b-it",
-        vram_warning="Модель требует очень значительный объем VRAM (~54GB+ для полной загрузки)",
-        model_size_warning="Это может занять значительное время из-за размера модели (~27B параметров)"
-    )
-
-
-def load_codegemma_7b() -> Tuple[Any, Any]:
-    """Загрузка google/codegemma-7b-it (CodeGemma 7B Instruct, требует ~14GB VRAM)"""
+def load_codegemma_7b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка google/codegemma-7b-it (при torch_dtype nf4/4bit — 4-bit)."""
     model_id = "google/codegemma-7b-it"
-    
+    hp = hyperparameters or {}
+    if hp.get("torch_dtype") in ("nf4", "4bit"):
+        return _load_causal_4bit(model_id, AutoModelForCausalLM, hyperparameters)
     print(f"   Загрузка токенизатора {model_id}...")
     print(f"   ⚠️ Примечание: CodeGemma специализирована для работы с кодом")
     print(f"   (это может занять некоторое время при первом запуске)")
@@ -599,14 +636,18 @@ def generate_gemma(
         return text.strip()
 
 
-def load_phi_4_mini_instruct() -> Tuple[Any, Any]:
-    """Загрузка microsoft/Phi-4-mini-instruct"""
+def load_phi_4_mini_instruct(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка microsoft/Phi-4-mini-instruct (при torch_dtype nf4/4bit — 4-bit)."""
+    model_id = "microsoft/Phi-4-mini-instruct"
+    hp = hyperparameters or {}
+    if hp.get("torch_dtype") in ("nf4", "4bit"):
+        return _load_causal_4bit(model_id, AutoModelForCausalLM, hyperparameters)
     tokenizer = AutoTokenizer.from_pretrained(
-        "microsoft/Phi-4-mini-instruct",
+        model_id,
         token=HF_TOKEN
     )
     model = AutoModelForCausalLM.from_pretrained(
-        "microsoft/Phi-4-mini-instruct",
+        model_id,
         device_map="auto",
         dtype=torch.bfloat16,
         token=HF_TOKEN,
@@ -616,7 +657,7 @@ def load_phi_4_mini_instruct() -> Tuple[Any, Any]:
     return model, tokenizer
 
 
-def load_t5gemma_2_1b_1b() -> Tuple[Any, Any]:
+def load_t5gemma_2_1b_1b(hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """
     Загрузка google/t5gemma-2-1b-1b (мультимодальная модель Image-Text-to-Text)
     

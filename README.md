@@ -644,8 +644,10 @@ python google_sheets_integration.py --results-dir results
 
 **Gemma модели:**
 - **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
-- **google/gemma-3-4b-it** - Gemma 3 4B it (ключ: `gemma-3-4b`)
-- **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) - специализирована для работы с кодом, требует ~14GB VRAM
+- **google/gemma-3-4b-it** - Gemma 3 4B it (ключ: `gemma-3-4b`). Загрузчик выбирается по `name` автоматически (`load_gemma_3`).
+- **google/gemma-3-12b-it** - Gemma 3 12B it (ключ: `gemma-3-12b`), ~24GB VRAM
+- **google/gemma-3-27b-it** - Gemma 3 27B: полная загрузка (~54GB VRAM) или 4-bit (ключ: `gemma-3-27b-4bit`, в hyperparameters указать `torch_dtype: "nf4"`), ~18–22GB VRAM
+- **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) — специализирована для работы с кодом, ~14GB VRAM
 
 **Qwen модели:**
 - **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B (ключ: `qwen-2.5-3b`)
@@ -653,11 +655,10 @@ python google_sheets_integration.py --results-dir results
 - **Qwen/Qwen3-8B** - Qwen 3 8B (ключ: `qwen-3-8b`) - поддерживает thinking mode
 - **Qwen/Qwen3-32B** - Qwen 3 32B (ключ: `qwen-3-32b`) - поддерживает thinking mode, требует ~64GB+ VRAM для полной загрузки
 
-**Mistral модели:**
-- **mistralai/Ministral-3-3B-Reasoning-2512** - Ministral 3 3B Reasoning (ключ: `Ministral-3-3B-Reasoning-2512`)
-- **mistralai/Ministral-3-8B-Instruct-2512** - Mistral 3 8B it (ключ: `mistral-3-8b-instruct`) - требует ~16GB VRAM
-- **mistralai/Ministral-3-14B-Instruct-2512** - Mistral 3 14B it (ключ: `mistral-3-14b-instruct`) - требует ~28GB VRAM
-- **mistralai/Ministral-3-3B-Reasoning-2512** - Mistral 3 3B Reasoning (ключ: `mistral-3-3b-reasoning`)
+**Mistral модели:** загрузчик выбирается по `name` автоматически (`load_mistral_3`).
+- **mistralai/Ministral-3-3B-Reasoning-2512** (ключ: `mistral-3-3b-reasoning` или `ministral-3-3b-reasoning-2512`)
+- **mistralai/Ministral-3-8B-Instruct-2512** (ключ: `mistral-3-8b-instruct`) — ~16GB VRAM
+- **mistralai/Ministral-3-14B-Instruct-2512** (ключ: `mistral-3-14b-instruct`) — ~28GB VRAM
 
 **Другие модели:**
 - **microsoft/Phi-4-mini-instruct** - Phi 4 Mini (ключ: `phi-4-mini-instruct`)
@@ -926,24 +927,11 @@ results/
 
 ## 9. Добавление новой модели
 
-Модели добавляются через YAML файл `models.yaml`. Система автоматически определяет функции загрузки и генерации на основе имени модели.
+Модели добавляются через YAML файл `models.yaml`. Загрузчик и функция генерации определяются автоматически: загрузчик — по полю `name` (или по ключу модели), генерация — по паттернам в ключе.
 
 ### 9.1. Добавление локальной модели
 
-1. **Добавьте функцию загрузки в `model_loaders.py`** (если нужна специализированная). Для совместимости с Flash Attention 2 передайте `**_get_flash_attn_kwargs()` в `from_pretrained` (при включённой настройке и установленном `flash-attn` подставится `attn_implementation="flash_attention_2"`):
-```python
-def load_your_model() -> Tuple[Any, Any]:
-    tokenizer = AutoTokenizer.from_pretrained("model/name", token=HF_TOKEN)
-    model = AutoModelForCausalLM.from_pretrained(
-        "model/name",
-        device_map="auto",
-        torch_dtype=torch.bfloat16,
-        token=HF_TOKEN,
-        trust_remote_code=True,
-        **_get_flash_attn_kwargs()
-    )
-    return model, tokenizer
-```
+1. **Добавьте функцию загрузки в `model_loaders.py`** только если нужна особая логика (специальный класс, свои ошибки и т.д.). Для моделей с `name`, содержащим `gemma-3` или `ministral-3`/`mistral-3`, загрузчик подставляется автоматически. Для совместимости с Flash Attention 2 передайте `**_get_flash_attn_kwargs()` в `from_pretrained`.
 
 2. **Добавьте функцию генерации в `model_loaders.py`** (если нужна специализированная):
 ```python
@@ -952,7 +940,7 @@ def generate_your_model(model, tokenizer, prompt: str, max_new_tokens: int = 102
     pass
 ```
 
-3. **Добавьте конфигурацию в `models.yaml`**:
+3. **Добавьте конфигурацию в `models.yaml`**. Указывать `load_func` не обязательно: для Gemma 3 и Mistral 3 он выводится из `name`; для остальных — из ключа модели или fallback `load_standard_model`.
 ```yaml
 models:
   your-model-key:
@@ -961,35 +949,28 @@ models:
       max_new_tokens: 1024
       do_sample: false
       torch_dtype: "bfloat16"
-      # или dtype: "bfloat16" (в зависимости от модели)
+      # torch_dtype: "nf4" — загрузка в 4-bit (любая поддерживаемая модель)
+      # max_cpu_gb_4bit: 8 — лимит CPU RAM при 4-bit (опционально)
 ```
 
-**Автоматическое определение функций:**
-- `load_func` определяется автоматически как: `load_{model_key.replace('-', '_').replace('.', '_').lower()}`
-  - Например, для `your-model-key` будет использована функция `load_your_model_key`
-  - Если функция не найдена, система попытается использовать стандартные функции по паттернам
-- `generate_func` определяется автоматически по паттернам:
-  - `qwen-3` → `generate_qwen_3`
-  - `qwen` → `generate_qwen`
-  - `gemma` → `generate_gemma`
-  - `t5` или `t5gemma` → `generate_t5`
-  - иначе → `generate_standard`
+**Автоматическое определение загрузчика (load_func):**
+- Если `load_func` не указан в YAML, загрузчик выбирается по полю `name`:
+  - в `name` есть `gemma-3` → `load_gemma_3` (одна функция для всех размеров Gemma 3: 1b, 4b, 12b, 27b)
+  - в `name` есть `ministral-3` или `mistral-3` → `load_mistral_3`
+  - иначе → `load_{model_key.replace('-', '_').replace('.', '_').lower()}` (например, `load_qwen_2_5_3b`)
+- Если функция по имени/ключу не найдена, используется универсальная `load_standard_model` с данным `name`.
 
-**Переопределение автоматических значений:**
-Если нужно использовать другую функцию, укажите её явно:
-```yaml
-models:
-  your-model-key:
-    name: "model/name"
-    load_module: "model_loaders"  # по умолчанию для локальных моделей
-    load_func: "load_your_custom_function"  # явное указание функции
-    generate_module: "model_loaders"  # по умолчанию для локальных моделей
-    generate_func: "generate_your_custom_function"  # явное указание функции
-    hyperparameters:
-      max_new_tokens: 1024
-      do_sample: false
-      torch_dtype: "bfloat16"
-```
+**4-bit квантизация (nf4):** для любой локальной модели можно задать в `hyperparameters`:
+- `torch_dtype: "nf4"` (или `"4bit"`) — загрузка в 4-bit через BitsAndBytes (экономия VRAM). Опционально: `max_cpu_gb_4bit: 8` — лимит CPU RAM в GB. Переменная окружения `MAX_CPU_GB_4BIT` (или `GEMMA_27B_4BIT_MAX_CPU_GB`) задаёт лимит по умолчанию (12).
+
+**generate_func** определяется автоматически по паттернам:
+- `qwen-3` → `generate_qwen_3`
+- `qwen` → `generate_qwen`
+- `gemma` → `generate_gemma`
+- `t5` или `t5gemma` → `generate_t5`
+- иначе → `generate_standard`
+
+**Переопределение:** при необходимости укажите `load_func` или `generate_func` явно в YAML.
 
 ### 9.2. Добавление API модели
 
@@ -1046,13 +1027,13 @@ models:
       api_model: true
 ```
 
-**С явным указанием функций:**
+**С явным указанием загрузчика или генерации** (если нужно переопределить автоопределение):
 ```yaml
 models:
   my-custom-model:
     name: "organization/my-custom-model"
-    load_func: "load_my_custom_model"
-    generate_func: "generate_my_custom_model"
+    load_func: "load_my_custom_model"   # опционально
+    generate_func: "generate_my_custom_model"   # опционально
     hyperparameters:
       max_new_tokens: 1024
       do_sample: false
@@ -1089,7 +1070,8 @@ python main.py your-model-key --structured-output
 
 - CUDA-совместимая GPU (рекомендуется 8GB+ VRAM)
 - Hugging Face Token (`HF_TOKEN`)
-- **Flash Attention 2 (опционально, по умолчанию включено):** для ускорения и экономии VRAM установите `pip install flash-attn --no-build-isolation`. Требуется CUDA и совместимый компилятор (обычно доступно в Linux/WSL; на Windows часто недоступно). Если пакет не установлен, локальные модели работают без Flash Attention 2 (выводится предупреждение). Отключить использование: `set USE_FLASH_ATTENTION_2=0` / `export USE_FLASH_ATTENTION_2=0`.
+- **Flash Attention 2 (опционально, по умолчанию включено):** для ускорения и экономии VRAM установите `pip install flash-attn --no-build-isolation`. Требуется CUDA и совместимый компилятор (обычно доступно в Linux/WSL; на Windows часто недоступно). Если пакет не установлен, локальные модели работают без Flash Attention 2 (выводится предупреждение). Отключить: `set USE_FLASH_ATTENTION_2=0` / `export USE_FLASH_ATTENTION_2=0`.
+- **4-bit (nf4):** при `torch_dtype: "nf4"` в hyperparameters нужны `bitsandbytes` и `accelerate`. Лимит CPU RAM при 4-bit: переменная окружения `MAX_CPU_GB_4BIT` или `GEMMA_27B_4BIT_MAX_CPU_GB` (по умолчанию 12 GB).
 
 ### 10.3. Требования для API моделей
 
