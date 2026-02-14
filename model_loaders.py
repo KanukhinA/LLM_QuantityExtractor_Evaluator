@@ -52,12 +52,9 @@ def _load_causal_4bit(
     """
     Общая загрузка любой causal LM в 4-bit (nf4) по гиперпараметру torch_dtype.
     Используется всеми загрузчиками при hyperparameters["torch_dtype"] in ("nf4", "4bit").
+    Распределение по устройствам задаёт device_map="auto" по доступной памяти.
     """
     from transformers import BitsAndBytesConfig
-    hp = hyperparameters or {}
-    max_cpu_gb = hp.get("max_cpu_gb_4bit") or os.environ.get("MAX_CPU_GB_4BIT") or os.environ.get("GEMMA_27B_4BIT_MAX_CPU_GB") or "12"
-    max_cpu_gb = int(max_cpu_gb)
-    max_memory = {0: "80GiB", "cpu": f"{max_cpu_gb}GiB"}
     print(f"   Загрузка токенизатора {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
@@ -67,7 +64,7 @@ def _load_causal_4bit(
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    print(f"   Загрузка модели {model_name} (4-bit, torch_dtype=nf4, CPU лимит {max_cpu_gb} GB)...")
+    print(f"   Загрузка модели {model_name} (4-bit, torch_dtype=nf4)...")
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.bfloat16,
@@ -78,7 +75,6 @@ def _load_causal_4bit(
         device_map="auto",
         quantization_config=quantization_config,
         token=HF_TOKEN,
-        max_memory=max_memory,
         low_cpu_mem_usage=True,
         **from_pretrained_extra,
     )
