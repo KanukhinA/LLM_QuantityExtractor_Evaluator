@@ -52,9 +52,17 @@ def _load_causal_4bit(
     """
     Общая загрузка любой causal LM в 4-bit (nf4) по гиперпараметру torch_dtype.
     Используется всеми загрузчиками при hyperparameters["torch_dtype"] in ("nf4", "4bit").
-    Распределение по устройствам задаёт device_map="auto" по доступной памяти.
+    На GPU задаётся лимит (объём минус 2 GiB), чтобы избежать OOM из-за фрагментации при загрузке.
     """
     from transformers import BitsAndBytesConfig
+    # Оставляем 2 GiB на GPU свободными, иначе при загрузке 4-bit часто OOM (пики/фрагментация)
+    max_memory = None
+    try:
+        total = torch.cuda.get_device_properties(0).total_memory
+        gb = max(1, int(total / (1024 ** 3)) - 2)
+        max_memory = {0: f"{gb}GiB"}
+    except Exception:
+        pass
     print(f"   Загрузка токенизатора {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
@@ -70,14 +78,16 @@ def _load_causal_4bit(
         bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_quant_type="nf4",
     )
-    model = model_class.from_pretrained(
-        model_name,
+    kwargs = dict(
         device_map="auto",
         quantization_config=quantization_config,
         token=HF_TOKEN,
         low_cpu_mem_usage=True,
         **from_pretrained_extra,
     )
+    if max_memory is not None:
+        kwargs["max_memory"] = max_memory
+    model = model_class.from_pretrained(model_name, **kwargs)
     if hasattr(model, "eval"):
         model = model.eval()
     print(f"   Модель загружена в 4-bit (nf4)")
