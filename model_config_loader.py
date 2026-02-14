@@ -51,7 +51,7 @@ def load_model_configs():
             name = (model_config.get('name') or '').lower()
             if not is_api_model and 'gemma-3' in name:
                 load_func_name = 'load_gemma_3'
-            elif not is_api_model and ('ministral-3' in name or 'mistral-3' in name):
+            elif not is_api_model and ('mistralai/' in name or 'ministral' in name):
                 load_func_name = 'load_mistral_3'
             else:
                 load_func_name = f"load_{model_key.replace('-', '_').replace('.', '_').lower()}"
