@@ -50,22 +50,16 @@ def _load_causal_4bit(
     **from_pretrained_extra
 ) -> Tuple[Any, Any]:
     """
-    Общая загрузка любой causal LM в 4-bit (nf4) по гиперпараметру torch_dtype.
-    Используется всеми загрузчиками при hyperparameters["torch_dtype"] in ("nf4", "4bit").
-    На GPU задаётся лимит (объём минус 2 GiB), чтобы избежать OOM из-за фрагментации при загрузке.
+    Загрузка causal LM в 4-bit (nf4) через BitsAndBytes. device_map="auto" распределяет по устройствам сам.
     """
     from transformers import BitsAndBytesConfig
-    # Меньше фрагментации VRAM при загрузке (рекомендация PyTorch при OOM)
-    if "PYTORCH_ALLOC_CONF" not in os.environ:
-        os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-    # Запас на GPU 4 GiB — при загрузке 4-bit пики памяти превышают стабильное использование, без запаса OOM
-    max_memory = None
-    try:
-        total = torch.cuda.get_device_properties(0).total_memory
-        gb = max(1, int(total / (1024 ** 3)) - 4)
-        max_memory = {0: f"{gb}GiB"}
-    except Exception:
-        pass
+    name_lower = (model_name or "").lower()
+    cls_name = getattr(model_class, "__name__", "")
+    if "gemma" in name_lower and "mistral" in cls_name.lower():
+        model_class = Gemma3ForCausalLM
+    elif ("mistralai/" in name_lower or "ministral" in name_lower) and "gemma" in cls_name.lower():
+        from transformers import Mistral3ForConditionalGeneration
+        model_class = Mistral3ForConditionalGeneration
     print(f"   Загрузка токенизатора {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
@@ -75,22 +69,20 @@ def _load_causal_4bit(
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    print(f"   Загрузка модели {model_name} (4-bit, torch_dtype=nf4)...")
+    print(f"   Загрузка модели {model_name} (4-bit nf4)...")
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_quant_type="nf4",
     )
-    kwargs = dict(
+    model = model_class.from_pretrained(
+        model_name,
         device_map="auto",
         quantization_config=quantization_config,
         token=HF_TOKEN,
         low_cpu_mem_usage=True,
         **from_pretrained_extra,
     )
-    if max_memory is not None:
-        kwargs["max_memory"] = max_memory
-    model = model_class.from_pretrained(model_name, **kwargs)
     if hasattr(model, "eval"):
         model = model.eval()
     print(f"   Модель загружена в 4-bit (nf4)")
@@ -112,7 +104,10 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
     """
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):
-        return _load_causal_4bit(model_name, Gemma3ForCausalLM, hyperparameters)
+        raise NotImplementedError(
+            "BitsAndBytes 4-bit не поддерживается для Gemma 3 (гибридная архитектура). "
+            "Укажите torch_dtype: \"bfloat16\" или используйте API (gemma-3-27b-api)."
+        )
     print(f"   Загрузка токенизатора {model_name}...")
     if vram_warning:
         print(f"   ⚠️ Примечание: {vram_warning}")

@@ -96,12 +96,12 @@ models:
   #     do_sample: false
   #     torch_dtype: "bfloat16"
 
-  gemma-3-27b-4bit:
-    name: "google/gemma-3-27b-it"
-    hyperparameters:
-      torch_dtype: "nf4"
-      max_new_tokens: 512
-      do_sample: false
+  # gemma-3-27b-4bit:
+  #   name: "google/gemma-3-27b-it"
+  #   hyperparameters:
+  #     torch_dtype: "nf4"
+  #     max_new_tokens: 512
+  #     do_sample: false
 
   gemma-3-4b-api:
     name: "gemma-3-4b-it"
