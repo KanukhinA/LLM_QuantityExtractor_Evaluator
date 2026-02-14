@@ -6,6 +6,7 @@ import argparse
 from main import run_evaluation
 from gemini_analyzer import check_gemini_api
 from config import GEMINI_API_KEY, MODEL_CONFIGS
+from model_evaluator import StopAllModelsInterrupt
 
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None, 
                    structured_output: bool = False, use_outlines: bool = False):
@@ -118,7 +119,7 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                     "status": "error",
                     "error": error_msg
                 })
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, StopAllModelsInterrupt):
             print(f"\nПрервано пользователем. Остановка оценки моделей.")
             break
         except Exception as e:

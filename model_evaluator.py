@@ -37,6 +37,11 @@ class InferenceCriticalFailure(Exception):
         super().__init__(message)
 
 
+class StopAllModelsInterrupt(Exception):
+    """Выбрасывается при выборе пункта 4 (прервать оценку всех моделей); должна поймать run_all_models и выйти из цикла по моделям."""
+    pass
+
+
 class ModelEvaluator:
     """
     Класс для оценки LLM моделей на датасете
@@ -990,9 +995,11 @@ class ModelEvaluator:
                         }
                     elif stop_all_on_interrupt and choice == "4":
                         print("\n❌ Прерывание оценки всех моделей...")
-                        raise KeyboardInterrupt
+                        raise StopAllModelsInterrupt()
                     else:
                         print("Пожалуйста, введите 1, 2" + (", 3, 4" if stop_all_on_interrupt else " или 3"))
+                except StopAllModelsInterrupt:
+                    raise
                 except KeyboardInterrupt:
                     print("\n\n⚠️  Повторное прерывание. Сохранение промежуточных результатов...")
                     interrupted = True
