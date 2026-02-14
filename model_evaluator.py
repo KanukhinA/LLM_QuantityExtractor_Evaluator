@@ -201,7 +201,7 @@ class ModelEvaluator:
                 elapsed = time.time() - start_time
                 times.append(elapsed)
                 
-                # Измеряем память во время инференса (только для локальных моделей)
+                # Измеряем память во время инференса (только для локальных моделей; для API/Ollama is_api_model=True)
                 if not is_api_model:
                     memory_sample = get_gpu_memory_usage()
                     memory_samples.append(memory_sample["allocated"])
@@ -213,7 +213,7 @@ class ModelEvaluator:
                 raise
             except Exception as e:
                 error_msg = str(e)
-                # Для API моделей выводим полную ошибку без обрезки (всегда, так как это ошибка)
+                # Для API и Ollama выводим полную ошибку без обрезки (is_api_model сюда передаётся как is_api_model or is_ollama)
                 if is_api_model:
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
                     print(f"     {error_msg}")
@@ -489,15 +489,14 @@ class ModelEvaluator:
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)
         use_multi_agent = multi_agent_mode is not None and multi_agent_mode != ""
         
-        # Определяем, является ли модель API-моделью
+        # Определяем, является ли модель API-моделью или Ollama
         is_api_model = hyperparameters.get("api_model", False)
-        if not is_api_model:
-            # Также проверяем по типу возвращаемых значений после загрузки
-            # Для API моделей tokenizer будет None
-            pass  # Проверим после загрузки
+        is_ollama = hyperparameters.get("ollama", False)
+        if not is_api_model and not is_ollama:
+            pass  # Локальная модель с весами
         
-        # Устанавливаем num_retries для API моделей (10 попыток)
-        if is_api_model:
+        # Устанавливаем num_retries для API и Ollama (10 попыток)
+        if is_api_model or is_ollama:
             num_retries = 10
         
         # Определяем название режима для вывода
@@ -517,9 +516,16 @@ class ModelEvaluator:
             print(f"   • {key}: {value}")
         print(f"{'='*80}\n")
         
-        # Проверяем, является ли это API моделью (до загрузки)
+        # Проверяем, является ли это API или Ollama (до загрузки)
         is_api_model = hyperparameters.get("api_model", False)
-        
+        is_ollama = hyperparameters.get("ollama", False)
+
+        # Мультиагентный режим не поддерживается для Ollama
+        if is_ollama and use_multi_agent:
+            use_multi_agent = False
+            multi_agent_mode = None
+            print("   Ollama: мультиагентный режим не поддерживается, используется одноагентный.\n")
+
         # Информация о GPU/API до загрузки модели
         if is_api_model:
             print(f"📊 ИНФОРМАЦИЯ О РЕСУРСАХ:")
@@ -527,6 +533,11 @@ class ModelEvaluator:
             print(f"   • Модель будет использоваться через API")
             print()
             gpu_info_before = {"api": True}
+        elif is_ollama:
+            print(f"📊 ИНФОРМАЦИЯ О РЕСУРСАХ:")
+            print(f"   • Тип: Ollama (локальный API)")
+            print()
+            gpu_info_before = {"ollama": True}
         else:
             gpu_info_before = get_gpu_info()
             print(f"📊 ИНФОРМАЦИЯ О GPU (до загрузки модели):")
@@ -578,6 +589,19 @@ class ModelEvaluator:
             print()
             gpu_info_after = {"api": True}
             memory_after_load = {"allocated": 0.0, "reserved": 0.0, "total": 0.0}
+        elif is_ollama:
+            from gpu_info import get_gpu_memory_usage_nvidia_smi
+            _mem = get_gpu_memory_usage_nvidia_smi()
+            memory_after_load = {
+                "allocated": _mem["used_gb"],
+                "reserved": 0.0,
+                "total": _mem["total_gb"],
+            }
+            print(f"📊 ИНФОРМАЦИЯ О РЕСУРСАХ (Ollama):")
+            print(f"   • Тип: Ollama (локальный API)")
+            print(f"   • GPU память (nvidia-smi): {memory_after_load['allocated']:.2f} / {memory_after_load['total']:.2f} GB")
+            print()
+            gpu_info_after = {"ollama": True}
         else:
             gpu_info_after = get_gpu_info()
             memory_after_load = get_gpu_memory_usage()
@@ -595,11 +619,12 @@ class ModelEvaluator:
         results = []
         parsing_errors = []  # Список словарей с ошибками: {"text_index": int, "text": str, "error": str, "response": str}
         times = []
-        memory_samples = []  # Для сбора измерений памяти во время инференса (только для локальных моделей)
+        memory_samples = []  # Для локальных моделей — torch; для Ollama — nvidia-smi (VRAM процесса Ollama)
+        ollama_metrics_list = []  # Метрики из ответов Ollama (eval_duration, eval_count и т.д.)
         total_start_time = time.time()
         
-        # Переводим в eval режим только локальные модели
-        if not is_api_model and hasattr(model, 'eval'):
+        # Переводим в eval режим только локальные модели (не API, не Ollama)
+        if not is_api_model and not is_ollama and hasattr(model, 'eval'):
             model.eval()
         
         print(f"🔄 ОБРАБОТКА ДАТАСЕТА")
@@ -661,8 +686,8 @@ class ModelEvaluator:
                         elapsed = time.time() - start_time
                         times.append(elapsed)
                         
-                        # Измеряем память во время инференса
-                        if not is_api_model:
+                        # Измеряем память во время инференса (только для локальных моделей с весами)
+                        if not is_api_model and not is_ollama:
                             memory_sample = get_gpu_memory_usage()
                             memory_samples.append(memory_sample["allocated"])
                         
@@ -741,25 +766,36 @@ class ModelEvaluator:
                     response_text, elapsed, error_msg = self._generate_response_with_retries(
                         model, tokenizer, prompt, generate_func,
                         hyperparameters, max_new_tokens, num_retries,
-                        is_api_model, verbose, i, len(self.texts), text,
+                        is_api_model or is_ollama, verbose, i, len(self.texts), text,
                         times, memory_samples, parsing_errors
                     )
-                    
+                    # Ollama: замер GPU через nvidia-smi и сбор метрик из ответа API
+                    if is_ollama and response_text:
+                        from gpu_info import get_gpu_memory_usage_nvidia_smi
+                        _m = get_gpu_memory_usage_nvidia_smi()
+                        memory_samples.append(_m.get("used_gb", 0.0))
+                        try:
+                            from model_loaders_ollama import get_last_ollama_metrics
+                            _om = get_last_ollama_metrics()
+                            if _om:
+                                ollama_metrics_list.append(_om)
+                        except Exception:
+                            pass
                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
                     if verbose and response_text:
-                        self._print_verbose_output(text, response_text, is_api_model, i, len(self.texts))
+                        self._print_verbose_output(text, response_text, is_api_model or is_ollama, i, len(self.texts))
                     
                     if not response_text:
                         result = self._handle_no_response(
                             text, i, len(self.texts), error_msg,
-                            is_api_model, verbose, parsing_errors
+                            is_api_model or is_ollama, verbose, parsing_errors
                         )
                         results.append(result)
                         continue
                     
                     # Обрабатываем ответ: валидация, парсинг JSON
                     result = self._process_response(
-                        response_text, text, i, is_api_model, verbose, parsing_errors
+                        response_text, text, i, is_api_model or is_ollama, verbose, parsing_errors
                     )
                     results.append(result)
             
@@ -893,25 +929,35 @@ class ModelEvaluator:
                                     response_text, elapsed, error_msg = self._generate_response_with_retries(
                                         model, tokenizer, prompt, generate_func,
                                         hyperparameters, max_new_tokens, num_retries,
-                                        is_api_model, verbose, i, len(self.texts), self.texts[i],
+                                        is_api_model or is_ollama, verbose, i, len(self.texts), self.texts[i],
                                         times, memory_samples, parsing_errors
                                     )
-                                    
+                                    if is_ollama and response_text:
+                                        from gpu_info import get_gpu_memory_usage_nvidia_smi
+                                        _m = get_gpu_memory_usage_nvidia_smi()
+                                        memory_samples.append(_m.get("used_gb", 0.0))
+                                        try:
+                                            from model_loaders_ollama import get_last_ollama_metrics
+                                            _om = get_last_ollama_metrics()
+                                            if _om:
+                                                ollama_metrics_list.append(_om)
+                                        except Exception:
+                                            pass
                                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
                                     if verbose and response_text:
-                                        self._print_verbose_output(self.texts[i], response_text, is_api_model, i, len(self.texts))
+                                        self._print_verbose_output(self.texts[i], response_text, is_api_model or is_ollama, i, len(self.texts))
                                     
                                     if not response_text:
                                         result = self._handle_no_response(
                                             self.texts[i], i, len(self.texts), error_msg,
-                                            is_api_model, verbose, parsing_errors
+                                            is_api_model or is_ollama, verbose, parsing_errors
                                         )
                                         results.append(result)
                                         continue
                                     
                                     # Обрабатываем ответ: валидация, парсинг JSON
                                     result = self._process_response(
-                                        response_text, self.texts[i], i, is_api_model, verbose, parsing_errors
+                                        response_text, self.texts[i], i, is_api_model or is_ollama, verbose, parsing_errors
                                     )
                                     results.append(result)
                                 
@@ -975,6 +1021,7 @@ class ModelEvaluator:
             # Для API моделей не измеряем память
             memory_during_inference_avg = 0.0
         elif memory_samples:
+            # Для локальных моделей — torch allocated; для Ollama — nvidia-smi used_gb
             memory_during_inference_avg = sum(memory_samples) / len(memory_samples)
         else:
             # Fallback: измеряем сейчас, если не было измерений
@@ -1040,6 +1087,15 @@ class ModelEvaluator:
             print(f"💾 ИНФОРМАЦИЯ О РЕСУРСАХ:")
             print(f"   • Тип: API (Google Generative AI)")
             print(f"   • Модель доступна через API")
+            print()
+        elif is_ollama:
+            print(f"💾 ИСПОЛЬЗОВАНИЕ РЕСУРСОВ (Ollama, nvidia-smi):")
+            print(f"   • После загрузки: {memory_after_load['allocated']:.2f} GB")
+            print(f"   • Во время инференса (средн.): {memory_during_inference_avg:.2f} GB")
+            if ollama_metrics_list:
+                total_ns = sum(m.get("total_duration_ns") or 0 for m in ollama_metrics_list)
+                eval_count = sum(m.get("eval_count") or 0 for m in ollama_metrics_list)
+                print(f"   • Метрики Ollama: {len(ollama_metrics_list)} ответов, всего токенов: {eval_count}, total_duration: {total_ns/1e9:.1f} с")
             print()
         else:
             print(f"💾 ИСПОЛЬЗОВАНИЕ ПАМЯТИ:")
@@ -1291,10 +1347,12 @@ class ModelEvaluator:
             "raw_output_metrics": raw_output_metrics,  # Метрики для raw output
             # Остальные поля
             "multi_agent_mode": multi_agent_mode if use_multi_agent else None,
-            "gpu_info": gpu_info_before if not is_api_model else {"api": True},
+            "gpu_info": gpu_info_before if not (is_api_model or is_ollama) else ({"api": True} if is_api_model else {"ollama": True}),
             "gpu_memory_after_load_gb": memory_after_load["allocated"] if not is_api_model else 0.0,
             "gpu_memory_during_inference_gb": memory_during_inference_avg if not is_api_model else 0.0,
             "api_model": is_api_model,
+            "ollama": is_ollama,
+            "ollama_metrics": ollama_metrics_list if is_ollama else None,
             "average_response_time_seconds": avg_speed,
             "hyperparameters": hyperparameters_to_save,
             "prompt_template": PROMPT_TEMPLATE_NAME if not use_multi_agent else multi_agent_mode,

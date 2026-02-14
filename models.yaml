@@ -153,3 +153,10 @@ models:
       max_new_tokens: 512
       do_sample: false
       torch_dtype: "bfloat16"
+
+  # Ollama: локальный API (ollama pull <name> перед запуском). Хост: OLLAMA_HOST или http://localhost:11434
+  # gemma3-4b-ollama:
+  #   name: "gemma3:4b"
+  #   hyperparameters:
+  #     max_new_tokens: 512
+  #     do_sample: false

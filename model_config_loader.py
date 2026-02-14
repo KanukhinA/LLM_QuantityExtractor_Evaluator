@@ -27,21 +27,29 @@ def load_model_configs():
     model_loaders_api_module = None
     
     configs = {}
+    model_loaders_ollama_module = None
     for model_key, model_config in yaml_data['models'].items():
         # Автоматическое определение модулей и функций, если не указаны явно
         is_api_model = "-api" in model_key
-        
+        is_ollama = "-ollama" in model_key
+
         # Определяем load_module
         if 'load_module' in model_config:
             load_module_name = model_config['load_module']
         else:
-            load_module_name = "model_loaders_api" if is_api_model else "model_loaders"
-        
+            if is_ollama:
+                load_module_name = "model_loaders_ollama"
+            else:
+                load_module_name = "model_loaders_api" if is_api_model else "model_loaders"
+
         # Определяем generate_module
         if 'generate_module' in model_config:
             generate_module_name = model_config['generate_module']
         else:
-            generate_module_name = "model_loaders_api" if is_api_model else "model_loaders"
+            if is_ollama:
+                generate_module_name = "model_loaders_ollama"
+            else:
+                generate_module_name = "model_loaders_api" if is_api_model else "model_loaders"
         
         # Определяем load_func: явно в YAML или по name (для локальных моделей)
         if 'load_func' in model_config:
@@ -51,7 +59,7 @@ def load_model_configs():
             name = (model_config.get('name') or '').lower()
             if not is_api_model and 'gemma-3' in name:
                 load_func_name = 'load_gemma_3'
-            elif not is_api_model and ('mistralai/' in name or 'ministral' in name):
+            elif not is_api_model and ('mistralai' in name or 'ministral' in name):
                 load_func_name = 'load_mistral_3'
             else:
                 load_func_name = f"load_{model_key.replace('-', '_').replace('.', '_').lower()}"
@@ -85,12 +93,16 @@ def load_model_configs():
             import model_loaders as model_loaders_module
         elif load_module_name == "model_loaders_api" and model_loaders_api_module is None:
             import model_loaders_api as model_loaders_api_module
-        
+        elif load_module_name == "model_loaders_ollama" and model_loaders_ollama_module is None:
+            import model_loaders_ollama as model_loaders_ollama_module
+
         # Импортируем generate_module если нужно
         if generate_module_name == "model_loaders" and model_loaders_module is None:
             import model_loaders as model_loaders_module
         elif generate_module_name == "model_loaders_api" and model_loaders_api_module is None:
             import model_loaders_api as model_loaders_api_module
+        elif generate_module_name == "model_loaders_ollama" and model_loaders_ollama_module is None:
+            import model_loaders_ollama as model_loaders_ollama_module
         
         # Преобразуем гиперпараметры (конвертируем строки в нужные типы)
         # Делаем это до создания load_func, чтобы использовать преобразованные значения
@@ -109,17 +121,23 @@ def load_model_configs():
             else:
                 hyperparameters[key] = value
         
+        # Ollama: помечаем в hyperparameters, загрузчик возвращает (model_name, None)
+        if is_ollama:
+            hyperparameters["ollama"] = True
+
         # Получаем функции по имени
         # Если индивидуальная функция не найдена, используем универсальную (только для локальных моделей)
-        if load_module_name == "model_loaders":
+        if load_module_name == "model_loaders_ollama":
+            _name = model_config["name"]
+            load_func = (lambda name: lambda: model_loaders_ollama_module.load_ollama(name))(_name)
+            generate_func = model_loaders_ollama_module.generate_ollama
+        elif load_module_name == "model_loaders":
             try:
                 raw_load = getattr(model_loaders_module, load_func_name)
                 _hp = hyperparameters
                 _name = model_config["name"]
                 # Загрузчики с именем модели из конфига (не из сигнатуры)
-                if load_func_name == "load_gemma_3":
-                    load_func = (lambda name, hp: lambda: raw_load(name, hyperparameters=hp))(_name, _hp)
-                elif load_func_name == "load_mistral_3":
+                if load_func_name in ("load_gemma_3", "load_mistral_3"):
                     load_func = (lambda name, hp: lambda: raw_load(name, hyperparameters=hp))(_name, _hp)
                 else:
                     load_func = (lambda h: lambda: raw_load(h))(_hp)
@@ -138,13 +156,18 @@ def load_model_configs():
                         trust_remote_code=_hp.get('trust_remote_code', True),
                         hyperparameters=_hp,
                     )
+        elif load_module_name == "model_loaders_api":
+            load_func = getattr(model_loaders_api_module, load_func_name)
         else:
             load_func = getattr(model_loaders_api_module, load_func_name)
-        
-        if generate_module_name == "model_loaders":
-            generate_func = getattr(model_loaders_module, generate_func_name)
-        else:
-            generate_func = getattr(model_loaders_api_module, generate_func_name)
+
+        if load_module_name != "model_loaders_ollama":
+            if generate_module_name == "model_loaders":
+                generate_func = getattr(model_loaders_module, generate_func_name)
+            elif generate_module_name == "model_loaders_ollama":
+                generate_func = model_loaders_ollama_module.generate_ollama
+            else:
+                generate_func = getattr(model_loaders_api_module, generate_func_name)
         
         configs[model_key] = {
             "name": model_config['name'],
