@@ -30,20 +30,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"{'='*80}")
         print(f"ВНИМАНИЕ: Gemini API недоступен")
         print(f"{'='*80}")
-        print(f"Оценка моделей будет выполнена, но анализ ошибок через Gemini будет пропущен.")
-        print(f"Вы можете продолжить без анализатора ошибок или исправить проблему и запустить заново.\n")
-        
-        while True:
-            response = input("Продолжить без анализатора ошибок? (y/n): ").strip().lower()
-            if response in ['y', 'yes', 'да', 'д']:
-                use_gemini = False
-                print("Продолжаем без анализатора ошибок...\n")
-                break
-            elif response in ['n', 'no', 'нет', 'н']:
-                print("Запуск отменён. Исправьте проблему с Gemini API и попробуйте снова.")
-                return
-            else:
-                print("Пожалуйста, введите 'y' (да) или 'n' (нет)")
+        print(f"Оценка будет выполнена без анализа ошибок через Gemini.\n")
+        use_gemini = False
     
     # Выводим информацию о режимах
     if multi_agent_mode:

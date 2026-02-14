@@ -55,11 +55,14 @@ def _load_causal_4bit(
     На GPU задаётся лимит (объём минус 2 GiB), чтобы избежать OOM из-за фрагментации при загрузке.
     """
     from transformers import BitsAndBytesConfig
-    # Оставляем 2 GiB на GPU свободными, иначе при загрузке 4-bit часто OOM (пики/фрагментация)
+    # Меньше фрагментации VRAM при загрузке (рекомендация PyTorch при OOM)
+    if "PYTORCH_ALLOC_CONF" not in os.environ:
+        os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+    # Запас на GPU 4 GiB — при загрузке 4-bit пики памяти превышают стабильное использование, без запаса OOM
     max_memory = None
     try:
         total = torch.cuda.get_device_properties(0).total_memory
-        gb = max(1, int(total / (1024 ** 3)) - 2)
+        gb = max(1, int(total / (1024 ** 3)) - 4)
         max_memory = {0: f"{gb}GiB"}
     except Exception:
         pass
