@@ -181,8 +181,6 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     """
     name_lower = (model_name or "").lower()
     if "mistralai" not in name_lower and "ministral" not in name_lower:
-        if "gemma-3" in name_lower:
-            return load_gemma_3(model_name, hyperparameters=hyperparameters)
         return load_standard_model(model_name, hyperparameters=hyperparameters)
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):

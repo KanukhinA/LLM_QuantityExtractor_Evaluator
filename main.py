@@ -82,6 +82,21 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         print(f"Ошибка записана в log файл: {log_file}")
         return result
     
+    if result.get("status") == "interrupted":
+        error_msg = (
+            f"\n{'='*80}\n"
+            f"ПРЕРЫВАНИЕ ОБРАБОТКИ МОДЕЛИ\n"
+            f"{'='*80}\n"
+            f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Модель: {model_config['name']}\n"
+            f"Причина: {result.get('message', 'Прервано пользователем без сохранения')}\n"
+            f"Обработано текстов: {result.get('processed_count', 0)}\n"
+            f"{'='*80}\n"
+        )
+        logging.error(error_msg)
+        print(f"Результаты не сохранены (прерывание). Запись в {log_file}")
+        return result
+    
     # Анализ через Gemini (если включен)
     if use_gemini:
         print(f"\n{'='*80}")
@@ -106,9 +121,9 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
         print()
         
         # Анализ через Gemini теперь выполняется внутри evaluate_model
-        # Сохраняем анализ в JSON, если он был выполнен
+        # Сохраняем анализ в JSON, если он был выполнен (не сохраняем при прерывании)
         gemini_analysis = result.get("gemini_analysis")
-        if gemini_analysis and gemini_analysis.get("status") == "success":
+        if gemini_analysis and gemini_analysis.get("status") == "success" and not result.get("interrupted"):
             timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M"))
             from model_evaluator import sanitize_filename
             
@@ -391,13 +406,19 @@ def main():
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)
             
             if result.get("status") != "error":
-                # Проверяем, была ли модель прервана по времени
+                # Проверяем, была ли модель прервана
                 if result.get("interrupted") and result.get("timeout_reason"):
                     timeout_reason = result.get("timeout_reason")
                     results_summary.append({
                         "model_key": model_key,
                         "status": "timeout",
                         "timeout_reason": timeout_reason,
+                        "result": result
+                    })
+                elif result.get("interrupted"):
+                    results_summary.append({
+                        "model_key": model_key,
+                        "status": "interrupted",
                         "result": result
                     })
                 else:
@@ -407,7 +428,7 @@ def main():
                         "result": result
                     })
                 
-                if len(model_keys) == 1:
+                if len(model_keys) == 1 and not result.get("interrupted"):
                     # Для одной модели выводим полную сводку
                     print(f"\n{'='*80}")
                     print(f"🎉 ФИНАЛЬНАЯ СВОДКА")
@@ -454,6 +475,8 @@ def main():
                     
                     print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")
                     print(f"{'='*80}\n")
+                elif len(model_keys) == 1 and result.get("interrupted"):
+                    print(f"\nОценка прервана. Результаты не сохранены (запись в model_errors.log).\n")
             else:
                 results_summary.append({
                     "model_key": model_key,
@@ -484,12 +507,14 @@ def main():
         successful = [s for s in results_summary if s['status'] == 'success']
         failed = [s for s in results_summary if s['status'] == 'error']
         timeout_models = [s for s in results_summary if s['status'] == 'timeout']
+        interrupted_models = [s for s in results_summary if s['status'] == 'interrupted']
         
         print(f"Общая статистика:")
         print(f"   • Всего моделей: {len(results_summary)}")
         print(f"   • Успешно оценено: {len(successful)}")
         print(f"   • Пропущено из-за ошибок: {len(failed)}")
         print(f"   • Прервано по времени: {len(timeout_models)}")
+        print(f"   • Прервано пользователем: {len(interrupted_models)}")
         print()
         
         if timeout_models:
@@ -502,6 +527,12 @@ def main():
                 print(f"   • {summary['model_key']}: {timeout_reason}")
                 if total_samples > 0:
                     print(f"     - Обработано текстов: {total_samples}/{total_count}")
+            print()
+        
+        if interrupted_models:
+            print(f"МОДЕЛИ, ПРЕРВАННЫЕ ПОЛЬЗОВАТЕЛЕМ (без сохранения):")
+            for summary in interrupted_models:
+                print(f"   • {summary['model_key']}")
             print()
         
         if successful:

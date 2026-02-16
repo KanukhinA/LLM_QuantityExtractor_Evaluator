@@ -91,7 +91,14 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
             
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False, stop_all_on_interrupt=True)  # Короткий вывод; при Ctrl+C — опция прервать все модели
             
-            if result.get("status") != "error":
+            if result.get("status") == "interrupted":
+                print(f"Модель {model_key} прервана (без сохранения)\n")
+                results_summary.append({
+                    "model": model_key,
+                    "status": "interrupted",
+                    "message": result.get("message", "Прервано пользователем")
+                })
+            elif result.get("status") != "error":
                 # Проверяем, была ли модель прервана по времени
                 if result.get("interrupted") and result.get("timeout_reason"):
                     timeout_reason = result.get("timeout_reason")
@@ -100,6 +107,13 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                         "model": model_key,
                         "status": "timeout",
                         "timeout_reason": timeout_reason
+                    })
+                elif result.get("interrupted"):
+                    print(f"Модель {model_key} прервана (без сохранения)\n")
+                    results_summary.append({
+                        "model": model_key,
+                        "status": "interrupted",
+                        "message": "Прервано пользователем"
                     })
                 else:
                     results_summary.append({
@@ -142,18 +156,26 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
     successful = [s for s in results_summary if s['status'] == 'success']
     failed = [s for s in results_summary if s['status'] == 'error']
     timeout_models = [s for s in results_summary if s['status'] == 'timeout']
+    interrupted_models = [s for s in results_summary if s['status'] == 'interrupted']
     
     print(f"Общая статистика:")
     print(f"   • Всего моделей: {len(results_summary)}")
     print(f"   • Успешно оценено: {len(successful)}")
     print(f"   • Пропущено из-за ошибок: {len(failed)}")
     print(f"   • Прервано по времени: {len(timeout_models)}")
+    print(f"   • Прервано пользователем: {len(interrupted_models)}")
     print()
     
     if timeout_models:
         print(f"МОДЕЛИ, ПРЕРВАННЫЕ ИЗ-ЗА ПРЕВЫШЕНИЯ ВРЕМЕНИ ИНФЕРЕНСА:")
         for summary in timeout_models:
             print(f"   • {summary['model']}: {summary.get('timeout_reason', 'Превышен лимит времени')}")
+        print()
+    
+    if interrupted_models:
+        print(f"МОДЕЛИ, ПРЕРВАННЫЕ ПОЛЬЗОВАТЕЛЕМ (без сохранения):")
+        for summary in interrupted_models:
+            print(f"   • {summary['model']}: {summary.get('message', 'Прервано')}")
         print()
     
     if successful:

@@ -4,6 +4,7 @@
 import torch
 import gc
 import time
+import logging
 import pandas as pd
 import json
 import copy
@@ -833,7 +834,7 @@ class ModelEvaluator:
             
             menu_lines = [
                 "Выберите действие:",
-                "  1 - Сохранить промежуточные результаты и завершить",
+                "  1 - Завершить (метрики в консоль, без сохранения)",
                 "  2 - Продолжить обработку",
                 "  3 - Завершить без сохранения",
             ]
@@ -982,7 +983,7 @@ class ModelEvaluator:
                                 "parsing_errors": parsing_errors,
                             }
                         except KeyboardInterrupt:
-                            print(f"\n\n⚠️  Повторное прерывание. Сохранение промежуточных результатов...")
+                            print(f"\n\n⚠️  Повторное прерывание. Завершение без сохранения...")
                             interrupted = True
                             break
                         break
@@ -1001,7 +1002,7 @@ class ModelEvaluator:
                 except StopAllModelsInterrupt:
                     raise
                 except KeyboardInterrupt:
-                    print("\n\n⚠️  Повторное прерывание. Сохранение промежуточных результатов...")
+                    print("\n\n⚠️  Повторное прерывание. Завершение без сохранения...")
                     interrupted = True
                     break
         
@@ -1369,9 +1370,24 @@ class ModelEvaluator:
             "gemini_analysis": gemini_analysis
         }
         
-        # Сохраняем результаты
-        print(f"💾 СОХРАНЕНИЕ РЕЗУЛЬТАТОВ...")
-        self._save_results(evaluation_result, results)
+        # При прерывании не сохраняем результаты, только пишем в model_errors.log
+        if interrupted:
+            log_file = os.path.join(self.output_dir, "model_errors.log")
+            error_msg = (
+                f"\n{'='*80}\n"
+                f"ПРЕРЫВАНИЕ ОБРАБОТКИ МОДЕЛИ\n"
+                f"{'='*80}\n"
+                f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Модель: {model_name}\n"
+                f"Причина: {timeout_reason or 'Прервано пользователем'}\n"
+                f"Обработано текстов: {len(results)}/{len(self.texts)}\n"
+                f"{'='*80}\n"
+            )
+            logging.error(error_msg)
+            print(f"\nРезультаты не сохранены (прерывание). Запись в {log_file}")
+        else:
+            print(f"💾 СОХРАНЕНИЕ РЕЗУЛЬТАТОВ...")
+            self._save_results(evaluation_result, results)
         
         print(f"\n{'='*80}")
         if interrupted:
