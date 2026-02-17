@@ -72,5 +72,9 @@ def load_api_keys():
     if OPENAI_API_KEY == "":
         OPENAI_API_KEY = None
     
+    # Устанавливаем HF_TOKEN в окружение для huggingface_hub (transformers, mistral-common и т.д.)
+    if HF_TOKEN:
+        os.environ["HF_TOKEN"] = HF_TOKEN
+    
     return HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY
 

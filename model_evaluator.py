@@ -657,15 +657,15 @@ class ModelEvaluator:
         
         try:
             for i, text in enumerate(self.texts):
-                # Проверяем время перед обработкой нового текста
-                elapsed_time = time.time() - total_start_time
-                if elapsed_time > max_inference_time_seconds:
+                # Проверяем среднее время инференса (сумма/количество) перед обработкой нового текста
+                avg_inference_time = sum(times) / len(times) if times else 0
+                if avg_inference_time > max_inference_time_seconds:
                     interrupted = True
                     last_processed_index = i - 1
                     timeout_reason = f"Превышен лимит времени ({MAX_INFERENCE_TIME_MINUTES} минут)"
-                    elapsed_minutes = elapsed_time / 60
+                    avg_minutes = avg_inference_time / 60
                     print(f"\n   ⚠️ Прерывание инференса: превышен лимит времени ({MAX_INFERENCE_TIME_MINUTES} минут)")
-                    print(f"   ⏱️ Затрачено времени: {elapsed_minutes:.1f} минут")
+                    print(f"   ⏱️ Среднее время инференса: {avg_minutes:.1f} мин/ответ")
                     print(f"   📊 Обработано текстов: {i}/{len(self.texts)}")
                     break
                 
