@@ -1,59 +1,128 @@
 """
 Pydantic схемы для structured output
+Латиница в именах полей — для совместимости с outlines (regex/токенизация).
+Кириллица в alias и description — для вывода и валидации.
 """
-from typing import List, Optional, Union
-from pydantic import BaseModel, Field
+from typing import List, Optional, Union, Any
+from pydantic import BaseModel, Field, ConfigDict
+
+
+LATIN_TO_CYRILLIC_KEYS = {
+    "mass_fractions": "массовая доля",
+    "other_params": "прочее",
+    "substance_name": "вещество",
+    "mass_fraction": "массовая доля",
+    "parameter_name": "параметр",
+    "mass": "масса",
+    "volume": "объем",
+    "quantity": "количество",
+    "value": "значение",
+    "unit": "единица",
+}
+
+
+def latin_to_cyrillic_output(obj: Any) -> Any:
+    """Преобразует вывод outlines (латиница) в формат с кириллическими ключами для пайплайна."""
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            new_key = LATIN_TO_CYRILLIC_KEYS.get(k, k)
+            result[new_key] = latin_to_cyrillic_output(v)
+        return result
+    elif isinstance(obj, list):
+        return [latin_to_cyrillic_output(item) for item in obj]
+    return obj
 
 
 class MassDolyaItem(BaseModel):
     """Элемент массовой доли"""
-    вещество: str = Field(description="Название вещества (например, N, P2O5, K2O)")
-    массовая_доля: Union[float, List[Optional[float]]] = Field(
-        alias="массовая доля",
-        description="Массовая доля в процентах. Может быть числом или списком [min, max] для диапазонов"
+    substance_name: str = Field(
+        alias="вещество",
+        description="Название вещества (например, N, P2O5, K2O)"
     )
-    
-    class Config:
-        populate_by_name = True  # Позволяет использовать как "массовая доля", так и "массовая_доля"
+    mass_fraction: Union[float, List[Optional[float]]] = Field(
+        alias="массовая доля",
+        description="Массовая доля в процентах. Число или список [min, max]"
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ProcheeItem(BaseModel):
     """Элемент прочих параметров"""
-    параметр: str = Field(description="Название параметра (например: масса нетто единицы, масса брутто, объем нетто единицы, количество поддонов, количество мешков, количество единиц, количество вагонов, количество биг-бэгов, стандарт, марка, концентрация N, концентрация P2O5 и т.д.)")
-    масса: Optional[Union[float, List[Optional[float]]]] = Field(
-        default=None,
-        description="Масса в кг (для параметров: масса нетто единицы, масса брутто, масса нетто, масса п/э мешков, масса стрейч плёнки, масса брутто единицы)"
+    parameter_name: str = Field(
+        alias="параметр",
+        description="Название параметра (масса нетто, объем, количество и т.д.)"
     )
-    объем: Optional[Union[float, List[Optional[float]]]] = Field(
+    mass: Optional[Union[float, List[Optional[float]]]] = Field(
         default=None,
-        description="Объем в л или мл (для параметров: объем нетто единицы)"
+        alias="масса",
+        description="Масса в кг"
     )
-    количество: Optional[Union[float, List[Optional[float]]]] = Field(
+    volume: Optional[Union[float, List[Optional[float]]]] = Field(
         default=None,
-        description="Количество в шт (для параметров: количество поддонов, количество мешков, количество единиц, количество вагонов, количество биг-бэгов)"
+        alias="объем",
+        description="Объем в л или мл"
     )
-    значение: Optional[Union[str, float]] = Field(
+    quantity: Optional[Union[float, List[Optional[float]]]] = Field(
         default=None,
-        description="Текстовое значение для стандарта/марки (например: 'ТУ 2184-037-32496445-02', 'N7-P20-K30-S3') или числовое значение для концентраций (например: 9.12 для концентрация N в г/л)"
+        alias="количество",
+        description="Количество в шт"
     )
-    единица: Optional[str] = Field(
+    value: Optional[Union[str, float]] = Field(
         default=None,
-        description="Единица измерения: кг (для массы), л или мл (для объема), шт (для количества), г/л или мг/л (для концентраций), или отсутствует для стандарта и марки"
+        alias="значение",
+        description="Текстовое или числовое значение"
     )
+    unit: Optional[str] = Field(
+        default=None,
+        alias="единица",
+        description="Единица измерения"
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class FertilizerExtractionOutput(BaseModel):
     """Структурированный вывод для извлечения данных об удобрениях"""
-    массовая_доля: List[MassDolyaItem] = Field(
+    mass_fractions: List[MassDolyaItem] = Field(
         alias="массовая доля",
         default_factory=list,
         description="Список веществ с их массовыми долями"
     )
-    прочее: List[ProcheeItem] = Field(
+    other_params: List[ProcheeItem] = Field(
+        alias="прочее",
         default_factory=list,
-        description="Список прочих параметров (масса, объем, количество, стандарт, марка и т.д.)"
+        description="Список прочих параметров"
     )
-    
-    class Config:
-        populate_by_name = True  # Позволяет использовать как "массовая доля", так и "массовая_доля"
 
+    model_config = ConfigDict(populate_by_name=True)
+
+
+# Схема только с латиницей — для outlines (без alias, JSON schema с Latin keys)
+class MassDolyaItemLatin(BaseModel):
+    substance_name: str = Field(description="Название вещества (N, P2O5, K2O)")
+    mass_fraction: Union[float, List[Optional[float]]] = Field(
+        description="Массовая доля в процентах. Число или [min, max]"
+    )
+
+
+class ProcheeItemLatin(BaseModel):
+    parameter_name: str = Field(description="Название параметра")
+    mass: Optional[Union[float, List[Optional[float]]]] = Field(default=None, description="Масса в кг")
+    volume: Optional[Union[float, List[Optional[float]]]] = Field(default=None, description="Объем в л или мл")
+    quantity: Optional[Union[float, List[Optional[float]]]] = Field(default=None, description="Количество в шт")
+    value: Optional[Union[str, float]] = Field(default=None, description="Текстовое или числовое значение")
+    unit: Optional[str] = Field(default=None, description="Единица измерения")
+
+
+class FertilizerExtractionOutputLatin(BaseModel):
+    """Только латинские ключи — для outlines (совместимость с токенизатором)."""
+    mass_fractions: List[MassDolyaItemLatin] = Field(
+        default_factory=list,
+        description="Список веществ с их массовыми долями"
+    )
+    other_params: List[ProcheeItemLatin] = Field(
+        default_factory=list,
+        description="Список прочих параметров"
+    )

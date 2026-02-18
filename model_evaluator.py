@@ -163,10 +163,10 @@ class ModelEvaluator:
                 structured_output = hyperparameters.get("structured_output", False)
                 use_outlines = hyperparameters.get("use_outlines", False)
                 response_schema = None
-                # response_schema: для outlines используется всегда; для API моделей - при structured_output
+                # response_schema: для outlines (локальные) - Latin (совместимость с токенизатором); для API/без outlines - Cyrillic alias
                 if use_outlines or structured_output:
-                    from structured_schemas import FertilizerExtractionOutput
-                    response_schema = FertilizerExtractionOutput
+                    from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
+                    response_schema = FertilizerExtractionOutputLatin if (use_outlines and not is_api_model) else FertilizerExtractionOutput
                 
                 # Передаем repetition_penalty из гиперпараметров, если есть
                 repetition_penalty = hyperparameters.get("repetition_penalty")
@@ -769,8 +769,8 @@ class ModelEvaluator:
                     uo = hyperparameters.get("use_outlines", False)
                     rs = None
                     if uo or so:
-                        from structured_schemas import FertilizerExtractionOutput
-                        rs = FertilizerExtractionOutput
+                        from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
+                        rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
                     prompt = prompt_template(text, structured_output=so, response_schema=rs)
                     
                     # Генерируем ответ с повторными попытками
@@ -938,8 +938,8 @@ class ModelEvaluator:
                                     uo = hyperparameters.get("use_outlines", False)
                                     rs = None
                                     if uo or so:
-                                        from structured_schemas import FertilizerExtractionOutput
-                                        rs = FertilizerExtractionOutput
+                                        from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
+                                        rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
                                     prompt = prompt_template(self.texts[i], structured_output=so, response_schema=rs)
                                     
                                     # Генерируем ответ с повторными попытками

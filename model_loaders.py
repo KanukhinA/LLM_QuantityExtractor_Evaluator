@@ -52,6 +52,7 @@ def _generate_with_outlines(
 ) -> str:
     """
     Генерация JSON через outlines. Поддерживает старый (generate.json) и новый (Generator) API.
+    Выбрасывает RuntimeError при ошибке (в т.ч. несовместимость словаря токенизатора с regex для кириллической схемы).
     """
     try:
         import outlines  # type: ignore
@@ -76,8 +77,16 @@ def _generate_with_outlines(
 
     if isinstance(generated, (dict, list)):
         import json as _json
-        return _json.dumps(generated, ensure_ascii=False, indent=2)
+        from structured_schemas import latin_to_cyrillic_output
+        converted = latin_to_cyrillic_output(generated)
+        return _json.dumps(converted, ensure_ascii=False, indent=2)
     return str(generated).strip()
+
+
+def _is_outlines_vocabulary_error(exc: BaseException) -> bool:
+    """Проверяет, является ли ошибка несовместимостью словаря токенизатора с regex outlines (кириллица и т.д.)."""
+    msg = str(exc).lower()
+    return "vocabulary" in msg and ("incompatible" in msg or "incompat" in msg)
 
 
 def _load_causal_4bit(
@@ -460,7 +469,14 @@ def generate_gemma(
         try:
             return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
         except Exception as e:
-            raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+            if _is_outlines_vocabulary_error(e):
+                warnings.warn(
+                    f"Outlines несовместим со словарём токенизатора (кириллическая схема). "
+                    f"Используем обычную генерацию. Детали: {e}",
+                    UserWarning
+                )
+            else:
+                raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
     
     # Для Gemma 3 используем правильный формат сообщений
     # Проверяем, является ли модель Gemma3ForCausalLM
@@ -612,7 +628,14 @@ def generate_standard(
         try:
             return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
         except Exception as e:
-            raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+            if _is_outlines_vocabulary_error(e):
+                warnings.warn(
+                    f"Outlines несовместим со словарём токенизатора (кириллическая схема). "
+                    f"Используем обычную генерацию. Детали: {e}",
+                    UserWarning
+                )
+            else:
+                raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
 
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
@@ -686,7 +709,14 @@ def generate_qwen(
         try:
             return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
         except Exception as e:
-            raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+            if _is_outlines_vocabulary_error(e):
+                warnings.warn(
+                    f"Outlines несовместим со словарём токенизатора (кириллическая схема). "
+                    f"Используем обычную генерацию. Детали: {e}",
+                    UserWarning
+                )
+            else:
+                raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
     
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
