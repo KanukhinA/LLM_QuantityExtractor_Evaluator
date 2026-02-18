@@ -220,9 +220,10 @@ def main():
     """Главная функция"""
     # Сначала парсим аргументы командной строки, чтобы проверить флаг --no-gemini
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         print("\nАргументы:")
         print("  <model_name>        - ключ модели из конфигурации (можно указать несколько через запятую или пробел)")
+        print("  --prompt NAME       - (опционально) название промпта из prompt_config.py (переопределяет config.PROMPT_TEMPLATE_NAME)")
         print("  --multi-agent       - (опционально) режим мультиагентного подхода")
         print("                        Доступные режимы: simple_4agents, critic_3agents, qa_workflow")
         print("  --structured-output - (опционально) использовать structured output через Pydantic")
@@ -242,6 +243,7 @@ def main():
         print("  python main.py qwen-3-32b-api --structured-output")
         print("  python main.py qwen-2.5-3b --no-gemini")
         print("  python main.py qwen-2.5-3b --structured-output --outlines")
+        print("  python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
@@ -255,6 +257,7 @@ def main():
     use_outlines = False
     use_gemini = True  # По умолчанию включен
     verbose = True  # По умолчанию включен для main.py
+    prompt_template_name = None
     
     i = 1
     while i < len(sys.argv):
@@ -268,6 +271,13 @@ def main():
                     i += 2
                 else:
                     print("Ошибка: после --multi-agent должен быть указан режим (например, simple_4agents)")
+                    return
+            elif arg == "--prompt":
+                if i + 1 < len(sys.argv):
+                    prompt_template_name = sys.argv[i + 1]
+                    i += 2
+                else:
+                    print("Ошибка: после --prompt укажите название промпта (например, DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES)")
                     return
             elif arg == "--structured-output":
                 structured_output = True
@@ -286,7 +296,7 @@ def main():
                 i += 1
             else:
                 print(f"Неизвестный аргумент: {arg}")
-                print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+                print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
                 return
         else:
             # Это модель или список моделей через запятую
@@ -301,7 +311,7 @@ def main():
     # Проверяем, что указаны модели
     if not model_keys:
         print("Ошибка: не указаны модели для оценки")
-        print("Использование: python main.py <model_name> [model_name2 ...] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         return
     
     # Проверяем, что все модели существуют
@@ -370,6 +380,8 @@ def main():
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
     if use_outlines:
         print(f"📌 Outlines: Включен")
+    if prompt_template_name:
+        print(f"📌 Промпт: {prompt_template_name}")
     if verbose:
         print(f"📌 Verbose: Включен (подробный вывод)")
     else:
@@ -401,6 +413,8 @@ def main():
             config["hyperparameters"]["structured_output"] = True
         if use_outlines:
             config["hyperparameters"]["use_outlines"] = True
+        if prompt_template_name is not None:
+            config["hyperparameters"]["prompt_template_name"] = prompt_template_name
         
         try:
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)

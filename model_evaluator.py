@@ -792,7 +792,8 @@ class ModelEvaluator:
                     if uo or so:
                         from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                         rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
-                    prompt = prompt_template(text, structured_output=so, response_schema=rs)
+                    pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
+                    prompt = prompt_template(text, structured_output=so, response_schema=rs, prompt_template_name=pt_name)
                     
                     # Генерируем ответ с повторными попытками
                     response_text, elapsed, error_msg = self._generate_response_with_retries(
@@ -961,7 +962,8 @@ class ModelEvaluator:
                                     if uo or so:
                                         from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                                         rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
-                                    prompt = prompt_template(self.texts[i], structured_output=so, response_schema=rs)
+                                    pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
+                                    prompt = prompt_template(self.texts[i], structured_output=so, response_schema=rs, prompt_template_name=pt_name)
                                     
                                     # Генерируем ответ с повторными попытками
                                     response_text, elapsed, error_msg = self._generate_response_with_retries(
@@ -1092,7 +1094,8 @@ class ModelEvaluator:
             full_prompt_example = workflow_prompts["full_prompt_example"]
             workflow_description = workflow_prompts.get("description", "")
         else:
-            full_prompt_example = prompt_template(example_text)
+            pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
+            full_prompt_example = prompt_template(example_text, prompt_template_name=pt_name)
         
         # Выводим информацию о промпте и режиме
         print(f"📝 ИСПОЛЬЗОВАННЫЙ ПРОМПТ:")
@@ -1395,7 +1398,7 @@ class ModelEvaluator:
             "ollama_metrics": ollama_metrics_list if is_ollama else None,
             "average_response_time_seconds": avg_speed,
             "hyperparameters": hyperparameters_to_save,
-            "prompt_template": PROMPT_TEMPLATE_NAME if not use_multi_agent else multi_agent_mode,
+            "prompt_template": (hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME) if not use_multi_agent else multi_agent_mode,
             "prompt_full_text": full_prompt_example,
             "prompt_info": prompt_info,
             "parsing_errors": parsing_errors,

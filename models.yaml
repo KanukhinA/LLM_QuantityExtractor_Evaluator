@@ -2,6 +2,7 @@
 # Каждая модель содержит:
 # - name: название модели на HuggingFace или для API
 # - hyperparameters: словарь гиперпараметров для генерации
+#   - prompt_template_name: (опционально) название промпта из prompt_config.py, переопределяет config.PROMPT_TEMPLATE_NAME
 #
 # Остальные параметры (load_func, load_module, generate_func, generate_module)
 # определяются автоматически по имени модели:

@@ -8,8 +8,9 @@ from gemini_analyzer import check_gemini_api
 from config import GEMINI_API_KEY, MODEL_CONFIGS
 from model_evaluator import StopAllModelsInterrupt
 
-def run_all_models(local_only: bool = False, multi_agent_mode: str = None, 
-                   structured_output: bool = False, use_outlines: bool = False):
+def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
+                   structured_output: bool = False, use_outlines: bool = False,
+                   prompt_template_name: str = None):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -43,6 +44,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
     if use_outlines:
         print(f"📌 Outlines: Включен")
+    if prompt_template_name:
+        print(f"📌 Промпт: {prompt_template_name}")
     print()
     
     # Фильтруем модели, если указан флаг local_only
@@ -88,6 +91,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                 config["hyperparameters"]["structured_output"] = True
             if use_outlines:
                 config["hyperparameters"]["use_outlines"] = True
+            if prompt_template_name is not None:
+                config["hyperparameters"]["prompt_template_name"] = prompt_template_name
             
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False, stop_all_on_interrupt=True)  # Короткий вывод; при Ctrl+C — опция прервать все модели
             
@@ -218,12 +223,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Использовать библиотеку outlines для структурированной генерации JSON (только для локальных моделей с --structured-output)"
     )
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        metavar="NAME",
+        help="Название промпта из prompt_config.py (например, DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES)"
+    )
     args = parser.parse_args()
     
     run_all_models(
         local_only=args.local_only,
         multi_agent_mode=args.multi_agent,
         structured_output=args.structured_output,
-        use_outlines=args.outlines
+        use_outlines=args.outlines,
+        prompt_template_name=args.prompt
     )
 

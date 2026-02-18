@@ -128,14 +128,20 @@ OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
 - `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"DETAILED_INSTR_ZEROSHOT_BASELINE"`):
   - `"DETAILED_INSTR_ZEROSHOT_BASELINE"` - детальный zero-shot промпт без примера (baseline)
   - `"DETAILED_INSTR_ONESHOT"` - детальный промпт с примером текста и ответа (One-shot prompt)
+  - `"DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES"` - zero-shot с примером JSON на латинице (для режима outlines)
+  - `"DETAILED_INSTR_ONESHOT_OUTLINES"` - one-shot с примером JSON на латинице (для режима outlines)
   - `"MINIMAL_FIVESHOT_PROMPT"` - минималистичный few-shot промпт с 5 примерами
   - `"MINIMAL_FIVESHOT_APIE_PROMPT"` - few-shot промпт с 5 примерами (версия APIE)
   - `"MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED"` - few-shot промпт для structured output
-  
+
   **Настройка в `config.py`:**
   ```python
   PROMPT_TEMPLATE_NAME = "DETAILED_INSTR_ZEROSHOT_BASELINE"  # или любая другая переменная из prompt_config.py
   ```
+
+  **Переопределение из консоли или models.yaml:**
+  - Флаг `--prompt NAME` в main.py и run_all_models.py переопределяет промпт для текущего запуска
+  - В `models.yaml` можно указать `hyperparameters.prompt_template_name` для конкретной модели
 
 - **Flash Attention 2 для локальных моделей:** по умолчанию включено (`USE_FLASH_ATTENTION_2=1`). При установленном пакете `flash-attn` все поддерживаемые локальные модели загружаются с `attn_implementation="flash_attention_2"` (экономия VRAM, ускорение). Если `flash-attn` не установлен, выводится предупреждение и модели загружаются без Flash Attention 2. Отключить: `set USE_FLASH_ATTENTION_2=0` (Windows) / `export USE_FLASH_ATTENTION_2=0` (Linux). Установка flash-attn: `pip install flash-attn --no-build-isolation` (требуется CUDA; на Windows сборка часто недоступна, рекомендуется Linux/WSL).
 
@@ -243,7 +249,7 @@ python main.py <model_key> --no-gemini
 
 Режим `--structured-output` — это **отдельный режим работы**, который включает:
 
-1. **Промпты** — используется тот же промпт, что и в обычном режиме (например, `FERTILIZER_EXTRACTION_PROMPT_TEMPLATE`). Для локальных моделей автоматически добавляется JSON Schema из Pydantic схемы в конец промпта, что помогает модели лучше понять ожидаемую структуру ответа.
+1. **Промпты** — используется промпт из `config.PROMPT_TEMPLATE_NAME` (или `hyperparameters.prompt_template_name` / `--prompt`). Для локальных моделей автоматически добавляется JSON Schema из Pydantic схемы в конец промпта, что помогает модели лучше понять ожидаемую структуру ответа.
 
 2. **JSON Schema в промпте** (для локальных моделей):
    - Pydantic схема автоматически конвертируется в JSON Schema
@@ -306,8 +312,9 @@ python main.py <model_key> --no-gemini
 Работает **только** для локальных моделей **вместе** с `--structured-output`.
 
 - Использует библиотеку `outlines` для гарантированной генерации валидного JSON
-- Модель генерирует токены, которые автоматически валидируются по схеме
-- Обеспечивает 100% валидность JSON на уровне генерации
+- Схема `FertilizerExtractionOutputLatin` с латинскими ключами (mass_fractions, other_params и т.д.) — совместимость с токенизатором
+- Результат автоматически конвертируется в кириллицу для метрик и пайплайна
+- Рекомендуется использовать промпты `*_OUTLINES` или флаг `--prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`
 
 **Примеры запуска:**
 
@@ -348,6 +355,9 @@ python main.py qwen-2.5-3b --structured-output
 # Structured output + outlines (локальные модели)
 python main.py qwen-2.5-3b --structured-output --outlines
 
+# Указание промпта из консоли (переопределяет config.PROMPT_TEMPLATE_NAME)
+python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines
+
 # Мультиагентный режим с structured output
 python main.py gemma-3-4b-api --multi-agent simple_4agents --structured-output
 
@@ -363,7 +373,7 @@ python main.py gemma-3-27b-api --structured-output
 - Быстрее (один запрос к модели)
 - Меньше использование памяти
 - Подходит для простых задач
-- Использует единый промпт из `config.PROMPT_TEMPLATE_NAME` (для structured output JSON Schema добавляется автоматически)
+- Использует промпт из `config.PROMPT_TEMPLATE_NAME` (переопределяется через `--prompt` или `hyperparameters.prompt_template_name`; для structured output JSON Schema добавляется автоматически)
 
 **Мультиагентный подход:**
 - Более точное извлечение данных за счет специализации
@@ -408,12 +418,16 @@ python run_all_models.py --structured-output
 # Оценка всех локальных моделей с structured output и outlines
 python run_all_models.py --local-only --structured-output --outlines
 
+# Указание промпта из консоли
+python run_all_models.py --local-only --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines
+
 # Комбинация параметров
 python run_all_models.py --local-only --multi-agent qa_workflow --structured-output
 ```
 
 **Доступные параметры:**
 - `--local-only` - запустить оценку только для локальных моделей (исключить API модели)
+- `--prompt NAME` - название промпта из prompt_config.py (переопределяет config.PROMPT_TEMPLATE_NAME)
 - `--multi-agent MODE` - режим мультиагентного подхода (simple_4agents, critic_3agents, qa_workflow)
 - `--structured-output` - использовать structured output через Pydantic
 - `--outlines` - использовать библиотеку outlines для структурированной генерации JSON (только для локальных моделей с --structured-output)
@@ -646,7 +660,7 @@ python google_sheets_integration.py --results-dir results
 - **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
 - **google/gemma-3-4b-it** - Gemma 3 4B it (ключ: `gemma-3-4b`). Загрузчик выбирается по `name` автоматически (`load_gemma_3`).
 - **google/gemma-3-12b-it** - Gemma 3 12B it (ключ: `gemma-3-12b`), ~24GB VRAM
-- **google/gemma-3-27b-it** - Gemma 3 27B: полная загрузка (~54GB VRAM) или 4-bit (ключ: `gemma-3-27b-4bit`, в hyperparameters указать `torch_dtype: "nf4"`), ~18–22GB VRAM
+- **google/gemma-3-27b-it** - Gemma 3 27B: 4-bit (ключ: `gemma-3-27b-4bit`), ~18–22GB VRAM
 - **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) — специализирована для работы с кодом, ~14GB VRAM
 
 **Qwen модели:**
@@ -757,7 +771,7 @@ python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
    - **Другая информация:**
      - Гиперпараметры модели
      - `prompt_template` - техническое название промпта
-     - `prompt_designation` - обозначение использованного промпта (из `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
+     - `prompt_designation` - обозначение использованного промпта (из `hyperparameters.prompt_template_name`, `config.PROMPT_TEMPLATE_NAME` или `multi_agent_{mode}`)
      - `prompt_full_text` - полный текст промпта
      - `prompt_info` - дополнительная информация о промптах (для мультиагентного режима)
      - Список ошибок парсинга
@@ -786,7 +800,7 @@ results/
 ```
 
 **Название папки промпта (`prompt_folder_name`):**
-- Для одноагентного режима: название промпта из `config.PROMPT_TEMPLATE_NAME`
+- Для одноагентного режима: название промпта из `hyperparameters.prompt_template_name` или `config.PROMPT_TEMPLATE_NAME`
 - Для мультиагентного режима: название режима (например, `simple_4agents`, `qa_workflow`)
 - Если используется `structured_output`:
   - С суффиксом `_structured` (если `structured_output=True`, `use_outlines=False`)
@@ -810,6 +824,8 @@ results/
 **Для одноагентного подхода:**
 - **`DETAILED_INSTR_ZEROSHOT_BASELINE`** - детальный zero-shot промпт без примера (baseline)
 - **`DETAILED_INSTR_ONESHOT`** - детальный промпт с примером текста и ответа (One-shot prompt)
+- **`DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`** - zero-shot с примером JSON на латинице (для режима outlines)
+- **`DETAILED_INSTR_ONESHOT_OUTLINES`** - one-shot с примером JSON на латинице (для режима outlines)
 - **`MINIMAL_FIVESHOT_PROMPT`** - минималистичный few-shot промпт с 5 примерами
 - **`MINIMAL_FIVESHOT_APIE_PROMPT`** - few-shot промпт с 5 примерами (версия APIE)
 - **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
@@ -832,8 +848,9 @@ results/
 - **`QA_GRADE_PROMPT`** - промпт для извлечения марки удобрения
 - **`QA_QUANTITY_PROMPT`** - промпт для извлечения количеств (массы, объемы, количество упаковок)
 
-**Для режима `--structured-output`:**
-- **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
+**Для режима `--structured-output` и `--outlines`:**
+- При outlines используется схема `FertilizerExtractionOutputLatin` (латинские ключи для совместимости с токенизатором); результат автоматически конвертируется в кириллицу
+- Рекомендуется использовать промпты `*_OUTLINES` с примером JSON на латинице (`mass_fractions`, `other_params` и т.д.)
 - Используется Pydantic схема `FertilizerExtractionOutput` из `structured_schemas.py` для валидации ответов
 
 ### 8.2. Поток данных в мультиагентном подходе
@@ -931,7 +948,7 @@ results/
 
 ### 9.1. Добавление локальной модели
 
-1. **Добавьте функцию загрузки в `model_loaders.py`** только если нужна особая логика (специальный класс, свои ошибки и т.д.). Для моделей с `name`, содержащим `gemma-3` или `ministral-3`/`mistral-3`, загрузчик подставляется автоматически. Для совместимости с Flash Attention 2 передайте `**_get_flash_attn_kwargs()` в `from_pretrained`.
+1. **Добавьте функцию загрузки в `model_loaders.py`** только если нужна особая логика (специальный класс, свои ошибки и т.д.). Для моделей с `name`, содержащим `gemma-3` или `ministral-3`/`mistral-3`, загрузчик подставляется автоматически.
 
 2. **Добавьте функцию генерации в `model_loaders.py`** (если нужна специализированная):
 ```python
@@ -949,6 +966,7 @@ models:
       max_new_tokens: 1024
       do_sample: false
       torch_dtype: "bfloat16"
+      # prompt_template_name: "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES" — переопределение промпта (опционально)
       # torch_dtype: "nf4" — загрузка в 4-bit (любая поддерживаемая модель)
       # max_cpu_gb_4bit: 8 — лимит CPU RAM при 4-bit (опционально)
 ```
@@ -1126,12 +1144,14 @@ python reevaluate.py
 | `python main.py <model_key> --structured-output` | Оценка с Pydantic валидацией | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --multi-agent <mode> --structured-output` | Оценка с мультиагентным режимом и Pydantic | Мультиагентный | Включен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --structured-output --outlines` | Оценка с Pydantic + outlines (локальные модели) | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --prompt NAME` | Оценка с указанным промптом | Одноагентный | — | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Включен (по умолчанию) | Отключен |
 | `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --local-only` | Оценка только локальных моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --multi-agent <mode>` | Оценка всех моделей | Мультиагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --structured-output` | Оценка всех моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --local-only --structured-output --outlines` | Оценка локальных моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --prompt NAME [опции]` | Оценка с указанным промптом | — | — | — | — |
 | `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | - | Отключен |
 | `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | - | Включен |
 | `python few_shot_extractor.py <model_key> [опции]` | Извлечение few-shot примеров | - | - | Опционально (`--verbose`) | - |
