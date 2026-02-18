@@ -68,12 +68,14 @@ def _generate_with_outlines(
         ) from e
 
     outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
+    # transformers ожидает max_new_tokens, не max_tokens
+    gen_kwargs = {"max_new_tokens": max_new_tokens}
     if use_generate_json:
         generator = generate.json(outlines_model, response_schema)
-        generated = generator(prompt, max_tokens=max_new_tokens)
+        generated = generator(prompt, **gen_kwargs)
     else:
         generator = Generator(outlines_model, output_type=response_schema)
-        generated = generator(prompt, max_tokens=max_new_tokens)
+        generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
         import json as _json
