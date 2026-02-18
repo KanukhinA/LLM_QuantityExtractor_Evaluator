@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional, Callable
 import os
 
 from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response
+from structured_schemas import latin_to_cyrillic_output, LATIN_TO_CYRILLIC_KEYS
 from metrics import calculate_quality_metrics, validate_with_pydantic, calculate_raw_output_metrics
 from gpu_info import get_gpu_info, get_gpu_memory_usage
 from multi_agent_graph import process_with_multi_agent
@@ -245,17 +246,31 @@ class ModelEvaluator:
     
     def _print_verbose_output(self, text, response_text, is_api_model, text_index, total_texts):
         """Выводит исходный текст и полный ответ в консоль (только при verbose)"""
-        print(f"\n   📝 Ответ #{text_index + 1}/{total_texts} - Исходный текст для анализа:")
-        print(f"   {'─'*76}")
+        print(f"\n   Ответ #{text_index + 1}/{total_texts} - Исходный текст для анализа:")
+        print(f"   {'-'*76}")
         for line in text.split('\n'):
             print(f"   {line}")
-        print(f"   {'─'*76}")
+        print(f"   {'-'*76}")
         model_type_label = "API модели" if is_api_model else "модели"
-        print(f"   📋 Ответ #{text_index + 1}/{total_texts} - Полный ответ {model_type_label}:")
-        print(f"   {'─'*76}")
+        print(f"   Ответ #{text_index + 1}/{total_texts} - Полный ответ {model_type_label}:")
+        print(f"   {'-'*76}")
         for line in response_text.split('\n'):
             print(f"   {line}")
-        print(f"   {'─'*76}")
+        print(f"   {'-'*76}")
+        # Если ответ содержит латинские ключи (mass_fractions, other_params), выводим версию на кириллице
+        try:
+            json_part = extract_json_from_response(response_text)
+            parsed = parse_json_safe(json_part)
+            if parsed and isinstance(parsed, dict) and any(k in LATIN_TO_CYRILLIC_KEYS for k in parsed):
+                converted = latin_to_cyrillic_output(parsed)
+                cyrillic_str = json.dumps(converted, ensure_ascii=False, indent=2)
+                print(f"   Версия на кириллице:")
+                print(f"   {'-'*76}")
+                for line in cyrillic_str.split('\n'):
+                    print(f"   {line}")
+                print(f"   {'-'*76}")
+        except Exception:
+            pass
     
     def _clean_parsed_json(self, parsed_json):
         """
@@ -359,7 +374,13 @@ class ModelEvaluator:
         json_part = extract_json_from_response(response_text)
         parsed_json = parse_json_safe(json_part)
         is_valid = is_valid_json(json_part)
-        
+        # Если распарсенный JSON содержит латинские ключи (mass_fractions, other_params), приводим к кириллице
+        if parsed_json and isinstance(parsed_json, dict) and any(k in LATIN_TO_CYRILLIC_KEYS for k in parsed_json):
+            parsed_json = latin_to_cyrillic_output(parsed_json)
+            try:
+                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
         # Очищаем parsed_json от записей с None или [None, None]
         if parsed_json and isinstance(parsed_json, dict):
             parsed_json = self._clean_parsed_json(parsed_json)

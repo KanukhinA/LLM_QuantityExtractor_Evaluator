@@ -388,33 +388,20 @@ def extract_json_from_response(response_text: str) -> str:
                 if extracted:
                     return extracted
             
-            # Если нет markdown блоков, ищем последний JSON объект или массив
-            # Ищем все вхождения открывающих фигурных скобок (для объектов)
-            brace_positions = []
-            bracket_positions = []  # Для массивов
-            
-            for i, char in enumerate(json_part):
-                if char == '{':
-                    brace_positions.append(i)
-                elif char == '[':
-                    bracket_positions.append(i)
-            
-            # Берем последний JSON (объект или массив)
-            last_obj_idx = brace_positions[-1] if brace_positions else -1
-            last_arr_idx = bracket_positions[-1] if bracket_positions else -1
-            
-            if last_obj_idx > last_arr_idx:
-                # Последний JSON - объект
-                extracted = json_part[last_obj_idx:].strip()
+            # Если нет markdown блоков, ищем JSON (первый { или [ — для вложенных структур)
+            first_brace = json_part.find("{")
+            first_bracket = json_part.find("[")
+            start = -1
+            if first_brace != -1 and first_bracket != -1:
+                start = min(first_brace, first_bracket)
+            elif first_brace != -1:
+                start = first_brace
+            elif first_bracket != -1:
+                start = first_bracket
+            if start != -1:
+                extracted = json_part[start:].strip()
                 if extracted:
                     return extracted
-            elif last_arr_idx != -1:
-                # Последний JSON - массив
-                extracted = json_part[last_arr_idx:].strip()
-                if extracted:
-                    return extracted
-            
-            # Если ничего не найдено, возвращаем как есть
             return json_part
     
     # 2. Если нет маркера "Ответ:", ищем последний markdown блок ```json ... ```
@@ -426,28 +413,20 @@ def extract_json_from_response(response_text: str) -> str:
         if extracted:
             return extracted
     
-    # 3. Ищем последний JSON объект или массив в тексте
-    brace_positions = []  # Для объектов
-    bracket_positions = []  # Для массивов
-    
-    for i, char in enumerate(response_text):
-        if char == '{':
-            brace_positions.append(i)
-        elif char == '[':
-            bracket_positions.append(i)
-    
-    # Берем последний JSON (объект или массив)
-    last_obj_idx = brace_positions[-1] if brace_positions else -1
-    last_arr_idx = bracket_positions[-1] if bracket_positions else -1
-    
-    if last_obj_idx > last_arr_idx:
-        # Последний JSON - объект
-        extracted = response_text[last_obj_idx:].strip()
-        if extracted:
-            return extracted
-    elif last_arr_idx != -1:
-        # Последний JSON - массив
-        extracted = response_text[last_arr_idx:].strip()
+    # 3. Ищем JSON объект или массив в тексте
+    # Важно: используем ПЕРВЫЙ { или [, т.к. при вложенных структурах {"a": [...], "b": [...]}
+    # последний [ указывает на середину объекта, что даёт невалидный фрагмент
+    first_brace = response_text.find("{")
+    first_bracket = response_text.find("[")
+    start = -1
+    if first_brace != -1 and first_bracket != -1:
+        start = min(first_brace, first_bracket)
+    elif first_brace != -1:
+        start = first_brace
+    elif first_bracket != -1:
+        start = first_bracket
+    if start != -1:
+        extracted = response_text[start:].strip()
         if extracted:
             return extracted
     
