@@ -163,9 +163,8 @@ class ModelEvaluator:
                 structured_output = hyperparameters.get("structured_output", False)
                 use_outlines = hyperparameters.get("use_outlines", False)
                 response_schema = None
-                
-                # Создаем response_schema для structured output (только для локальных моделей с outlines или для API моделей)
-                if structured_output:
+                # response_schema: для outlines используется всегда; для API моделей - при structured_output
+                if use_outlines or structured_output:
                     from structured_schemas import FertilizerExtractionOutput
                     response_schema = FertilizerExtractionOutput
                 
@@ -180,13 +179,13 @@ class ModelEvaluator:
                         structured_output=structured_output,
                         response_schema=response_schema
                     )
-                # Для локальных моделей с structured_output и outlines
-                elif structured_output and use_outlines and not is_api_model and response_schema is not None:
+                # Для локальных моделей с outlines (response_schema используется outlines; structured_output добавляет схему в промпт)
+                elif use_outlines and not is_api_model and response_schema is not None:
                     response_text = generate_func(
                         model, tokenizer, prompt, max_new_tokens,
                         structured_output=structured_output,
                         response_schema=response_schema,
-                        use_outlines=use_outlines
+                        use_outlines=True
                     )
                 # Для локальных моделей с structured_output (без outlines)
                 elif structured_output and not is_api_model and response_schema is not None:
@@ -766,7 +765,13 @@ class ModelEvaluator:
                         })
                 else:
                     # Одноагентный подход (оригинальный)
-                    prompt = prompt_template(text)
+                    so = hyperparameters.get("structured_output", False)
+                    uo = hyperparameters.get("use_outlines", False)
+                    rs = None
+                    if uo or so:
+                        from structured_schemas import FertilizerExtractionOutput
+                        rs = FertilizerExtractionOutput
+                    prompt = prompt_template(text, structured_output=so, response_schema=rs)
                     
                     # Генерируем ответ с повторными попытками
                     response_text, elapsed, error_msg = self._generate_response_with_retries(
@@ -814,7 +819,7 @@ class ModelEvaluator:
             print(f"ДОСРОЧНОЕ ЗАВЕРШЕНИЕ ОЦЕНКИ МОДЕЛИ")
             print(f"{'='*80}")
             print(f"Не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}.")
-            print(f"Ошибка: {e.message[:300]}{'...' if len(e.message) > 300 else ''}")
+            print(f"Ошибка: {e.message}")
             print(f"{'='*80}\n")
             self.clear_memory()
             return {
@@ -929,7 +934,13 @@ class ModelEvaluator:
                                             "is_valid": False
                                         })
                                 else:
-                                    prompt = prompt_template(self.texts[i])
+                                    so = hyperparameters.get("structured_output", False)
+                                    uo = hyperparameters.get("use_outlines", False)
+                                    rs = None
+                                    if uo or so:
+                                        from structured_schemas import FertilizerExtractionOutput
+                                        rs = FertilizerExtractionOutput
+                                    prompt = prompt_template(self.texts[i], structured_output=so, response_schema=rs)
                                     
                                     # Генерируем ответ с повторными попытками
                                     response_text, elapsed, error_msg = self._generate_response_with_retries(
@@ -974,12 +985,12 @@ class ModelEvaluator:
                             print(f"ДОСРОЧНОЕ ЗАВЕРШЕНИЕ ОЦЕНКИ МОДЕЛИ")
                             print(f"{'='*80}")
                             print(f"Не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}.")
-                            print(f"Ошибка: {e.message[:300]}{'...' if len(e.message) > 300 else ''}")
+                            print(f"Ошибка: {e.message}")
                             print(f"{'='*80}\n")
                             self.clear_memory()
                             return {
                                 "status": "error",
-                                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message[:500]}",
+                                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}",
                                 "parsing_errors": parsing_errors,
                             }
                         except KeyboardInterrupt:

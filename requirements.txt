@@ -8,7 +8,7 @@ google-genai>=0.2.0
 huggingface-hub>=0.16.0
 triton>=2.1.0  # Требуется для FP8 квантования (опционально, если недоступен - будет использована обычная загрузка)
 langgraph>=0.2.0
-outlines
+outlines[transformers]  # Для structured output с локальными HF-моделями
 mistral_common[sentencepiece]>=1.8.6
 pydantic>=2.0.0
 pyyaml>=6.0

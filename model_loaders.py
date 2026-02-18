@@ -43,6 +43,43 @@ def _get_flash_attn_kwargs() -> dict:
         return {}
 
 
+def _generate_with_outlines(
+    model: Any,
+    tokenizer: Any,
+    prompt: str,
+    response_schema: Any,
+    max_new_tokens: int = 1024,
+) -> str:
+    """
+    Генерация JSON через outlines. Поддерживает старый (generate.json) и новый (Generator) API.
+    """
+    try:
+        import outlines  # type: ignore
+        try:
+            from outlines import generate  # type: ignore
+            use_generate_json = True
+        except ImportError:
+            from outlines import Generator  # type: ignore
+            use_generate_json = False
+    except Exception as e:
+        raise ImportError(
+            f"Не удалось загрузить outlines: {e}. Установите: pip install \"outlines[transformers]\""
+        ) from e
+
+    outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
+    if use_generate_json:
+        generator = generate.json(outlines_model, response_schema)
+        generated = generator(prompt, max_tokens=max_new_tokens)
+    else:
+        generator = Generator(outlines_model, output_type=response_schema)
+        generated = generator(prompt, max_tokens=max_new_tokens)
+
+    if isinstance(generated, (dict, list)):
+        import json as _json
+        return _json.dumps(generated, ensure_ascii=False, indent=2)
+    return str(generated).strip()
+
+
 def _load_causal_4bit(
     model_name: str,
     model_class: type,
@@ -419,26 +456,9 @@ def generate_gemma(
     """
     # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
     # Работает только для локальных HF-моделей; для API моделей outlines не используется.
-    if use_outlines and structured_output and response_schema is not None:
+    if use_outlines and response_schema is not None:
         try:
-            import outlines  # type: ignore
-            from outlines import generate  # type: ignore
-        except Exception as e:
-            raise ImportError(
-                "Библиотека outlines не установлена. Установите: pip install outlines"
-            ) from e
-
-        try:
-            # Оборачиваем HF модель/токенизатор в outlines model
-            outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-            generator = generate.json(outlines_model, response_schema)
-            generated = generator(prompt)
-
-            # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
-            if isinstance(generated, (dict, list)):
-                import json as _json
-                return _json.dumps(generated, ensure_ascii=False, indent=2)
-            return str(generated).strip()
+            return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
         except Exception as e:
             raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
     
@@ -588,26 +608,9 @@ def generate_standard(
     """
     # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
     # Работает только для локальных HF-моделей; для API моделей outlines не используется.
-    if use_outlines and structured_output and response_schema is not None:
+    if use_outlines and response_schema is not None:
         try:
-            import outlines  # type: ignore
-            from outlines import generate  # type: ignore
-        except Exception as e:
-            raise ImportError(
-                "Библиотека outlines не установлена. Установите: pip install outlines"
-            ) from e
-
-        try:
-            # Оборачиваем HF модель/токенизатор в outlines model
-            outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-            generator = generate.json(outlines_model, response_schema)
-            generated = generator(prompt)
-
-            # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
-            if isinstance(generated, (dict, list)):
-                import json as _json
-                return _json.dumps(generated, ensure_ascii=False, indent=2)
-            return str(generated).strip()
+            return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
         except Exception as e:
             raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
 
@@ -679,26 +682,9 @@ def generate_qwen(
     """
     # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
     # Работает только для локальных HF-моделей; для API моделей outlines не используется.
-    if use_outlines and structured_output and response_schema is not None:
+    if use_outlines and response_schema is not None:
         try:
-            import outlines  # type: ignore
-            from outlines import generate  # type: ignore
-        except Exception as e:
-            raise ImportError(
-                "Библиотека outlines не установлена. Установите: pip install outlines"
-            ) from e
-
-        try:
-            # Оборачиваем HF модель/токенизатор в outlines model
-            outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-            generator = generate.json(outlines_model, response_schema)
-            generated = generator(prompt)
-
-            # Outlines может вернуть dict/list либо строку; приводим к JSON-строке
-            if isinstance(generated, (dict, list)):
-                import json as _json
-                return _json.dumps(generated, ensure_ascii=False, indent=2)
-            return str(generated).strip()
+            return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
         except Exception as e:
             raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
     

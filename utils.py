@@ -102,14 +102,21 @@ def find_dataset_path(dataset_filename: str = None) -> str:
     return dataset_path
 
 
-def build_prompt3(text: str) -> str:
+def build_prompt3(text: str, structured_output: bool = False, response_schema: Any = None) -> str:
     """
     Генерация промпта для конкретного текста
     
-    Использует промпт, указанный в config.PROMPT_TEMPLATE_NAME (название переменной из prompt_config.py)
+    Использует промпт, указанный в config.PROMPT_TEMPLATE_NAME (название переменной из prompt_config.py).
+    При structured_output=True и наличии response_schema — добавляет JSON-схему в промпт для улучшения качества разметки.
     """
     prompt_template = getattr(prompt_config, PROMPT_TEMPLATE_NAME)
-    return prompt_template.format(text=text)
+    prompt = prompt_template.format(text=text)
+    if structured_output and response_schema is not None and hasattr(response_schema, "model_json_schema"):
+        import json as _json
+        schema_dict = response_schema.model_json_schema()
+        schema_str = _json.dumps(schema_dict, ensure_ascii=False, indent=2)
+        prompt += f"\n\nТочная JSON-схема ожидаемого ответа:\n```json\n{schema_str}\n```"
+    return prompt
 
 
 def _extract_json_like(s: str) -> str:
