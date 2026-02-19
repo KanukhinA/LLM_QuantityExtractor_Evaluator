@@ -19,6 +19,7 @@ from metrics import calculate_quality_metrics, validate_with_pydantic, calculate
 from gpu_info import get_gpu_info, get_gpu_memory_usage
 from multi_agent_graph import process_with_multi_agent
 from config import PROMPT_TEMPLATE_NAME, MAX_INFERENCE_TIME_MINUTES
+import prompt_config
 from metrics_printer import MetricsPrinter
 from file_manager import FileManager
 import re
@@ -541,6 +542,20 @@ class ModelEvaluator:
         for key, value in hyperparameters.items():
             print(f"   • {key}: {value}")
         print(f"{'='*80}\n")
+        
+        # Проверка существования промпта (до загрузки модели)
+        effective_prompt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
+        if not hasattr(prompt_config, effective_prompt_name):
+            err = f"Промпт '{effective_prompt_name}' не найден в prompt_config.py. Оценка не запущена."
+            print(f"\n{'='*80}")
+            print("ОШИБКА КОНФИГУРАЦИИ")
+            print(f"{'='*80}")
+            print(f"   {err}")
+            print(f"{'='*80}\n")
+            return {
+                "status": "error",
+                "error": err,
+            }
         
         # Проверяем, является ли это API или Ollama (до загрузки)
         is_api_model = hyperparameters.get("api_model", False)
