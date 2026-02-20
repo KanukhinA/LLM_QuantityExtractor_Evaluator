@@ -43,6 +43,19 @@ def _get_flash_attn_kwargs() -> dict:
         return {}
 
 
+def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
+    """Если у токенизатора есть chat_template (Mistral, Llama и др.), форматирует промпт как user message."""
+    if not hasattr(tokenizer, "apply_chat_template") or getattr(tokenizer, "chat_template", None) is None:
+        return prompt
+    try:
+        messages = [{"role": "user", "content": prompt}]
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception:
+        return prompt
+
+
 def _generate_with_outlines(
     model: Any,
     tokenizer: Any,
@@ -54,6 +67,7 @@ def _generate_with_outlines(
     Генерация JSON через outlines. Поддерживает старый (generate.json) и новый (Generator) API.
     Выбрасывает RuntimeError при ошибке (в т.ч. несовместимость словаря токенизатора с regex для кириллической схемы).
     """
+    prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
         import outlines  # type: ignore
         try:
@@ -639,46 +653,41 @@ def generate_standard(
             else:
                 raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
 
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
-    
+    formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
+    input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
+
     generate_kwargs = {
         "input_ids": input_ids,
         "max_new_tokens": max_new_tokens,
         "do_sample": False,
-        "use_cache": True,  # Включаем кэш по умолчанию
+        "use_cache": True,
     }
-    
-    # Добавляем eos_token_id, если он есть
     if tokenizer.eos_token_id is not None:
         generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-    
-    # Добавляем repetition_penalty, если указан
     if repetition_penalty is not None:
         generate_kwargs["repetition_penalty"] = repetition_penalty
-    
+
     with torch.no_grad():
         try:
             output_ids = model.generate(**generate_kwargs)
         except AttributeError as e:
             if "from_legacy_cache" in str(e):
-                # Если ошибка связана с кэшем, отключаем use_cache
                 generate_kwargs["use_cache"] = False
                 output_ids = model.generate(**generate_kwargs)
             else:
                 raise
-    
-    # Декодируем только новые токены (игнорируя входные)
+
     input_length = input_ids.shape[1]
     generated_ids = output_ids[0][input_length:]
     text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-    
-    # Если декодирование новых токенов дало пустой результат, пробуем декодировать весь ответ
+
     if not text.strip():
         text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-        # Убираем повтор prompt
-        if text.startswith(prompt):
+        if text.startswith(formatted_prompt):
+            text = text[len(formatted_prompt):].strip()
+        elif text.startswith(prompt):
             text = text[len(prompt):].strip()
-    
+
     return text.strip()
 
 
