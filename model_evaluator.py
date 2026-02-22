@@ -31,6 +31,18 @@ except ImportError:
     analyze_errors_with_gemini = None
 
 
+def _is_outlines_vocabulary_error(exc: BaseException) -> bool:
+    """Проверяет, является ли ошибка outlines: vocabulary/encoding (пробелы, токенизатор)."""
+    msg = str(exc).lower()
+    if "vocabulary" in msg and ("incompatible" in msg or "incompat" in msg):
+        return True
+    if "encoding issue" in msg and "vocabulary" in msg:
+        return True
+    if "found no transitions" in msg and "missing tokens" in msg:
+        return True
+    return False
+
+
 def _append_to_model_errors_log(output_dir: str, title: str, model_name: str, message: str) -> None:
     """Дописывает ошибку или предупреждение в model_errors.log."""
     log_path = os.path.join(output_dir, "model_errors.log")
@@ -164,15 +176,17 @@ class ModelEvaluator:
                                        model, tokenizer, prompt, generate_func,
                                        hyperparameters, max_new_tokens, num_retries,
                                        is_api_model, verbose, text_index, total_texts, text,
-                                       times, memory_samples, parsing_errors):
+                                       times, memory_samples, parsing_errors, model_name: str = "unknown"):
         """
         Генерирует ответ модели с повторными попытками при ошибках.
         
         Args:
             text: исходный текст (для сохранения в ошибках)
+            model_name: имя модели для логирования
         
         Returns:
-            tuple: (response_text, elapsed_time, error_msg) или (None, 0, error_msg) при ошибке
+            tuple: (response_text, elapsed_time, error_msg, outlines_skip)
+            outlines_skip=True — outlines упал (vocabulary/encoding), вернули пустой ответ, лог записан
         """
         response_text = ""
         error_msg = None
@@ -232,25 +246,32 @@ class ModelEvaluator:
                     memory_sample = get_gpu_memory_usage()
                     memory_samples.append(memory_sample["allocated"])
                 
-                return response_text, elapsed, None
-                
+                return response_text, elapsed, None, False
+
             except KeyboardInterrupt:
-                # Пробрасываем KeyboardInterrupt наверх для обработки в основном цикле
                 raise
             except Exception as e:
                 error_msg = str(e)
-                # Для API и Ollama выводим полную ошибку без обрезки (is_api_model сюда передаётся как is_api_model or is_ollama)
+                use_outlines = hyperparameters.get("use_outlines", False)
+                if use_outlines and not is_api_model and _is_outlines_vocabulary_error(e):
+                    _append_to_model_errors_log(
+                        self.output_dir,
+                        title="ОШИБКА OUTLINES (VOCABULARY/ENCODING)",
+                        model_name=model_name,
+                        message=f"Ответ #{text_index+1}/{total_texts}: {error_msg}",
+                    )
+                    print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Outlines vocabulary/encoding, пустой ответ, лог записан")
+                    return "", 0, error_msg, True
+
                 if is_api_model:
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
                     print(f"     {error_msg}")
                 else:
-                    # Для локальных моделей обрезаем при не verbose режиме
                     error_display = error_msg if verbose else error_msg[:100]
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}): {error_display}")
                 if attempt < num_retries - 1:
                     time.sleep(4 + attempt * 2)
                 else:
-                    # Если все попытки исчерпаны — досрочно завершаем оценку этой модели
                     import traceback
                     traceback_str = traceback.format_exc()
                     traceback_display = traceback_str if is_api_model else traceback_str[:200]
@@ -261,8 +282,8 @@ class ModelEvaluator:
                         "response": ""
                     })
                     raise InferenceCriticalFailure(error_msg, text_index, num_retries)
-        
-        return None, 0, error_msg
+
+        return None, 0, error_msg, False
     
     def _print_verbose_output(self, text, response_text, is_api_model, text_index, total_texts):
         """Выводит исходный текст и полный ответ в консоль (только при verbose)"""
@@ -708,6 +729,7 @@ class ModelEvaluator:
         last_processed_index = -1
         timeout_reason = None
         max_inference_time_seconds = MAX_INFERENCE_TIME_MINUTES * 60
+        last_outlines_skip = False
         
         try:
             for i, text in enumerate(self.texts):
@@ -827,15 +849,32 @@ class ModelEvaluator:
                         from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                         rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
                     pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
+                    # При --structured-output передаём Pydantic-схему в промпт
                     prompt = prompt_template(text, structured_output=so, response_schema=rs, prompt_template_name=pt_name)
                     
                     # Генерируем ответ с повторными попытками
-                    response_text, elapsed, error_msg = self._generate_response_with_retries(
+                    response_text, elapsed, error_msg, outlines_skip = self._generate_response_with_retries(
                         model, tokenizer, prompt, generate_func,
                         hyperparameters, max_new_tokens, num_retries,
                         is_api_model or is_ollama, verbose, i, len(self.texts), text,
-                        times, memory_samples, parsing_errors
+                        times, memory_samples, parsing_errors, model_name=model_name
                     )
+                    if outlines_skip:
+                        if last_outlines_skip:
+                            raise InferenceCriticalFailure(
+                                f"Outlines vocabulary/encoding: второй подряд пример #{i+1} упал. {error_msg}",
+                                i, num_retries
+                            )
+                        last_outlines_skip = True
+                        result = self._handle_no_response(
+                            text, i, len(self.texts), error_msg,
+                            is_api_model or is_ollama, verbose, parsing_errors
+                        )
+                        results.append(result)
+                        self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
+                        last_processed_index = i
+                        continue
+                    last_outlines_skip = False
                     # Ollama: замер GPU через nvidia-smi и сбор метрик из ответа API
                     if is_ollama and response_text:
                         from gpu_info import get_gpu_memory_usage_nvidia_smi
@@ -1007,12 +1046,27 @@ class ModelEvaluator:
                                     prompt = prompt_template(self.texts[i], structured_output=so, response_schema=rs, prompt_template_name=pt_name)
                                     
                                     # Генерируем ответ с повторными попытками
-                                    response_text, elapsed, error_msg = self._generate_response_with_retries(
+                                    response_text, elapsed, error_msg, outlines_skip = self._generate_response_with_retries(
                                         model, tokenizer, prompt, generate_func,
                                         hyperparameters, max_new_tokens, num_retries,
                                         is_api_model or is_ollama, verbose, i, len(self.texts), self.texts[i],
-                                        times, memory_samples, parsing_errors
+                                        times, memory_samples, parsing_errors, model_name=model_name
                                     )
+                                    if outlines_skip:
+                                        if last_outlines_skip:
+                                            raise InferenceCriticalFailure(
+                                                f"Outlines vocabulary/encoding: второй подряд пример #{i+1} упал. {error_msg}",
+                                                i, num_retries
+                                            )
+                                        last_outlines_skip = True
+                                        result = self._handle_no_response(
+                                            self.texts[i], i, len(self.texts), error_msg,
+                                            is_api_model or is_ollama, verbose, parsing_errors
+                                        )
+                                        results.append(result)
+                                        self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
+                                        continue
+                                    last_outlines_skip = False
                                     if is_ollama and response_text:
                                         from gpu_info import get_gpu_memory_usage_nvidia_smi
                                         _m = get_gpu_memory_usage_nvidia_smi()
