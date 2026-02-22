@@ -750,7 +750,8 @@ def generate_t5(
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
-    use_outlines: bool = False
+    use_outlines: bool = False,
+    prompt_template_name: str = None,
 ) -> str:
     """
     Функция генерации для T5/Seq2Seq моделей
@@ -867,7 +868,8 @@ def generate_qwen_3(
     enable_thinking: bool = False,
     structured_output: bool = False,
     response_schema: Any = None,
-    use_outlines: bool = False
+    use_outlines: bool = False,
+    prompt_template_name: str = None,
 ) -> str:
     """
     Функция генерации для Qwen3 с поддержкой thinking mode
