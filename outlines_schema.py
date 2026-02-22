@@ -71,5 +71,9 @@ OUTLINES_SCHEMA: Dict[str, Any] = {
 
 
 def get_outlines_schema_str() -> str:
-    """Возвращает JSON-схему строкой с корректной кодировкой (ensure_ascii=False)."""
-    return json.dumps(OUTLINES_SCHEMA, ensure_ascii=False, indent=2)
+    """
+    Возвращает JSON-схему строкой без пробелов и переносов (compact).
+    Компактный формат нужен для outlines: токенизаторы часто не имеют отдельного токена пробела,
+    из-за чего FSM по схеме с indent падает с 'missing tokens for \" \"'.
+    """
+    return json.dumps(OUTLINES_SCHEMA, ensure_ascii=False, separators=(",", ":"))
