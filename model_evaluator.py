@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional, Callable
 import os
 
 from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response
-from structured_schemas import latin_to_cyrillic_output, LATIN_TO_CYRILLIC_KEYS
+from structured_schemas import latin_to_cyrillic_output, latin_keys_to_cyrillic_in_json_str, LATIN_TO_CYRILLIC_KEYS
 from metrics import calculate_quality_metrics, validate_with_pydantic, calculate_raw_output_metrics
 from gpu_info import get_gpu_info, get_gpu_memory_usage
 from multi_agent_graph import process_with_multi_agent
@@ -205,6 +205,7 @@ class ModelEvaluator:
                 
                 # Передаем repetition_penalty из гиперпараметров, если есть
                 repetition_penalty = hyperparameters.get("repetition_penalty")
+                pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
                 
                 # Для API моделей передаем model_name и structured_output из hyperparameters
                 if is_api_model and "model_name" in hyperparameters:
@@ -220,7 +221,8 @@ class ModelEvaluator:
                         model, tokenizer, prompt, max_new_tokens,
                         structured_output=structured_output,
                         response_schema=response_schema,
-                        use_outlines=True
+                        use_outlines=True,
+                        prompt_template_name=pt_name
                     )
                 # Для локальных моделей с structured_output (без outlines)
                 elif structured_output and not is_api_model and response_schema is not None:
@@ -422,6 +424,9 @@ class ModelEvaluator:
                 json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
             except Exception:
                 pass
+        elif not parsed_json and any(f'"{k}"' in json_part for k in LATIN_TO_CYRILLIC_KEYS):
+            # Невалидный/обрезанный JSON: парсинг не удался, но в строке есть латинские ключи — заменяем на кириллицу
+            json_part = latin_keys_to_cyrillic_in_json_str(json_part)
         # Очищаем parsed_json от записей с None или [None, None]
         if parsed_json and isinstance(parsed_json, dict):
             parsed_json = self._clean_parsed_json(parsed_json)
@@ -844,11 +849,14 @@ class ModelEvaluator:
                     # Одноагентный подход (оригинальный)
                     so = hyperparameters.get("structured_output", False)
                     uo = hyperparameters.get("use_outlines", False)
+                    pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
                     rs = None
                     if uo or so:
                         from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
-                        rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
-                    pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
+                        # _RUS промпт — схема и outlines с кириллическими ключами
+                        rs = FertilizerExtractionOutput if (pt_name and pt_name.endswith("_RUS")) else (
+                            FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
+                        )
                     # При --structured-output передаём Pydantic-схему в промпт
                     prompt = prompt_template(text, structured_output=so, response_schema=rs, prompt_template_name=pt_name)
                     

@@ -357,7 +357,7 @@ class FileManager:
         if "quality_metrics" in evaluation_result:
             evaluation_result_for_json["quality_metrics"] = evaluation_result["quality_metrics"]
         
-        # Подготавливаем ошибки (перед добавлением остальных полей, чтобы исключить поля с ошибками)
+        # Подготавливаем единый список ошибок: парсинг + извлечение веществ (массовая доля, прочее)
         quality_metrics_for_json = evaluation_result_for_json.get("quality_metrics")
         all_quality_errors = []
         if quality_metrics_for_json:
@@ -371,6 +371,7 @@ class FileManager:
                             all_quality_errors.append({"error": str(error)})
                     quality_metrics_for_json[group].pop("все_ошибки", None)
                     quality_metrics_for_json[group].pop("ошибки", None)
+            quality_metrics_for_json.pop("ошибки", None)
         
         # Получаем parsing_errors из evaluation_result напрямую (до добавления остальных полей)
         parsing_errors_list = evaluation_result.get("parsing_errors", [])
@@ -444,7 +445,7 @@ class FileManager:
                     "valid_count": validation_data.get("valid_count", 0),
                     "invalid_count": validation_data.get("invalid_count", 0),
                     "validation_rate": validation_data.get("validation_rate", 0.0),
-                    "validation_errors": validation_data.get("all_validation_errors", [])[:10] if "all_validation_errors" in validation_data else validation_data.get("validation_errors", [])[:10]
+                    "validation_errors": validation_data.get("all_validation_errors", []) if "all_validation_errors" in validation_data else validation_data.get("validation_errors", [])
                 }
             
             for group in ["массовая доля", "прочее"]:
@@ -459,7 +460,7 @@ class FileManager:
                         "fp": group_data.get("fp", 0),
                         "fn": group_data.get("fn", 0),
                         "количество_сравнений": group_data.get("количество_сравнений", group_data.get("tp", 0) + group_data.get("fp", 0) + group_data.get("fn", 0)),
-                        "ошибки": group_data.get("все_ошибки", [])[:10] if "все_ошибки" in group_data else group_data.get("ошибки", [])[:10]
+                        "ошибки": group_data.get("все_ошибки", []) if "все_ошибки" in group_data else group_data.get("ошибки", [])
                     }
             
             try:
@@ -610,16 +611,67 @@ class FileManager:
         if "quality_metrics" in evaluation_result:
             evaluation_result_for_json["quality_metrics"] = evaluation_result["quality_metrics"]
         
-        # Остальные поля (кроме raw_output_metrics, которые сохраняются отдельно)
-        for key in evaluation_result:
-            if key not in evaluation_result_for_json and key != "raw_output_metrics":
-                evaluation_result_for_json[key] = evaluation_result[key]
-        
+        # Единый список ошибок: парсинг + извлечение веществ (как в save_evaluation_results)
         quality_metrics_for_json = evaluation_result_for_json.get("quality_metrics")
+        all_quality_errors = []
         if quality_metrics_for_json:
             for group in ["массовая доля", "прочее"]:
                 if group in quality_metrics_for_json:
+                    group_errors = quality_metrics_for_json[group].get("все_ошибки", [])
+                    for error in group_errors:
+                        if isinstance(error, dict):
+                            all_quality_errors.append(error)
+                        else:
+                            all_quality_errors.append({"error": str(error)})
                     quality_metrics_for_json[group].pop("все_ошибки", None)
+                    quality_metrics_for_json[group].pop("ошибки", None)
+            quality_metrics_for_json.pop("ошибки", None)
+        
+        parsing_errors_list = evaluation_result.get("parsing_errors", [])
+        all_errors = parsing_errors_list + all_quality_errors
+        
+        errors_by_text = {}
+        for error in all_errors:
+            if isinstance(error, dict):
+                text_idx = error.get("text_index", 0)
+                if text_idx not in errors_by_text:
+                    errors_by_text[text_idx] = {
+                        "text_index": text_idx,
+                        "text": error.get("text", ""),
+                        "response": error.get("response", ""),
+                        "prompt": error.get("prompt", ""),
+                        "errors": []
+                    }
+                if error.get("error"):
+                    errors_by_text[text_idx]["errors"].append(error.get("error"))
+                if error.get("text") and not errors_by_text[text_idx]["text"]:
+                    errors_by_text[text_idx]["text"] = error.get("text")
+                if error.get("response") and not errors_by_text[text_idx]["response"]:
+                    errors_by_text[text_idx]["response"] = error.get("response")
+                if error.get("prompt") and not errors_by_text[text_idx]["prompt"]:
+                    errors_by_text[text_idx]["prompt"] = error.get("prompt")
+            elif isinstance(error, str):
+                text_idx = 0
+                if text_idx not in errors_by_text:
+                    errors_by_text[text_idx] = {
+                        "text_index": text_idx,
+                        "text": "",
+                        "response": "",
+                        "prompt": "",
+                        "errors": []
+                    }
+                errors_by_text[text_idx]["errors"].append(error)
+        
+        evaluation_result_for_json["ошибки"] = list(errors_by_text.values())
+        
+        # Остальные поля (исключая raw_output_metrics, parsing_errors)
+        excluded_keys = {"raw_output_metrics", "parsing_errors"}
+        for key in evaluation_result:
+            if key not in evaluation_result_for_json and key not in excluded_keys:
+                evaluation_result_for_json[key] = evaluation_result[key]
+        
+        if "parsing_errors" in evaluation_result_for_json:
+            evaluation_result_for_json.pop("parsing_errors")
         
         self.save_json(evaluation_result_for_json, metrics_path)
         saved_files["metrics"] = metrics_path
@@ -641,7 +693,7 @@ class FileManager:
                     "valid_count": validation_data.get("valid_count", 0),
                     "invalid_count": validation_data.get("invalid_count", 0),
                     "validation_rate": validation_data.get("validation_rate", 0.0),
-                    "validation_errors": validation_data.get("all_validation_errors", [])[:10] if "all_validation_errors" in validation_data else validation_data.get("validation_errors", [])[:10]
+                    "validation_errors": validation_data.get("all_validation_errors", []) if "all_validation_errors" in validation_data else validation_data.get("validation_errors", [])
                 }
             
             for group in ["массовая доля", "прочее"]:
@@ -656,7 +708,7 @@ class FileManager:
                         "fp": group_data.get("fp", 0),
                         "fn": group_data.get("fn", 0),
                         "количество_сравнений": group_data.get("количество_сравнений", group_data.get("tp", 0) + group_data.get("fp", 0) + group_data.get("fn", 0)),
-                        "ошибки": group_data.get("все_ошибки", [])[:10] if "все_ошибки" in group_data else group_data.get("ошибки", [])[:10]
+                        "ошибки": group_data.get("все_ошибки", []) if "все_ошибки" in group_data else group_data.get("ошибки", [])
                     }
             
             self.save_json(raw_metrics_for_json, raw_metrics_path)

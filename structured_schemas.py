@@ -3,6 +3,7 @@ Pydantic схемы для structured output
 Латиница в именах полей — для совместимости с outlines (regex/токенизация).
 Кириллица в alias и description — для вывода и валидации.
 """
+import re
 from typing import List, Optional, Union, Any
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -19,6 +20,25 @@ LATIN_TO_CYRILLIC_KEYS = {
     "value": "значение",
     "unit": "единица",
 }
+
+
+def latin_keys_to_cyrillic_in_json_str(s: str) -> str:
+    """
+    Заменяет латинские ключи JSON на кириллические в строке.
+    Используется когда parse_json_safe не смог распарсить невалидный/обрезанный JSON —
+    в этом случае заменяем ключи на уровне строки.
+    Порядок замен: длинные ключи первыми, чтобы не заменить часть короткого.
+    """
+    if not s or not isinstance(s, str):
+        return s
+    # Сортируем по длине убывания: mass_fractions -> mass_fraction -> substance_name и т.д.
+    sorted_items = sorted(LATIN_TO_CYRILLIC_KEYS.items(), key=lambda x: -len(x[0]))
+    for latin_key, cyrillic_val in sorted_items:
+        # Заменяем только ключи в JSON: "key": (с кавычками и двоеточием)
+        pattern = r'"' + re.escape(latin_key) + r'"\s*:'
+        replacement = f'"{cyrillic_val}":'
+        s = re.sub(pattern, replacement, s)
+    return s
 
 
 def latin_to_cyrillic_output(obj: Any) -> Any:

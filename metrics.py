@@ -6,6 +6,24 @@ import json
 from pydantic import ValidationError
 from structured_schemas import FertilizerExtractionOutput
 
+# Кириллические омоглифы -> латиница (для нормализации формул: P2O5, K2O и т.д.)
+_CYRILLIC_TO_LATIN_SUBSTANCE = str.maketrans({
+    '\u0410': 'A', '\u0412': 'B', '\u0421': 'C', '\u0415': 'E',
+    '\u041D': 'H', '\u041A': 'K', '\u041C': 'M', '\u041E': 'O',
+    '\u0420': 'P', '\u0422': 'T', '\u0425': 'X', '\u0443': 'y',
+    '\u0430': 'a', '\u0432': 'b', '\u0435': 'e', '\u043a': 'k',
+    '\u043c': 'm', '\u043d': 'h', '\u043e': 'o', '\u0440': 'p',
+    '\u0441': 'c', '\u0442': 't', '\u0445': 'x',
+})
+
+
+def _normalize_substance_name(s: str) -> str:
+    """Нормализует название вещества: омоглифы кириллица->латиница, верхний регистр."""
+    if not isinstance(s, str):
+        return s
+    normalized = s.translate(_CYRILLIC_TO_LATIN_SUBSTANCE)
+    return normalized.upper()
+
 
 def normalize_none_lists(value: Any) -> Any:
     """
@@ -157,8 +175,8 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
     if not predicted:
         predicted = {}
     
-    pred_mass = predicted.get("массовая доля", [])
-    true_mass = ground_truth.get("массовая доля", [])
+    pred_mass = predicted.get("массовая доля", predicted.get("mass_fractions", []))
+    true_mass = ground_truth.get("массовая доля", ground_truth.get("mass_fractions", []))
     
     if not isinstance(pred_mass, list):
         pred_mass = []
@@ -170,11 +188,10 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
     # ВАЖНО: Пропускаем записи с None значениями (None или [None, None]) - они не должны учитываться как FP/FN (только если не в строгом режиме
     pred_entries = []  # (substance_normalized, value_normalized, substance_original, value_original)
     for item in pred_mass:
-        if isinstance(item, dict) and "вещество" in item:
-            substance_original = item.get("вещество", "")
-            # Нормализуем вещество к верхнему регистру для case-insensitive сравнения
-            substance_normalized = substance_original.upper() if isinstance(substance_original, str) else substance_original
-            value_original = item.get("массовая доля")
+        if isinstance(item, dict) and ("вещество" in item or "substance_name" in item):
+            substance_original = item.get("вещество", item.get("substance_name", ""))
+            substance_normalized = _normalize_substance_name(substance_original)
+            value_original = item.get("массовая доля", item.get("mass_fraction"))
             value_normalized = normalize_value(value_original, strict_mode=strict_mode)
             # Пропускаем записи с None значениями (None или [None, None] после нормализации)
             # Только если не в строгом режиме
@@ -186,11 +203,10 @@ def compare_mass_dolya(predicted: Dict[str, Any], ground_truth: Dict[str, Any],
     
     true_entries = []  # (substance_normalized, value_normalized, substance_original, value_original)
     for item in true_mass:
-        if isinstance(item, dict) and "вещество" in item:
-            substance_original = item.get("вещество", "")
-            # Нормализуем вещество к верхнему регистру для case-insensitive сравнения
-            substance_normalized = substance_original.upper() if isinstance(substance_original, str) else substance_original
-            value_original = item.get("массовая доля")
+        if isinstance(item, dict) and ("вещество" in item or "substance_name" in item):
+            substance_original = item.get("вещество", item.get("substance_name", ""))
+            substance_normalized = _normalize_substance_name(substance_original)
+            value_original = item.get("массовая доля", item.get("mass_fraction"))
             value_normalized = normalize_value(value_original, strict_mode=strict_mode)
             # Пропускаем записи с None значениями (None или [None, None] после нормализации)
             # Только если не в строгом режиме

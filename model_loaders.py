@@ -56,16 +56,29 @@ def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
         return prompt
 
 
+def _is_gemma_model(model: Any, tokenizer: Any) -> bool:
+    """Проверяет, является ли модель Gemma (Gemma 2/3, CodeGemma). У Gemma пробелы входят в токены, отдельного токена пробела нет."""
+    if model is None:
+        return False
+    name = model.__class__.__name__
+    if "Gemma" in name or "CodeGemma" in name:
+        return True
+    if hasattr(tokenizer, "name_or_path") and tokenizer.name_or_path:
+        return "gemma" in str(tokenizer.name_or_path).lower()
+    return False
+
+
 def _generate_with_outlines(
     model: Any,
     tokenizer: Any,
     prompt: str,
     response_schema: Any,
     max_new_tokens: int = 1024,
+    prompt_template_name: str = None,
 ) -> str:
     """
-    Генерация JSON через outlines. Используется Generator (новый API, см. dottxt-ai.github.io/outlines).
-    Схема берётся из outlines_schema (JSON).
+    Генерация JSON через outlines. Схема берётся из outlines_schema (JSON).
+    При prompt_template_name с суффиксом _RUS используется схема с кириллическими ключами.
     """
     prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
@@ -73,11 +86,11 @@ def _generate_with_outlines(
         from outlines import Generator  # type: ignore
     except ImportError as e:
         raise ImportError(
-            f"Не удалось загрузить outlines.Generator: {e}. Установите: pip install \"outlines[transformers]\""
+            f"Не удалось загрузить outlines: {e}. Установите: pip install \"outlines[transformers]\""
         ) from e
 
     from outlines_schema import get_outlines_schema_str
-    schema_str = get_outlines_schema_str()
+    schema_str = get_outlines_schema_str(prompt_template_name)
 
     try:
         outlines_model = outlines.from_transformers(model, tokenizer)
@@ -90,8 +103,12 @@ def _generate_with_outlines(
 
     if isinstance(generated, (dict, list)):
         import json as _json
-        from structured_schemas import latin_to_cyrillic_output
-        converted = latin_to_cyrillic_output(generated)
+        # RUS-схема уже возвращает кириллические ключи, Latin — конвертируем
+        if prompt_template_name and prompt_template_name.endswith("_RUS"):
+            converted = generated
+        else:
+            from structured_schemas import latin_to_cyrillic_output
+            converted = latin_to_cyrillic_output(generated)
         return _json.dumps(converted, ensure_ascii=False, indent=2)
     return str(generated).strip()
 
@@ -455,7 +472,8 @@ def generate_gemma(
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
-    use_outlines: bool = False
+    use_outlines: bool = False,
+    prompt_template_name: str = None,
 ) -> str:
     """
     Функция генерации для Gemma 3 моделей с использованием правильного формата сообщений
@@ -469,11 +487,12 @@ def generate_gemma(
         structured_output: флаг для structured output
         response_schema: схема для structured output
         use_outlines: использовать ли outlines для структурированной генерации JSON
+        prompt_template_name: имя промпта (при _RUS используется кириллическая схема outlines)
     """
-    # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
-    # Работает только для локальных HF-моделей; для API моделей outlines не используется.
-    if use_outlines and response_schema is not None:
-        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
+    # Outlines не поддерживается для Gemma (токенизатор: пробелы входят в токены, нет отдельного " ").
+    # Для Gemma используем обычную генерацию со схемой в промпте + парсинг JSON.
+    if use_outlines and response_schema is not None and not _is_gemma_model(model, tokenizer):
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens, prompt_template_name=prompt_template_name)
 
     # Для Gemma 3 используем правильный формат сообщений
     # Проверяем, является ли модель Gemma3ForCausalLM
@@ -608,6 +627,7 @@ def generate_standard(
     structured_output: bool = False,
     response_schema: Any = None,
     use_outlines: bool = False,
+    prompt_template_name: str = None,
 ) -> str:
     """
     Стандартная функция генерации для большинства моделей
@@ -619,10 +639,9 @@ def generate_standard(
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
     """
-    # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
-    # Работает только для локальных HF-моделей; для API моделей outlines не используется.
-    if use_outlines and response_schema is not None:
-        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
+    # Outlines не поддерживается для Gemma (токенизатор: пробелы входят в токены).
+    if use_outlines and response_schema is not None and not _is_gemma_model(model, tokenizer):
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens, prompt_template_name=prompt_template_name)
 
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
     input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
@@ -670,7 +689,8 @@ def generate_qwen(
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
-    use_outlines: bool = False
+    use_outlines: bool = False,
+    prompt_template_name: str = None,
 ) -> str:
     """
     Функция генерации для Qwen с дополнительными стоп-строками
@@ -684,11 +704,11 @@ def generate_qwen(
         structured_output: флаг для structured output
         response_schema: схема для structured output
         use_outlines: использовать ли outlines для структурированной генерации JSON
+        prompt_template_name: имя промпта (при _RUS используется кириллическая схема outlines)
     """
-    # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
-    # Работает только для локальных HF-моделей; для API моделей outlines не используется.
-    if use_outlines and response_schema is not None:
-        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
+    # Outlines не поддерживается для Gemma (токенизатор: пробелы входят в токены).
+    if use_outlines and response_schema is not None and not _is_gemma_model(model, tokenizer):
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens, prompt_template_name=prompt_template_name)
 
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
