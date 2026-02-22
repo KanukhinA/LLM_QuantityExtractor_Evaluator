@@ -893,7 +893,7 @@ class ModelEvaluator:
                         break
                     elif choice == "2":
                         print("\n▶️  Продолжаем обработку...\n")
-                        # Продолжаем цикл с того места, где остановились
+                        interrupted = False
                         try:
                             for i in range(last_processed_index + 1, len(self.texts)):
                                 # Выводим номер обрабатываемого ответа
