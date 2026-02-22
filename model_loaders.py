@@ -64,8 +64,8 @@ def _generate_with_outlines(
     max_new_tokens: int = 1024,
 ) -> str:
     """
-    Генерация JSON через outlines. Поддерживает старый (generate.json) и новый (Generator) API.
-    Выбрасывает RuntimeError при ошибке (в т.ч. несовместимость словаря токенизатора с regex для кириллической схемы).
+    Генерация JSON через outlines. Схема берётся из outlines_schema (JSON), не из Pydantic.
+    Поддерживает старый (generate.json) и новый (Generator) API.
     """
     prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
@@ -81,14 +81,16 @@ def _generate_with_outlines(
             f"Не удалось загрузить outlines: {e}. Установите: pip install \"outlines[transformers]\""
         ) from e
 
+    from outlines_schema import get_outlines_schema_str
+    schema_str = get_outlines_schema_str()
+
     outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-    # transformers ожидает max_new_tokens, не max_tokens
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     if use_generate_json:
-        generator = generate.json(outlines_model, response_schema)
+        generator = generate.json(outlines_model, schema_str)
         generated = generator(prompt, **gen_kwargs)
     else:
-        generator = Generator(outlines_model, output_type=response_schema)
+        generator = Generator(outlines_model, output_type=schema_str)
         generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
