@@ -102,12 +102,6 @@ def _generate_with_outlines(
     return str(generated).strip()
 
 
-def _is_outlines_vocabulary_error(exc: BaseException) -> bool:
-    """Проверяет, является ли ошибка несовместимостью словаря токенизатора с outlines (кириллица и т.д.)."""
-    msg = str(exc).lower()
-    return "vocabulary" in msg and ("incompatible" in msg or "incompat" in msg)
-
-
 def _load_causal_4bit(
     model_name: str,
     model_class: type,
@@ -485,18 +479,8 @@ def generate_gemma(
     # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
     # Работает только для локальных HF-моделей; для API моделей outlines не используется.
     if use_outlines and response_schema is not None:
-        try:
-            return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
-        except Exception as e:
-            if _is_outlines_vocabulary_error(e):
-                warnings.warn(
-                    f"Outlines несовместим со словарём токенизатора (кириллическая схема). "
-                    f"Используем обычную генерацию. Детали: {e}",
-                    UserWarning
-                )
-            else:
-                raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
-    
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
+
     # Для Gemma 3 используем правильный формат сообщений
     # Проверяем, является ли модель Gemma3ForCausalLM
     is_gemma3 = isinstance(model, Gemma3ForCausalLM) or model.__class__.__name__ == 'Gemma3ForCausalLM'
@@ -644,17 +628,7 @@ def generate_standard(
     # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
     # Работает только для локальных HF-моделей; для API моделей outlines не используется.
     if use_outlines and response_schema is not None:
-        try:
-            return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
-        except Exception as e:
-            if _is_outlines_vocabulary_error(e):
-                warnings.warn(
-                    f"Outlines несовместим со словарём токенизатора (кириллическая схема). "
-                    f"Используем обычную генерацию. Детали: {e}",
-                    UserWarning
-                )
-            else:
-                raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
 
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
     input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
@@ -720,18 +694,8 @@ def generate_qwen(
     # Если включен outlines-режим для structured output — генерируем JSON напрямую по схеме
     # Работает только для локальных HF-моделей; для API моделей outlines не используется.
     if use_outlines and response_schema is not None:
-        try:
-            return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
-        except Exception as e:
-            if _is_outlines_vocabulary_error(e):
-                warnings.warn(
-                    f"Outlines несовместим со словарём токенизатора (кириллическая схема). "
-                    f"Используем обычную генерацию. Детали: {e}",
-                    UserWarning
-                )
-            else:
-                raise RuntimeError(f"Outlines генерация не удалась: {e}") from e
-    
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens)
+
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
     generate_kwargs = {
