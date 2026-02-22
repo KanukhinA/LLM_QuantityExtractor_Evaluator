@@ -222,7 +222,8 @@ class ModelEvaluator:
                         structured_output=structured_output,
                         response_schema=response_schema,
                         use_outlines=True,
-                        prompt_template_name=pt_name
+                        prompt_template_name=pt_name,
+                        pydantic_outlines=hyperparameters.get("pydantic_outlines", False)
                     )
                 # Для локальных моделей с structured_output (без outlines)
                 elif structured_output and not is_api_model and response_schema is not None:

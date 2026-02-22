@@ -31,7 +31,7 @@ _original_showwarning = warnings.showwarning
 def _warnings_to_model_errors_log(message, category, filename, lineno, file=None, line=None):
     """Пишет предупреждения в model_errors.log и выводит в консоль. Игнорирует известные несущественные (top_p/top_k)."""
     msg_str = str(message)
-    if "generation flags are not valid" in msg_str and ("top_p" in msg_str or "top_k" in msg_str):
+    if "generation flags are not valid" in msg_str:
         return
     try:
         with open(log_file, "a", encoding="utf-8") as f:
@@ -253,6 +253,7 @@ def main():
         print("                        Работает только с API моделями, поддерживающими structured output")
         print("  --outlines          - (опционально) использовать библиотеку outlines для структурированной генерации JSON")
         print("                        Работает для локальных моделей вместе с --structured-output и Pydantic схемой")
+        print("  --pydantic-outlines - (опционально) генерировать схему outlines из Pydantic model_json_schema() вместо outlines_schema.py")
         print("  --no-gemini         - (опционально) отключить анализ ошибок через Gemini API")
         print("  --verbose           - (опционально) включить подробный вывод (включен по умолчанию)")
         print("  --no-verbose        - (опционально) отключить подробный вывод")
@@ -266,6 +267,7 @@ def main():
         print("  python main.py qwen-3-32b-api --structured-output")
         print("  python main.py qwen-2.5-3b --no-gemini")
         print("  python main.py qwen-2.5-3b --structured-output --outlines")
+        print("  python main.py qwen-2.5-3b --structured-output --pydantic-outlines")
         print("  python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines")
         print("\nДоступные модели:")
         for key in MODEL_CONFIGS.keys():
@@ -278,6 +280,7 @@ def main():
     multi_agent_mode = None
     structured_output = False
     use_outlines = False
+    pydantic_outlines = False
     use_gemini = True  # По умолчанию включен
     verbose = True  # По умолчанию включен для main.py
     prompt_template_name = None
@@ -306,7 +309,17 @@ def main():
                 structured_output = True
                 i += 1
             elif arg == "--outlines":
+                if pydantic_outlines:
+                    print("Ошибка: используйте --outlines ИЛИ --pydantic-outlines, не вместе")
+                    return
                 use_outlines = True
+                i += 1
+            elif arg == "--pydantic-outlines":
+                if use_outlines:
+                    print("Ошибка: используйте --outlines ИЛИ --pydantic-outlines, не вместе")
+                    return
+                use_outlines = True  # pydantic-outlines заменяет --outlines
+                pydantic_outlines = True
                 i += 1
             elif arg == "--no-gemini" or arg == "--skip-gemini":
                 use_gemini = False
@@ -402,7 +415,7 @@ def main():
     if structured_output:
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
     if use_outlines:
-        print(f"📌 Outlines: Включен")
+        print(f"📌 Outlines: Включен" + (" (схема из Pydantic)" if pydantic_outlines else ""))
     if prompt_template_name:
         print(f"📌 Промпт: {prompt_template_name}")
     if verbose:
@@ -436,6 +449,8 @@ def main():
             config["hyperparameters"]["structured_output"] = True
         if use_outlines:
             config["hyperparameters"]["use_outlines"] = True
+        if pydantic_outlines:
+            config["hyperparameters"]["pydantic_outlines"] = True
         if prompt_template_name is not None:
             config["hyperparameters"]["prompt_template_name"] = prompt_template_name
         

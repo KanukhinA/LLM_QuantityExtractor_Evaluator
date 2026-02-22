@@ -392,6 +392,8 @@ class FileManager:
                     }
                 if error.get("error"):
                     errors_by_text[text_idx]["errors"].append(error.get("error"))
+                if error.get("errors"):
+                    errors_by_text[text_idx]["errors"].extend(error.get("errors"))
                 if error.get("text") and not errors_by_text[text_idx]["text"]:
                     errors_by_text[text_idx]["text"] = error.get("text")
                 if error.get("response") and not errors_by_text[text_idx]["response"]:
@@ -412,7 +414,11 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
-        evaluation_result_for_json["ошибки"] = list(errors_by_text.values())
+        # Оставляем только записи с непустым списком ошибок
+        evaluation_result_for_json["ошибки"] = [
+            v for v in errors_by_text.values()
+            if v.get("errors")
+        ]
         
         # Добавляем остальные поля (исключая поля с ошибками, которые уже обработаны)
         excluded_keys = {
@@ -644,6 +650,8 @@ class FileManager:
                     }
                 if error.get("error"):
                     errors_by_text[text_idx]["errors"].append(error.get("error"))
+                if error.get("errors"):
+                    errors_by_text[text_idx]["errors"].extend(error.get("errors"))
                 if error.get("text") and not errors_by_text[text_idx]["text"]:
                     errors_by_text[text_idx]["text"] = error.get("text")
                 if error.get("response") and not errors_by_text[text_idx]["response"]:
@@ -662,7 +670,11 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
-        evaluation_result_for_json["ошибки"] = list(errors_by_text.values())
+        # Оставляем только записи с непустым списком ошибок
+        evaluation_result_for_json["ошибки"] = [
+            v for v in errors_by_text.values()
+            if v.get("errors")
+        ]
         
         # Остальные поля (исключая raw_output_metrics, parsing_errors)
         excluded_keys = {"raw_output_metrics", "parsing_errors"}

@@ -56,18 +56,6 @@ def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
         return prompt
 
 
-def _is_gemma_model(model: Any, tokenizer: Any) -> bool:
-    """Проверяет, является ли модель Gemma (Gemma 2/3, CodeGemma). У Gemma пробелы входят в токены, отдельного токена пробела нет."""
-    if model is None:
-        return False
-    name = model.__class__.__name__
-    if "Gemma" in name or "CodeGemma" in name:
-        return True
-    if hasattr(tokenizer, "name_or_path") and tokenizer.name_or_path:
-        return "gemma" in str(tokenizer.name_or_path).lower()
-    return False
-
-
 def _generate_with_outlines(
     model: Any,
     tokenizer: Any,
@@ -75,10 +63,11 @@ def _generate_with_outlines(
     response_schema: Any,
     max_new_tokens: int = 1024,
     prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
 ) -> str:
     """
-    Генерация JSON через outlines. Схема берётся из outlines_schema (JSON).
-    При prompt_template_name с суффиксом _RUS используется схема с кириллическими ключами.
+    Генерация JSON через outlines. Схема берётся из outlines_schema или из Pydantic model_json_schema().
+    При pydantic_outlines=True схема генерируется из response_schema.model_json_schema().
     """
     prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
@@ -89,8 +78,12 @@ def _generate_with_outlines(
             f"Не удалось загрузить outlines: {e}. Установите: pip install \"outlines[transformers]\""
         ) from e
 
-    from outlines_schema import get_outlines_schema_str
-    schema_str = get_outlines_schema_str(prompt_template_name)
+    import json as _json
+    if pydantic_outlines and response_schema is not None and hasattr(response_schema, "model_json_schema"):
+        schema_str = _json.dumps(response_schema.model_json_schema(), ensure_ascii=False, indent=2)
+    else:
+        from outlines_schema import get_outlines_schema_str
+        schema_str = get_outlines_schema_str(prompt_template_name)
 
     try:
         outlines_model = outlines.from_transformers(model, tokenizer)
@@ -474,6 +467,7 @@ def generate_gemma(
     response_schema: Any = None,
     use_outlines: bool = False,
     prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
 ) -> str:
     """
     Функция генерации для Gemma 3 моделей с использованием правильного формата сообщений
@@ -489,10 +483,9 @@ def generate_gemma(
         use_outlines: использовать ли outlines для структурированной генерации JSON
         prompt_template_name: имя промпта (при _RUS используется кириллическая схема outlines)
     """
-    # Outlines не поддерживается для Gemma (токенизатор: пробелы входят в токены, нет отдельного " ").
-    # Для Gemma используем обычную генерацию со схемой в промпте + парсинг JSON.
-    if use_outlines and response_schema is not None and not _is_gemma_model(model, tokenizer):
-        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens, prompt_template_name=prompt_template_name)
+    if use_outlines and response_schema is not None:
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
+                                       prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
     # Для Gemma 3 используем правильный формат сообщений
     # Проверяем, является ли модель Gemma3ForCausalLM
@@ -628,6 +621,7 @@ def generate_standard(
     response_schema: Any = None,
     use_outlines: bool = False,
     prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
 ) -> str:
     """
     Стандартная функция генерации для большинства моделей
@@ -639,9 +633,9 @@ def generate_standard(
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
     """
-    # Outlines не поддерживается для Gemma (токенизатор: пробелы входят в токены).
-    if use_outlines and response_schema is not None and not _is_gemma_model(model, tokenizer):
-        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens, prompt_template_name=prompt_template_name)
+    if use_outlines and response_schema is not None:
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
+                                       prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
     input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
@@ -691,6 +685,7 @@ def generate_qwen(
     response_schema: Any = None,
     use_outlines: bool = False,
     prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
 ) -> str:
     """
     Функция генерации для Qwen с дополнительными стоп-строками
@@ -705,10 +700,11 @@ def generate_qwen(
         response_schema: схема для structured output
         use_outlines: использовать ли outlines для структурированной генерации JSON
         prompt_template_name: имя промпта (при _RUS используется кириллическая схема outlines)
+        pydantic_outlines: схема из Pydantic model_json_schema()
     """
-    # Outlines не поддерживается для Gemma (токенизатор: пробелы входят в токены).
-    if use_outlines and response_schema is not None and not _is_gemma_model(model, tokenizer):
-        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens, prompt_template_name=prompt_template_name)
+    if use_outlines and response_schema is not None:
+        return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
+                                       prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     
@@ -752,6 +748,7 @@ def generate_t5(
     response_schema: Any = None,
     use_outlines: bool = False,
     prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
 ) -> str:
     """
     Функция генерации для T5/Seq2Seq моделей
@@ -870,6 +867,7 @@ def generate_qwen_3(
     response_schema: Any = None,
     use_outlines: bool = False,
     prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
 ) -> str:
     """
     Функция генерации для Qwen3 с поддержкой thinking mode

@@ -10,7 +10,7 @@ from model_evaluator import StopAllModelsInterrupt
 
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                    structured_output: bool = False, use_outlines: bool = False,
-                   prompt_template_name: str = None):
+                   prompt_template_name: str = None, pydantic_outlines: bool = False):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -42,8 +42,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"📌 Режим: Одноагентный")
     if structured_output:
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
-    if use_outlines:
-        print(f"📌 Outlines: Включен")
+    if use_outlines or pydantic_outlines:
+        print(f"📌 Outlines: Включен" + (" (схема из Pydantic)" if pydantic_outlines else " (outlines_schema.py)"))
     if prompt_template_name:
         print(f"📌 Промпт: {prompt_template_name}")
     print()
@@ -89,8 +89,9 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                 config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
             if structured_output:
                 config["hyperparameters"]["structured_output"] = True
-            if use_outlines:
+            if use_outlines or pydantic_outlines:
                 config["hyperparameters"]["use_outlines"] = True
+                config["hyperparameters"]["pydantic_outlines"] = pydantic_outlines
             if prompt_template_name is not None:
                 config["hyperparameters"]["prompt_template_name"] = prompt_template_name
             
@@ -218,10 +219,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Использовать structured output через Pydantic"
     )
-    parser.add_argument(
+    outlines_group = parser.add_mutually_exclusive_group()
+    outlines_group.add_argument(
         "--outlines",
         action="store_true",
-        help="Использовать библиотеку outlines для структурированной генерации JSON (только для локальных моделей с --structured-output)"
+        help="Использовать outlines со схемой из outlines_schema.py"
+    )
+    outlines_group.add_argument(
+        "--pydantic-outlines",
+        action="store_true",
+        help="Использовать outlines со схемой из Pydantic (model_json_schema) вместо outlines_schema.py"
     )
     parser.add_argument(
         "--prompt",
@@ -236,6 +243,7 @@ if __name__ == "__main__":
         multi_agent_mode=args.multi_agent,
         structured_output=args.structured_output,
         use_outlines=args.outlines,
-        prompt_template_name=args.prompt
+        prompt_template_name=args.prompt,
+        pydantic_outlines=args.pydantic_outlines
     )
 
