@@ -86,13 +86,12 @@ def _generate_with_outlines(
 
     outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
     gen_kwargs = {"max_new_tokens": max_new_tokens}
-    # whitespace_pattern=r"" — без пробелов между JSON-элементами (многие токенизаторы не имеют отдельного токена пробела)
-    ws_pattern = r""
     if use_generate_json:
-        generator = generate.json(outlines_model, schema_str, whitespace_pattern=ws_pattern)
+        # whitespace_pattern=r"" — без пробелов между JSON-элементами (многие токенизаторы не имеют отдельного токена пробела)
+        generator = generate.json(outlines_model, schema_str, whitespace_pattern=r"")
         generated = generator(prompt, **gen_kwargs)
     else:
-        generator = Generator(outlines_model, output_type=schema_str, whitespace_pattern=ws_pattern)
+        generator = Generator(outlines_model, output_type=schema_str)
         generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
