@@ -64,23 +64,28 @@ def _generate_with_outlines(
     max_new_tokens: int = 1024,
 ) -> str:
     """
-    Генерация JSON через outlines (generate.json). Схема берётся из outlines_schema (JSON).
+    Генерация JSON через outlines. Используется Generator (новый API, см. dottxt-ai.github.io/outlines).
+    Схема берётся из outlines_schema (JSON).
     """
     prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
         import outlines  # type: ignore
-        from outlines import generate  # type: ignore
+        from outlines import Generator  # type: ignore
     except ImportError as e:
         raise ImportError(
-            f"Не удалось загрузить outlines.generate: {e}. Установите: pip install \"outlines[transformers]\""
+            f"Не удалось загрузить outlines.Generator: {e}. Установите: pip install \"outlines[transformers]\""
         ) from e
 
     from outlines_schema import get_outlines_schema_str
     schema_str = get_outlines_schema_str()
-    outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
+
+    try:
+        outlines_model = outlines.from_transformers(model, tokenizer)
+    except AttributeError:
+        outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
+
+    generator = Generator(outlines_model, schema_str)
     gen_kwargs = {"max_new_tokens": max_new_tokens}
-    # whitespace_pattern=r"" — без пробелов между JSON-элементами (многие токенизаторы не имеют отдельного токена пробела)
-    generator = generate.json(outlines_model, schema_str, whitespace_pattern=r"")
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
