@@ -1,12 +1,6 @@
-"""
-JSON-схема для outlines (структурированная генерация).
-Отдельный файл — один источник истины для передачи схемы в outlines как строки JSON.
-Латиница в ключах (совместимость с токенизатором); при выводе ключи переводятся в кириллицу через structured_schemas.latin_to_cyrillic_output.
-"""
 import json
 from typing import Any, Dict
 
-# Схема совпадает по структуре с FertilizerExtractionOutputLatin (mass_fractions, other_params).
 OUTLINES_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -16,14 +10,10 @@ OUTLINES_SCHEMA: Dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "substance_name": {"type": "string"},
-                    "mass_fraction": {
-                        "oneOf": [
-                            {"type": "number"},
-                            {"type": "array", "items": {"type": ["number", "null"]}},
-                        ]
-                    },
+                    "mass_fraction": {"type": "string"}  # ← Упрощено до строки
                 },
                 "required": ["substance_name", "mass_fraction"],
+                "additionalProperties": False
             },
         },
         "other_params": {
@@ -32,44 +22,22 @@ OUTLINES_SCHEMA: Dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "parameter_name": {"type": "string"},
-                    "mass": {
-                        "oneOf": [
-                            {"type": "number"},
-                            {"type": "array", "items": {"type": ["number", "null"]}},
-                            {"type": "null"},
-                        ]
-                    },
-                    "volume": {
-                        "oneOf": [
-                            {"type": "number"},
-                            {"type": "array", "items": {"type": ["number", "null"]}},
-                            {"type": "null"},
-                        ]
-                    },
-                    "quantity": {
-                        "oneOf": [
-                            {"type": "number"},
-                            {"type": "array", "items": {"type": ["number", "null"]}},
-                            {"type": "null"},
-                        ]
-                    },
-                    "value": {
-                        "oneOf": [
-                            {"type": "string"},
-                            {"type": "number"},
-                            {"type": "null"},
-                        ]
-                    },
-                    "unit": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+                    "mass": {"type": "string"},      # ← Упрощено
+                    "volume": {"type": "string"},    # ← Упрощено
+                    "quantity": {"type": "string"},  # ← Упрощено
+                    "value": {"type": "string"},     # ← Упрощено
+                    "unit": {"type": "string"}       # ← Упрощено
                 },
                 "required": ["parameter_name"],
+                "additionalProperties": False
             },
         },
     },
     "required": ["mass_fractions", "other_params"],
+    "additionalProperties": False
 }
 
 
 def get_outlines_schema_str() -> str:
-    """Возвращает JSON-схему строкой с корректной кодировкой (ensure_ascii=False)."""
+    """Возвращает JSON-схему строкой."""
     return json.dumps(OUTLINES_SCHEMA, ensure_ascii=False, indent=2)
