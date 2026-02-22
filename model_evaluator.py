@@ -31,6 +31,25 @@ except ImportError:
     analyze_errors_with_gemini = None
 
 
+def _append_to_model_errors_log(output_dir: str, title: str, model_name: str, message: str) -> None:
+    """Дописывает ошибку или предупреждение в model_errors.log."""
+    log_path = os.path.join(output_dir, "model_errors.log")
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"\n{'='*80}\n"
+                f"{title}\n"
+                f"{'='*80}\n"
+                f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Модель: {model_name}\n"
+                f"Сообщение: {message}\n"
+                f"{'='*80}\n"
+            )
+    except Exception:
+        pass
+
+
 class InferenceCriticalFailure(Exception):
     """Выбрасывается при исчерпании всех попыток генерации на одном примере; оценку модели завершаем досрочно."""
     def __init__(self, message: str, text_index: int, num_retries: int):
@@ -859,9 +878,16 @@ class ModelEvaluator:
             print(f"Ошибка: {e.message}")
             print(f"{'='*80}\n")
             self.clear_memory()
+            error_text = f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}"
+            _append_to_model_errors_log(
+                self.output_dir,
+                title="КРИТИЧЕСКАЯ ОШИБКА ГЕНЕРАЦИИ (OUTLINES / ИНФЕРЕНС)",
+                model_name=model_name,
+                message=error_text,
+            )
             return {
                 "status": "error",
-                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}",
+                "error": error_text,
                 "parsing_errors": parsing_errors,
             }
         except KeyboardInterrupt:
@@ -1026,9 +1052,16 @@ class ModelEvaluator:
                             print(f"Ошибка: {e.message}")
                             print(f"{'='*80}\n")
                             self.clear_memory()
+                            error_text = f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}"
+                            _append_to_model_errors_log(
+                                self.output_dir,
+                                title="КРИТИЧЕСКАЯ ОШИБКА ГЕНЕРАЦИИ (OUTLINES / ИНФЕРЕНС)",
+                                model_name=model_name,
+                                message=error_text,
+                            )
                             return {
                                 "status": "error",
-                                "error": f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}",
+                                "error": error_text,
                                 "parsing_errors": parsing_errors,
                             }
                         except KeyboardInterrupt:

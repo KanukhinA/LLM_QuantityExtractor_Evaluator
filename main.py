@@ -4,6 +4,7 @@
 import os
 import sys
 import logging
+import warnings
 from datetime import datetime
 from model_evaluator import ModelEvaluator
 from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
@@ -22,6 +23,28 @@ logging.basicConfig(
         logging.StreamHandler(sys.stderr)
     ]
 )
+
+
+_original_showwarning = warnings.showwarning
+
+
+def _warnings_to_model_errors_log(message, category, filename, lineno, file=None, line=None):
+    """Пишет предупреждения в model_errors.log и выводит в консоль. Игнорирует известные несущественные (top_p/top_k)."""
+    msg_str = str(message)
+    if "generation flags are not valid" in msg_str and ("top_p" in msg_str or "top_k" in msg_str):
+        return
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(
+                f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] WARNING "
+                f"({category.__name__ if category else 'UserWarning'}): {message}\n"
+            )
+    except Exception:
+        pass
+    _original_showwarning(message, category, filename, lineno, file, line)
+
+
+warnings.showwarning = _warnings_to_model_errors_log
 
 
 def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool = True, verbose: bool = False, stop_all_on_interrupt: bool = False):
