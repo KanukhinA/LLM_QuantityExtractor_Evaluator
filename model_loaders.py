@@ -86,11 +86,13 @@ def _generate_with_outlines(
 
     outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
     gen_kwargs = {"max_new_tokens": max_new_tokens}
+    # whitespace_pattern=r"" — без пробелов между JSON-элементами (многие токенизаторы не имеют отдельного токена пробела)
+    ws_pattern = r""
     if use_generate_json:
-        generator = generate.json(outlines_model, schema_str)
+        generator = generate.json(outlines_model, schema_str, whitespace_pattern=ws_pattern)
         generated = generator(prompt, **gen_kwargs)
     else:
-        generator = Generator(outlines_model, output_type=schema_str)
+        generator = Generator(outlines_model, output_type=schema_str, whitespace_pattern=ws_pattern)
         generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -102,7 +104,7 @@ def _generate_with_outlines(
 
 
 def _is_outlines_vocabulary_error(exc: BaseException) -> bool:
-    """Проверяет, является ли ошибка несовместимостью словаря токенизатора с regex outlines (кириллица и т.д.)."""
+    """Проверяет, является ли ошибка несовместимостью словаря токенизатора с outlines (кириллица и т.д.)."""
     msg = str(exc).lower()
     return "vocabulary" in msg and ("incompatible" in msg or "incompat" in msg)
 
