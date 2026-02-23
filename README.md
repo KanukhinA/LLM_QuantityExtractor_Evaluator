@@ -75,6 +75,7 @@ cp config_secrets.py.example config_secrets.py
 HF_TOKEN = "your_huggingface_token_here"
 GEMINI_API_KEY = "your_gemini_api_key_here"  # опционально
 OPENAI_API_KEY = "your_openai_api_key_here"  # опционально
+GOOGLE_SHEETS_SPREADSHEET_ID = ""  # опционально, для экспорта метрик в Google Таблицу
 ```
 
 **Важно:**
@@ -172,7 +173,8 @@ SmallLLMEvaluator/
 ├── prompt_config.py        # Конфигурация промптов для агентов
 ├── multi_agent_graph.py    # Мультиагентная система на LangGraph
 ├── few_shot_extractor.py   # Модуль для извлечения few-shot примеров на основе Dual-Level Introspective Uncertainty
-├── structured_schemas.py  # Pydantic схемы для structured output
+├── structured_schemas.py   # Pydantic схемы для structured output
+├── outlines_schema.py      # JSON-схемы для outlines/guidance (латиница и RUS)
 ├── workflow_config.py      # Конфигурация мультиагентных workflow
 ├── requirements.txt        # Зависимости проекта
 ├── core/                   # ООП архитектура для генераторов
@@ -306,15 +308,22 @@ python main.py <model_key> --no-gemini
    - Режим structured output **влияет на промпт**, а не только на валидацию
    - Для API моделей structured output обеспечивает гарантированно валидный JSON от API
 
-**Режим Outlines (structured generation для локальных моделей):**
+**Режимы Outlines и Pydantic-Outlines (structured generation для локальных моделей):**
 
-Флаг `--outlines` включает генерацию JSON через библиотеку `outlines` по Pydantic-схеме.  
-Работает **только** для локальных моделей **вместе** с `--structured-output`.
+Флаги `--outlines` и `--pydantic-outlines` взаимно исключают друг друга: выбирается один. Оба работают **только** для локальных моделей **вместе** с `--structured-output`.
 
-- Использует библиотеку `outlines` для гарантированной генерации валидного JSON
-- Схема `FertilizerExtractionOutputLatin` с латинскими ключами (mass_fractions, other_params и т.д.) — совместимость с токенизатором
-- Результат автоматически конвертируется в кириллицу для метрик и пайплайна
-- Рекомендуется использовать промпты `*_OUTLINES` или флаг `--prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`
+- **`--outlines`** — схема берётся из `outlines_schema.py` (латиница или RUS по промпту).
+- **`--pydantic-outlines`** — схема генерируется из Pydantic: `response_schema.model_json_schema()`.
+- Схема `FertilizerExtractionOutputLatin` с латинскими ключами (mass_fractions, other_params) — совместимость с токенизатором; результат автоматически конвертируется в кириллицу.
+- Рекомендуется использовать промпты `*_OUTLINES` или `--prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`.
+
+**Режим Guidance (llguidance для локальных моделей):**
+
+Флаг `--guidance` включает constrained decoding через библиотеку **llguidance** (бэкенд outlines). По умолчанию используется схема RUS и промпт `DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS`.
+
+- Используется бэкенд `llguidance` вместо outlines_core.
+- По умолчанию: схема из `outlines_schema_rus`, промпт с кириллическим примером JSON.
+- Требуется `pip install llguidance` (указан в requirements.txt).
 
 **Примеры запуска:**
 
@@ -354,6 +363,12 @@ python main.py qwen-2.5-3b --structured-output
 
 # Structured output + outlines (локальные модели)
 python main.py qwen-2.5-3b --structured-output --outlines
+
+# Structured output + схема из Pydantic (вместо --outlines)
+python main.py qwen-2.5-3b --structured-output --pydantic-outlines
+
+# Structured output + llguidance (по умолчанию схема RUS)
+python main.py qwen-2.5-3b --guidance
 
 # Указание промпта из консоли (переопределяет config.PROMPT_TEMPLATE_NAME)
 python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines
@@ -430,7 +445,9 @@ python run_all_models.py --local-only --multi-agent qa_workflow --structured-out
 - `--prompt NAME` - название промпта из prompt_config.py (переопределяет config.PROMPT_TEMPLATE_NAME)
 - `--multi-agent MODE` - режим мультиагентного подхода (simple_4agents, critic_3agents, qa_workflow)
 - `--structured-output` - использовать structured output через Pydantic
-- `--outlines` - использовать библиотеку outlines для структурированной генерации JSON (только для локальных моделей с --structured-output)
+- `--outlines` - использовать outlines со схемой из outlines_schema.py (только для локальных моделей; взаимоисключающий с --pydantic-outlines)
+- `--pydantic-outlines` - использовать outlines со схемой из Pydantic model_json_schema() (взаимоисключающий с --outlines)
+- `--guidance` - использовать llguidance для constrained decoding (по умолчанию схема RUS)
 
 Скрипт автоматически:
 - Проверит доступность Gemini API
@@ -587,14 +604,13 @@ python run_all_models.py
 
 ### 5.7. Интеграция с Google Таблицами
 
-Модуль `google_sheets_integration.py` позволяет автоматически загружать F1 метрики из `metrics.json` файлов в Google Таблицы для удобного анализа и сравнения результатов.
+Модуль `google_sheets_integration.py` обходит папку результатов, для каждой пары (модель, метод) выбирает **последний** запуск (по timestamp или дате файла), формирует таблицу F1 и при наличии настроек загружает её в Google Таблицу.
 
 **Возможности:**
-- Автоматический поиск всех `metrics.json` файлов в структуре результатов
-- Извлечение F1 метрик для групп "массовая доля" и "прочее"
-- Формирование таблицы: модели по вертикали, методы по горизонтали
-- Загрузка данных в Google Таблицы через Google Sheets API
-- Экспорт данных в CSV для локального использования
+- Обход `results/` (или `config.OUTPUT_DIR`), поиск всех `metrics_*.json`
+- Для каждой пары (model_key, method) используется один последний запуск
+- Таблица: модели по вертикали, методы (папки) по горизонтали, значения — F1
+- Загрузка в Google Таблицу (два листа по умолчанию: «массовая доля» и «прочее») или экспорт в CSV
 
 **Структура таблицы:**
 - **По вертикали**: alias моделей (model_key)
@@ -615,42 +631,43 @@ python run_all_models.py
 5. **Переименуйте скачанный файл** в `google_sheets_credentials.json` и положите его в **корень проекта** SmallLLMEvaluator (рядом с `google_sheets_integration.py`). Файл в .gitignore, в репозиторий не попадёт.
 6. **Доступ к таблице:** откройте вашу Google Таблицу → «Настройки доступа» (Поделиться) → добавьте **email** вида `something@project-name.iam.gserviceaccount.com` (этот email лежит в JSON в поле `client_email`) с правом «Редактор».
 
+7. **ID таблицы для запуска без аргументов:** в `config_secrets.py` задайте `GOOGLE_SHEETS_SPREADSHEET_ID = "ваш_id_из_url"`. Тогда `python google_sheets_integration.py` без аргументов загрузит данные в эту таблицу.
+
 **Примеры использования:**
 
 ```bash
-# Экспорт в CSV файл (без настройки Google API)
-python google_sheets_integration.py --export-csv results_f1.csv --group "массовая доля"
+# Запуск без аргументов: обход results/, последний запуск по каждой паре (модель, метод), загрузка в таблицу
+# (нужны google_sheets_credentials.json в корне проекта и GOOGLE_SHEETS_SPREADSHEET_ID в config_secrets.py)
+python google_sheets_integration.py
 
-# Экспорт метрик "прочее" в CSV
+# Только собрать и вывести метрики (не загружать в таблицу)
+python google_sheets_integration.py --no-upload
+
+# Экспорт в CSV
+python google_sheets_integration.py --export-csv results_f1.csv --group "массовая доля"
 python google_sheets_integration.py --export-csv results_f1_prochee.csv --group "прочее"
 
-# Загрузка в Google Таблицу
-python google_sheets_integration.py \
-    --credentials path/to/credentials.json \
-    --spreadsheet-id YOUR_SPREADSHEET_ID \
-    --worksheet "F1 Scores" \
-    --group "массовая доля"
-
-# Просмотр собранных данных без экспорта
-python google_sheets_integration.py --results-dir results
+# Загрузка в таблицу с явным указанием credentials и spreadsheet-id
+python google_sheets_integration.py --spreadsheet-id YOUR_SPREADSHEET_ID --group "массовая доля"
 ```
 
 **Аргументы командной строки:**
 
-Обязательные (для загрузки в Google Таблицу):
-- `--credentials` - путь к JSON файлу с credentials для Google API
-- `--spreadsheet-id` - ID Google Таблицы (из URL: `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`). Либо задайте `GOOGLE_SHEETS_SPREADSHEET_ID` в `config_secrets.py` — тогда при запуске без аргументов данные будут загружаться в эту таблицу.
+Для загрузки в Google Таблицу при запуске без аргументов используются:
+- **Credentials:** файл `google_sheets_credentials.json` в корне проекта (или `--credentials путь`)
+- **ID таблицы:** `GOOGLE_SHEETS_SPREADSHEET_ID` в `config_secrets.py` или переменная окружения (или `--spreadsheet-id ID`)
 
 Опциональные:
-- `--results-dir` - путь к директории с результатами (по умолчанию: `results`)
-- `--worksheet` - название листа в таблице (по умолчанию: `F1 Scores`)
-- `--group` - группа метрик для экспорта: `"массовая доля"` или `"прочее"` (по умолчанию: `"массовая доля"`)
-- `--export-csv` - экспортировать в CSV файл (укажите путь к файлу)
+- `--results-dir` - папка с результатами (по умолчанию: из `config.OUTPUT_DIR` или `results`)
+- `--worksheet` - название листа (по умолчанию при полном экспорте: «F1 Scores» и «F1 Scores (прочее)»)
+- `--group` - экспортировать только одну группу: `"массовая доля"` или `"прочее"` (без флага экспортируются обе на два листа)
+- `--export-csv` - экспорт в CSV (укажите путь)
+- `--no-upload` - только собрать и вывести метрики, не загружать в таблицу
 
 **Примечания:**
-- Модуль автоматически определяет метод из структуры папок: `results/{model_key}/{method_folder}/metrics_*.json`
-- Если для одной модели и метода найдено несколько файлов, используется самый свежий (по timestamp)
-- Для работы с Google Таблицами требуется установить зависимости: `pip install gspread google-auth`
+- Метод определяется по структуре папок: `results/{model_key}/{method_folder}/metrics_*.json`
+- Для каждой пары (модель, метод) берётся один последний запуск (по timestamp или дате файла)
+- Зависимости: `pip install gspread google-auth` (указаны в requirements.txt)
 
 ## 6. Доступные модели
 
@@ -807,8 +824,9 @@ results/
 - Для одноагентного режима: название промпта из `hyperparameters.prompt_template_name` или `config.PROMPT_TEMPLATE_NAME`
 - Для мультиагентного режима: название режима (например, `simple_4agents`, `qa_workflow`)
 - Если используется `structured_output`:
-  - С суффиксом `_structured` (если `structured_output=True`, `use_outlines=False`)
-  - С суффиксом `_outlines` (если `structured_output=True`, `use_outlines=True`)
+  - С суффиксом `_structured` (если `structured_output=True`, без outlines/guidance)
+  - С суффиксом `_outlines` (если `use_outlines=True`)
+  - С суффиксом `_GUIDANCE` в названии папки (если `use_guidance=True`)
 
 **Примеры структуры папок:**
 - `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT/` - обычный режим
@@ -828,8 +846,10 @@ results/
 **Для одноагентного подхода:**
 - **`DETAILED_INSTR_ZEROSHOT_BASELINE`** - детальный zero-shot промпт без примера (baseline)
 - **`DETAILED_INSTR_ONESHOT`** - детальный промпт с примером текста и ответа (One-shot prompt)
-- **`DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`** - zero-shot с примером JSON на латинице (для режима outlines)
-- **`DETAILED_INSTR_ONESHOT_OUTLINES`** - one-shot с примером JSON на латинице (для режима outlines)
+- **`DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`** - zero-shot с примером JSON на латинице (для --outlines)
+- **`DETAILED_INSTR_ONESHOT_OUTLINES`** - one-shot с примером JSON на латинице (для --outlines)
+- **`DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS`** - zero-shot с примером JSON на кириллице (для --outlines RUS и --guidance по умолчанию)
+- **`DETAILED_INSTR_ONESHOT_OUTLINES_RUS`** - one-shot с примером JSON на кириллице
 - **`MINIMAL_FIVESHOT_PROMPT`** - минималистичный few-shot промпт с 5 примерами
 - **`MINIMAL_FIVESHOT_APIE_PROMPT`** - few-shot промпт с 5 примерами (версия APIE)
 - **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
@@ -1105,10 +1125,10 @@ python main.py your-model-key --structured-output
 ### 10.4. Требования для интеграции с Google Таблицами
 
 Для использования модуля `google_sheets_integration.py`:
-- `gspread>=5.0.0` - библиотека для работы с Google Sheets API
-- `google-auth>=2.0.0` - библиотека для аутентификации в Google API
-- Service Account в Google Cloud Console с включенными Google Sheets API и Google Drive API
-- JSON файл с credentials от Service Account
+- `gspread` и `google-auth` (указаны в requirements.txt)
+- Service Account в Google Cloud Console с включёнными Google Sheets API и Google Drive API
+- JSON credentials в корне проекта как `google_sheets_credentials.json` (в .gitignore)
+- Опционально: `GOOGLE_SHEETS_SPREADSHEET_ID` в `config_secrets.py` для запуска без аргументов
 
 **Установка зависимостей:**
 ```bash
@@ -1148,13 +1168,18 @@ python reevaluate.py
 | `python main.py <model_key> --structured-output` | Оценка с Pydantic валидацией | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --multi-agent <mode> --structured-output` | Оценка с мультиагентным режимом и Pydantic | Мультиагентный | Включен | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --structured-output --outlines` | Оценка с Pydantic + outlines (локальные модели) | Одноагентный | Включен | Включен (по умолчанию) | По умолчанию |
+| `python main.py <model_key> --structured-output --pydantic-outlines` | Оценка с outlines (схема из Pydantic) | Одноагентный | Включен | Включен | По умолчанию |
+| `python main.py <model_key> --guidance` | Оценка с llguidance (схема RUS по умолчанию) | Одноагентный | Включен | Включен | По умолчанию |
 | `python main.py <model_key> --prompt NAME` | Оценка с указанным промптом | Одноагентный | — | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Включен (по умолчанию) | Отключен |
 | `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --local-only` | Оценка только локальных моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --multi-agent <mode>` | Оценка всех моделей | Мультиагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --structured-output` | Оценка всех моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
-| `python run_all_models.py --local-only --structured-output --outlines` | Оценка локальных моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --local-only --structured-output --outlines` | Оценка локальных моделей с outlines | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --local-only --structured-output --pydantic-outlines` | Оценка с outlines (схема из Pydantic) | Одноагентный | Включен | Отключен | По умолчанию |
+| `python run_all_models.py --local-only --guidance` | Оценка с llguidance (схема RUS) | Одноагентный | Включен | Отключен | По умолчанию |
+| `python google_sheets_integration.py` | Экспорт метрик в Google Таблицу (последние запуски) | — | — | — | — |
 | `python run_all_models.py --prompt NAME [опции]` | Оценка с указанным промптом | — | — | — | — |
 | `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | - | Отключен |
 | `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | - | Включен |

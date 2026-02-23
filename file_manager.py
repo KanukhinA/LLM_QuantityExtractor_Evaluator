@@ -417,24 +417,21 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
-        # Оставляем только записи с непустым списком ошибок
-        evaluation_result_for_json["ошибки"] = [
-            v for v in errors_by_text.values()
-            if v.get("errors")
-        ]
+        errors_list = [v for v in errors_by_text.values() if v.get("errors")]
         
-        # Добавляем остальные поля (исключая поля с ошибками, которые уже обработаны)
+        # Добавляем остальные поля (ошибки — в самом конце JSON)
         excluded_keys = {
             "raw_output_metrics",  # Сохраняется отдельно в raw_metrics.json
-            "parsing_errors",  # Уже включено в объединенное поле "ошибки"
+            "parsing_errors",  # Входит в объединённое поле "ошибки"
+            "ошибки",
         }
         for key in evaluation_result:
             if key not in evaluation_result_for_json and key not in excluded_keys:
                 evaluation_result_for_json[key] = evaluation_result[key]
         
-        # Финальная проверка: убеждаемся, что parsing_errors не попал в JSON
         if "parsing_errors" in evaluation_result_for_json:
             evaluation_result_for_json.pop("parsing_errors")
+        evaluation_result_for_json["ошибки"] = errors_list
         
         metrics_path = self.build_path(prompt_dir, f"metrics_{model_name_for_file}_{timestamp}.json")
         self.save_json(evaluation_result_for_json, metrics_path)
@@ -673,20 +670,16 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
-        # Оставляем только записи с непустым списком ошибок
-        evaluation_result_for_json["ошибки"] = [
-            v for v in errors_by_text.values()
-            if v.get("errors")
-        ]
+        errors_list = [v for v in errors_by_text.values() if v.get("errors")]
         
-        # Остальные поля (исключая raw_output_metrics, parsing_errors)
-        excluded_keys = {"raw_output_metrics", "parsing_errors"}
+        excluded_keys = {"raw_output_metrics", "parsing_errors", "ошибки"}
         for key in evaluation_result:
             if key not in evaluation_result_for_json and key not in excluded_keys:
                 evaluation_result_for_json[key] = evaluation_result[key]
         
         if "parsing_errors" in evaluation_result_for_json:
             evaluation_result_for_json.pop("parsing_errors")
+        evaluation_result_for_json["ошибки"] = errors_list
         
         self.save_json(evaluation_result_for_json, metrics_path)
         saved_files["metrics"] = metrics_path

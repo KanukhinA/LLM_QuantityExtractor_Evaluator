@@ -269,7 +269,9 @@ class ModelEvaluator:
             except Exception as e:
                 error_msg = str(e)
                 use_outlines = hyperparameters.get("use_outlines", False)
-                if use_outlines and not is_api_model and _is_outlines_vocabulary_error(e):
+                use_guidance = hyperparameters.get("use_guidance", False)
+                vocab_err = _is_outlines_vocabulary_error(e)
+                if use_outlines and not is_api_model and vocab_err:
                     _append_to_model_errors_log(
                         self.output_dir,
                         title="ОШИБКА OUTLINES (VOCABULARY/ENCODING)",
@@ -277,6 +279,15 @@ class ModelEvaluator:
                         message=f"Ответ #{text_index+1}/{total_texts}: {error_msg}",
                     )
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Outlines vocabulary/encoding, пустой ответ, лог записан")
+                    return "", 0, error_msg, True
+                if use_guidance and not is_api_model and vocab_err:
+                    _append_to_model_errors_log(
+                        self.output_dir,
+                        title="ОШИБКА GUIDANCE (VOCABULARY/ENCODING)",
+                        model_name=model_name,
+                        message=f"Ответ #{text_index+1}/{total_texts}: {error_msg}",
+                    )
+                    print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Guidance vocabulary/encoding, пустой ответ, лог записан")
                     return "", 0, error_msg, True
 
                 if is_api_model:
@@ -1084,8 +1095,9 @@ class ModelEvaluator:
                                     )
                                     if outlines_skip:
                                         if last_outlines_skip:
+                                            mode_label = "Guidance" if use_guidance else "Outlines"
                                             raise InferenceCriticalFailure(
-                                                f"Outlines vocabulary/encoding: второй подряд пример #{i+1} упал. {error_msg}",
+                                                f"{mode_label} vocabulary/encoding: второй подряд пример #{i+1} упал. {error_msg}",
                                                 i, num_retries
                                             )
                                         last_outlines_skip = True

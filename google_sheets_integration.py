@@ -67,14 +67,54 @@ class GoogleSheetsIntegration:
     def find_metrics_files(self) -> List[str]:
         """
         Находит все metrics.json файлы в директории результатов
-        
+
         Returns:
             список путей к metrics.json файлам
         """
         pattern = os.path.join(self.results_dir, "**", "metrics_*.json")
         metrics_files = glob.glob(pattern, recursive=True)
         return sorted(metrics_files)
-    
+
+    def _model_method_from_path(self, file_path: str) -> Optional[Tuple[str, str]]:
+        """
+        Извлекает (model_key, method) из пути к metrics файлу без чтения файла.
+        Ожидаемая структура: results_dir / model_key / method_folder / metrics_*.json
+        """
+        norm_path = os.path.normpath(os.path.abspath(file_path))
+        norm_results = os.path.normpath(os.path.abspath(self.results_dir))
+        if not norm_path.startswith(norm_results):
+            return None
+        prefix = norm_results.rstrip(os.sep) + os.sep
+        rel = norm_path[len(prefix) :].split(os.sep) if norm_path.startswith(prefix) else []
+        if len(rel) < 3:
+            return None
+        return (rel[0], rel[1])
+
+    def get_latest_metrics_files(self) -> List[str]:
+        """
+        Для каждой пары (model_key, method) оставляет только один файл — с самой
+        поздней датой изменения. Чтение содержимого не выполняется.
+
+        Returns:
+            список путей к последним metrics_*.json по каждой паре (модель, метод)
+        """
+        all_files = self.find_metrics_files()
+        by_key: Dict[Tuple[str, str], List[Tuple[float, str]]] = defaultdict(list)
+        for file_path in all_files:
+            key = self._model_method_from_path(file_path)
+            if not key:
+                continue
+            try:
+                mtime = os.path.getmtime(file_path)
+            except OSError:
+                mtime = 0.0
+            by_key[key].append((mtime, file_path))
+        latest = []
+        for key, items in by_key.items():
+            items.sort(key=lambda x: x[0], reverse=True)
+            latest.append(items[0][1])
+        return sorted(latest)
+
     def parse_metrics_file(self, file_path: str) -> Optional[Dict]:
         """
         Парсит metrics.json файл и извлекает нужные данные
@@ -111,16 +151,29 @@ class GoogleSheetsIntegration:
             
             # Извлекаем F1 метрики
             quality_metrics = data.get("quality_metrics", {})
-            
             f1_scores = {}
-            for group in ["массовая доля", "прочее"]:
-                if group in quality_metrics:
-                    f1_scores[group] = quality_metrics[group].get("f1", None)
+            for grp in ["массовая доля", "прочее"]:
+                if grp in quality_metrics:
+                    f1_scores[grp] = quality_metrics[grp].get("f1", None)
+
+            # Формат validation: "0.99(0.88)" = parsed_validation_rate(raw_validation_rate)
+            validation_str = None
+            vs = data.get("validation_stats")
+            if vs and isinstance(vs, dict):
+                parsed_rate = vs.get("parsed", {}).get("validation_rate")
+                raw_rate = vs.get("raw_output", {}).get("validation_rate")
+                if parsed_rate is not None and raw_rate is not None:
+                    validation_str = f"{parsed_rate:.2f}({raw_rate:.2f})"
+            avg_inference_sec = data.get("average_response_time_seconds")
+            if avg_inference_sec is not None and not isinstance(avg_inference_sec, (int, float)):
+                avg_inference_sec = None
             
             return {
                 "model_key": model_key,
                 "method": method_folder,
                 "f1_scores": f1_scores,
+                "validation_str": validation_str,
+                "average_response_time_seconds": avg_inference_sec,
                 "file_path": file_path,
                 "timestamp": data.get("timestamp")
             }
@@ -128,70 +181,67 @@ class GoogleSheetsIntegration:
             print(f"⚠️ Ошибка при парсинге {file_path}: {e}")
             return None
     
-    def collect_all_metrics(self, latest_only: bool = True) -> Dict[str, Dict[str, Dict[str, float]]]:
+    def collect_all_metrics(
+        self, latest_only: bool = True
+    ) -> Tuple[Dict[str, Dict[str, Dict[str, float]]], Dict[str, Dict[str, str]], Dict[str, Dict[str, float]]]:
         """
-        Собирает метрики из metrics.json. Для каждой пары (модель, метод) берётся
-        один последний запуск (по timestamp в файле или по дате файла).
+        Собирает метрики из metrics.json. Читает только последний файл по каждой
+        паре (модель, метод) — по дате изменения файла (без разбора остальных).
 
         Args:
-            latest_only: если True, для каждой пары (model_key, method) берётся
-                только самый свежий metrics.json; иначе собираются все и при конфликте — новее по timestamp.
+            latest_only: если True, для каждой пары (model_key, method) читается
+                только один самый свежий metrics.json.
 
         Returns:
-            словарь: {model_key: {method: {group: f1_score}}}
+            (all_data, validation_data, inference_time_data):
+            - all_data: {model_key: {method: {group: f1_score}}}
+            - validation_data: {model_key: {method: "0.99(0.88)"}} (parsed(raw))
+            - inference_time_data: {model_key: {method: avg_seconds}}
         """
-        metrics_files = self.find_metrics_files()
+        if latest_only:
+            metrics_files = self.get_latest_metrics_files()
+        else:
+            metrics_files = self.find_metrics_files()
         if not metrics_files:
             print(f"📊 В {self.results_dir} не найдено файлов metrics_*.json")
-            return {}
+            return {}, {}, {}
 
-        # Группируем по (model_key, method), для каждой группы — список (timestamp_or_mtime, parsed)
-        by_model_method: Dict[Tuple[str, str], List[Tuple[float, Dict]]] = defaultdict(list)
-
+        all_data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
+        validation_data: Dict[str, Dict[str, str]] = defaultdict(dict)
+        inference_time_data: Dict[str, Dict[str, float]] = defaultdict(dict)
         for file_path in metrics_files:
             parsed = self.parse_metrics_file(file_path)
             if not parsed:
                 continue
             model_key = parsed["model_key"]
             method = parsed["method"]
-            ts_str = parsed.get("timestamp") or ""
-            try:
-                ts = float(os.path.getmtime(file_path))
-            except OSError:
-                ts = 0.0
-            if ts_str:
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                    ts = dt.timestamp()
-                except Exception:
-                    pass
-            by_model_method[(model_key, method)].append((ts, parsed))
-
-        all_data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
-        total_latest = 0
-        for (model_key, method), items in by_model_method.items():
-            items.sort(key=lambda x: x[0], reverse=True)
-            _, latest_parsed = items[0]
-            total_latest += 1
-            for group, f1_score in latest_parsed["f1_scores"].items():
+            for group, f1_score in parsed["f1_scores"].items():
                 if f1_score is not None:
                     all_data[model_key][method][group] = f1_score
+            if parsed.get("validation_str"):
+                validation_data[model_key][method] = parsed["validation_str"]
+            if parsed.get("average_response_time_seconds") is not None:
+                inference_time_data[model_key][method] = float(parsed["average_response_time_seconds"])
 
-        print(f"📊 Найдено {len(metrics_files)} файлов metrics.json, использовано {total_latest} последних запусков (модель+метод)")
-        return dict(all_data)
+        total = len(metrics_files)
+        print(f"📊 Прочитано {total} файлов metrics.json (последний запуск по каждой паре модель+метод)")
+        return dict(all_data), dict(validation_data), dict(inference_time_data)
     
-    def create_table_data(self, group: str = "массовая доля") -> Tuple[List[List], List[str], List[str]]:
+    def create_table_data(
+        self, group: str = "массовая доля", all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None
+    ) -> Tuple[List[List], List[str], List[str]]:
         """
-        Создает данные для таблицы
-        
+        Создает данные для таблицы F1.
+
         Args:
             group: группа метрик ("массовая доля" или "прочее")
-            
+            all_metrics: если передан, используется вместо повторного сбора
+
         Returns:
             кортеж: (данные таблицы, список моделей, список методов)
         """
-        all_metrics = self.collect_all_metrics()
+        if all_metrics is None:
+            all_metrics, _, _ = self.collect_all_metrics()
         
         # Собираем уникальные модели и методы
         models = sorted(set(all_metrics.keys()))
@@ -222,23 +272,83 @@ class GoogleSheetsIntegration:
             table_data.append(row)
         
         return table_data, models, methods
-    
-    def upload_to_sheet(self, spreadsheet_id: str, worksheet_name: str, 
-                       group: str = "массовая доля", clear_existing: bool = True):
+
+    def create_validation_table_data(
+        self, validation_data: Dict[str, Dict[str, str]]
+    ) -> Tuple[List[List], List[str], List[str]]:
         """
-        Загружает данные в Google Таблицу
-        
+        Создаёт данные для таблицы validation: ячейки в формате 0.99(0.88) = parsed(raw).
+
+        Args:
+            validation_data: {model_key: {method: "0.99(0.88)"}}
+
+        Returns:
+            (данные таблицы, список моделей, список методов)
+        """
+        models = sorted(set(validation_data.keys()))
+        methods = set()
+        for per_model in validation_data.values():
+            methods.update(per_model.keys())
+        methods = sorted(methods)
+        table_data = [["Модель"] + methods]
+        for model in models:
+            row = [model]
+            for method in methods:
+                val = validation_data.get(model, {}).get(method, "")
+                row.append(val if val else "")
+            table_data.append(row)
+        return table_data, models, methods
+
+    def create_inference_time_table_data(
+        self, inference_time_data: Dict[str, Dict[str, float]]
+    ) -> Tuple[List[List], List[str], List[str]]:
+        """
+        Создаёт данные для таблицы среднего времени инференса (сек/ответ).
+
+        Args:
+            inference_time_data: {model_key: {method: seconds}}
+
+        Returns:
+            (данные таблицы, список моделей, список методов)
+        """
+        models = sorted(set(inference_time_data.keys()))
+        methods = set()
+        for per_model in inference_time_data.values():
+            methods.update(per_model.keys())
+        methods = sorted(methods)
+        table_data = [["Модель"] + methods]
+        for model in models:
+            row = [model]
+            for method in methods:
+                sec = inference_time_data.get(model, {}).get(method)
+                if sec is not None:
+                    row.append(f"{sec:.3f}")
+                else:
+                    row.append("")
+            table_data.append(row)
+        return table_data, models, methods
+
+    def upload_to_sheet(
+        self,
+        spreadsheet_id: str,
+        worksheet_name: str,
+        group: str = "массовая доля",
+        clear_existing: bool = True,
+        all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None,
+    ):
+        """
+        Загружает данные F1 в Google Таблицу.
+
         Args:
             spreadsheet_id: ID Google Таблицы (из URL)
             worksheet_name: название листа
             group: группа метрик ("массовая доля" или "прочее")
             clear_existing: очищать ли существующие данные
+            all_metrics: если передан, повторный сбор метрик не выполняется
         """
         if not self.client:
             raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
-        
-        # Создаем данные таблицы
-        table_data, models, methods = self.create_table_data(group)
+        table_data, models, methods = self.create_table_data(group=group, all_metrics=all_metrics)
         
         try:
             # Открываем таблицу
@@ -270,7 +380,65 @@ class GoogleSheetsIntegration:
             
         except Exception as e:
             raise Exception(f"Ошибка при загрузке данных в Google Таблицу: {e}")
-    
+
+    def upload_validation_to_sheet(
+        self,
+        spreadsheet_id: str,
+        worksheet_name: str,
+        validation_data: Dict[str, Dict[str, str]],
+        clear_existing: bool = True,
+    ):
+        """
+        Загружает таблицу validation (формат 0.99(0.88) = parsed(raw)) на лист.
+        """
+        if not self.client:
+            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        table_data, models, methods = self.create_validation_table_data(validation_data)
+        try:
+            spreadsheet = self.client.open_by_key(spreadsheet_id)
+            try:
+                worksheet = spreadsheet.worksheet(worksheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
+            if clear_existing:
+                worksheet.clear()
+            worksheet.update("A1", table_data)
+            worksheet.format("A1:Z1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
+            })
+            print(f"✅ Validation загружены в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
+        except Exception as e:
+            raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
+
+    def upload_inference_time_to_sheet(
+        self,
+        spreadsheet_id: str,
+        worksheet_name: str,
+        inference_time_data: Dict[str, Dict[str, float]],
+        clear_existing: bool = True,
+    ):
+        """Загружает таблицу среднего времени инференса (сек/ответ) на лист."""
+        if not self.client:
+            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        table_data, models, methods = self.create_inference_time_table_data(inference_time_data)
+        try:
+            spreadsheet = self.client.open_by_key(spreadsheet_id)
+            try:
+                worksheet = spreadsheet.worksheet(worksheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
+            if clear_existing:
+                worksheet.clear()
+            worksheet.update("A1", table_data)
+            worksheet.format("A1:Z1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
+            })
+            print(f"✅ Среднее время инференса загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
+        except Exception as e:
+            raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
+
     def export_to_csv(self, output_path: str, group: str = "массовая доля"):
         """
         Экспортирует данные в CSV файл
@@ -296,9 +464,11 @@ class GoogleSheetsIntegration:
 # Имя файла по умолчанию для Google Service Account JSON (в корне проекта, в .gitignore)
 DEFAULT_CREDENTIALS_FILENAME = "google_sheets_credentials.json"
 
-# Листы по умолчанию для двух групп метрик при полном экспорте
+# Листы по умолчанию при полном экспорте
 DEFAULT_WORKSHEET_MASS = "F1 Scores"
 DEFAULT_WORKSHEET_OTHER = "F1 Scores (прочее)"
+DEFAULT_WORKSHEET_VALIDATION = "Validation (parsed(raw))"
+DEFAULT_WORKSHEET_INFERENCE = "Avg inference time (s)"
 
 
 def _default_results_dir() -> str:
@@ -368,34 +538,41 @@ def main():
         integration.export_to_csv(args.export_csv, group=group)
         return
 
-    all_metrics = integration.collect_all_metrics(latest_only=True)
-    if not all_metrics:
+    all_metrics, validation_data, inference_time_data = integration.collect_all_metrics(latest_only=True)
+    if not all_metrics and not validation_data and not inference_time_data:
         return
 
-    if args.no_upload:
+    def _print_metrics():
         print("\n📊 Собранные метрики (последний запуск по каждой паре модель+метод):")
         for model_key, methods in sorted(all_metrics.items()):
             print(f"\n  {model_key}:")
             for method, groups in sorted(methods.items()):
                 print(f"    {method}: {groups}")
+        if validation_data:
+            print("\n📊 Validation (parsed(raw)):")
+            for model_key, methods in sorted(validation_data.items()):
+                print(f"\n  {model_key}:")
+                for method, val in sorted(methods.items()):
+                    print(f"    {method}: {val}")
+        if inference_time_data:
+            print("\n📊 Среднее время инференса (сек/ответ):")
+            for model_key, methods in sorted(inference_time_data.items()):
+                print(f"\n  {model_key}:")
+                for method, sec in sorted(methods.items()):
+                    print(f"    {method}: {sec:.3f}")
+
+    if args.no_upload:
+        _print_metrics()
         return
 
     if not credentials_path:
         print("⚠️ Не указан файл с credentials. Положите google_sheets_credentials.json в корень проекта или передайте --credentials.")
-        print("\n📊 Собранные метрики (последний запуск по каждой паре модель+метод):")
-        for model_key, methods in sorted(all_metrics.items()):
-            print(f"\n  {model_key}:")
-            for method, groups in sorted(methods.items()):
-                print(f"    {method}: {groups}")
+        _print_metrics()
         return
 
     if not spreadsheet_id:
         print("⚠️ Не указан ID таблицы. Задайте GOOGLE_SHEETS_SPREADSHEET_ID в config_secrets.py или переменной окружения, либо передайте --spreadsheet-id.")
-        print("\n📊 Собранные метрики (последний запуск по каждой паре модель+метод):")
-        for model_key, methods in sorted(all_metrics.items()):
-            print(f"\n  {model_key}:")
-            for method, groups in sorted(methods.items()):
-                print(f"    {method}: {groups}")
+        _print_metrics()
         return
 
     worksheet_name = args.worksheet or DEFAULT_WORKSHEET_MASS
@@ -403,20 +580,40 @@ def main():
         integration.upload_to_sheet(
             spreadsheet_id=spreadsheet_id,
             worksheet_name=worksheet_name,
-            group=args.group
+            group=args.group,
+            all_metrics=all_metrics,
         )
     else:
         integration.upload_to_sheet(
             spreadsheet_id=spreadsheet_id,
             worksheet_name=DEFAULT_WORKSHEET_MASS,
-            group="массовая доля"
+            group="массовая доля",
+            all_metrics=all_metrics,
         )
         integration.upload_to_sheet(
             spreadsheet_id=spreadsheet_id,
             worksheet_name=DEFAULT_WORKSHEET_OTHER,
-            group="прочее"
+            group="прочее",
+            all_metrics=all_metrics,
         )
-        print("✅ Загружены оба листа: «массовая доля» и «прочее».")
+        if validation_data:
+            integration.upload_validation_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=DEFAULT_WORKSHEET_VALIDATION,
+                validation_data=validation_data,
+            )
+        if inference_time_data:
+            integration.upload_inference_time_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=DEFAULT_WORKSHEET_INFERENCE,
+                inference_time_data=inference_time_data,
+            )
+        extra = []
+        if validation_data:
+            extra.append("«Validation (parsed(raw))»")
+        if inference_time_data:
+            extra.append("«Avg inference time (s)»")
+        print("✅ Загружены листы: «массовая доля», «прочее»" + (", " + ", ".join(extra) + "." if extra else "."))
 
 
 if __name__ == "__main__":
