@@ -5,6 +5,17 @@
 Структура таблицы:
 - По вертикали: alias моделей (model_key)
 - По горизонтали: методы (название папки = prompt_template или multi_agent_mode)
+
+Запуск без аргументов: python google_sheets_integration.py
+  — обход папки results/, для каждой пары (модель, метод) берётся последний запуск,
+  — загрузка в Google Таблицу (нужны google_sheets_credentials.json и
+  GOOGLE_SHEETS_SPREADSHEET_ID в config.py или в переменной окружения).
+
+Где взять JSON для Google API:
+  console.cloud.google.com -> Ваш проект -> API и сервисы -> Учётные данные ->
+  Создать учётные данные -> Сервисный аккаунт -> создать -> в карточке аккаунта
+  вкладка "Ключи" -> Добавить ключ -> JSON -> скачается файл. Положите его
+  в корень проекта как google_sheets_credentials.json (подробно в README).
 """
 import os
 import json
@@ -117,34 +128,57 @@ class GoogleSheetsIntegration:
             print(f"⚠️ Ошибка при парсинге {file_path}: {e}")
             return None
     
-    def collect_all_metrics(self) -> Dict[str, Dict[str, Dict[str, float]]]:
+    def collect_all_metrics(self, latest_only: bool = True) -> Dict[str, Dict[str, Dict[str, float]]]:
         """
-        Собирает все метрики из metrics.json файлов
-        
+        Собирает метрики из metrics.json. Для каждой пары (модель, метод) берётся
+        один последний запуск (по timestamp в файле или по дате файла).
+
+        Args:
+            latest_only: если True, для каждой пары (model_key, method) берётся
+                только самый свежий metrics.json; иначе собираются все и при конфликте — новее по timestamp.
+
         Returns:
             словарь: {model_key: {method: {group: f1_score}}}
         """
         metrics_files = self.find_metrics_files()
-        all_data = defaultdict(lambda: defaultdict(dict))
-        
-        print(f"📊 Найдено {len(metrics_files)} файлов metrics.json")
-        
+        if not metrics_files:
+            print(f"📊 В {self.results_dir} не найдено файлов metrics_*.json")
+            return {}
+
+        # Группируем по (model_key, method), для каждой группы — список (timestamp_or_mtime, parsed)
+        by_model_method: Dict[Tuple[str, str], List[Tuple[float, Dict]]] = defaultdict(list)
+
         for file_path in metrics_files:
             parsed = self.parse_metrics_file(file_path)
-            if parsed:
-                model_key = parsed["model_key"]
-                method = parsed["method"]
-                f1_scores = parsed["f1_scores"]
-                
-                for group, f1_score in f1_scores.items():
-                    if f1_score is not None:
-                        # Если для этого метода уже есть значение, берем более свежее (по timestamp)
-                        existing_timestamp = all_data[model_key][method].get("_timestamp", "")
-                        current_timestamp = parsed.get("timestamp", "")
-                        if group not in all_data[model_key][method] or current_timestamp > existing_timestamp:
-                            all_data[model_key][method][group] = f1_score
-                            all_data[model_key][method]["_timestamp"] = current_timestamp
-        
+            if not parsed:
+                continue
+            model_key = parsed["model_key"]
+            method = parsed["method"]
+            ts_str = parsed.get("timestamp") or ""
+            try:
+                ts = float(os.path.getmtime(file_path))
+            except OSError:
+                ts = 0.0
+            if ts_str:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    ts = dt.timestamp()
+                except Exception:
+                    pass
+            by_model_method[(model_key, method)].append((ts, parsed))
+
+        all_data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
+        total_latest = 0
+        for (model_key, method), items in by_model_method.items():
+            items.sort(key=lambda x: x[0], reverse=True)
+            _, latest_parsed = items[0]
+            total_latest += 1
+            for group, f1_score in latest_parsed["f1_scores"].items():
+                if f1_score is not None:
+                    all_data[model_key][method][group] = f1_score
+
+        print(f"📊 Найдено {len(metrics_files)} файлов metrics.json, использовано {total_latest} последних запусков (модель+метод)")
         return dict(all_data)
     
     def create_table_data(self, group: str = "массовая доля") -> Tuple[List[List], List[str], List[str]]:
@@ -259,52 +293,130 @@ class GoogleSheetsIntegration:
         print(f"   • Группа метрик: {group}")
 
 
+# Имя файла по умолчанию для Google Service Account JSON (в корне проекта, в .gitignore)
+DEFAULT_CREDENTIALS_FILENAME = "google_sheets_credentials.json"
+
+# Листы по умолчанию для двух групп метрик при полном экспорте
+DEFAULT_WORKSHEET_MASS = "F1 Scores"
+DEFAULT_WORKSHEET_OTHER = "F1 Scores (прочее)"
+
+
+def _default_results_dir() -> str:
+    """Путь к результатам из config или текущая папка results."""
+    try:
+        from config import OUTPUT_DIR
+        return OUTPUT_DIR
+    except ImportError:
+        return "results"
+
+
+def _default_spreadsheet_id() -> Optional[str]:
+    """ID таблицы из config_secrets или переменной окружения."""
+    try:
+        from config_secrets import GOOGLE_SHEETS_SPREADSHEET_ID
+        if GOOGLE_SHEETS_SPREADSHEET_ID and str(GOOGLE_SHEETS_SPREADSHEET_ID).strip():
+            return str(GOOGLE_SHEETS_SPREADSHEET_ID).strip()
+    except (ImportError, AttributeError):
+        pass
+    return os.environ.get("GOOGLE_SHEETS_SPREADSHEET_ID")
+
+
 def main():
-    """Пример использования"""
+    """
+    Запуск без аргументов: обход results/, выбор последнего запуска по каждой паре
+    (модель, метод), загрузка в Google Таблицу (если заданы credentials и spreadsheet id).
+    """
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Интеграция результатов с Google Таблицами')
-    parser.add_argument('--results-dir', type=str, default='results',
-                       help='Путь к директории с результатами')
-    parser.add_argument('--credentials', type=str, default=None,
-                       help='Путь к JSON файлу с credentials для Google API')
-    parser.add_argument('--spreadsheet-id', type=str, default=None,
-                       help='ID Google Таблицы (из URL)')
-    parser.add_argument('--worksheet', type=str, default='F1 Scores',
-                       help='Название листа в таблице')
-    parser.add_argument('--group', type=str, default='массовая доля',
-                       choices=['массовая доля', 'прочее'],
-                       help='Группа метрик для экспорта')
-    parser.add_argument('--export-csv', type=str, default=None,
-                       help='Экспортировать в CSV файл (укажите путь)')
-    
-    args = parser.parse_args()
-    
-    integration = GoogleSheetsIntegration(
-        results_dir=args.results_dir,
-        credentials_path=args.credentials
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_creds_path = os.path.join(script_dir, DEFAULT_CREDENTIALS_FILENAME)
+
+    parser = argparse.ArgumentParser(
+        description="Экспорт метрик в Google Таблицу. Без аргументов: обход results, последние запуски по каждой паре (модель, метод), загрузка в таблицу."
     )
-    
+    parser.add_argument("--results-dir", type=str, default=None,
+                        help=f"Папка с результатами (по умолчанию: из config.OUTPUT_DIR или results)")
+    parser.add_argument("--credentials", type=str, default=None,
+                        help=f"Путь к JSON credentials (по умолчанию: {DEFAULT_CREDENTIALS_FILENAME} в корне проекта)")
+    parser.add_argument("--spreadsheet-id", type=str, default=None,
+                        help="ID Google Таблицы (из URL). Или GOOGLE_SHEETS_SPREADSHEET_ID в config/env.")
+    parser.add_argument("--worksheet", type=str, default=None,
+                        help=f"Название листа (по умолчанию: {DEFAULT_WORKSHEET_MASS}); при полном экспорте добавляется лист для «прочее»")
+    parser.add_argument("--group", type=str, default=None,
+                        choices=["массовая доля", "прочее"],
+                        help="Экспортировать только эту группу; без флага — экспорт обеих групп на два листа")
+    parser.add_argument("--export-csv", type=str, default=None,
+                        help="Вместо таблицы экспортировать в CSV (укажите путь)")
+    parser.add_argument("--no-upload", action="store_true",
+                        help="Только собрать и вывести метрики, не загружать в таблицу")
+
+    args = parser.parse_args()
+
+    results_dir = args.results_dir or _default_results_dir()
+    credentials_path = args.credentials
+    if credentials_path is None and os.path.exists(default_creds_path):
+        credentials_path = default_creds_path
+    spreadsheet_id = args.spreadsheet_id or _default_spreadsheet_id()
+
+    integration = GoogleSheetsIntegration(
+        results_dir=results_dir,
+        credentials_path=credentials_path
+    )
+
     if args.export_csv:
-        # Экспорт в CSV
-        integration.export_to_csv(args.export_csv, group=args.group)
-    elif args.spreadsheet_id and args.credentials:
-        # Загрузка в Google Таблицу
+        group = args.group or "массовая доля"
+        integration.export_to_csv(args.export_csv, group=group)
+        return
+
+    all_metrics = integration.collect_all_metrics(latest_only=True)
+    if not all_metrics:
+        return
+
+    if args.no_upload:
+        print("\n📊 Собранные метрики (последний запуск по каждой паре модель+метод):")
+        for model_key, methods in sorted(all_metrics.items()):
+            print(f"\n  {model_key}:")
+            for method, groups in sorted(methods.items()):
+                print(f"    {method}: {groups}")
+        return
+
+    if not credentials_path:
+        print("⚠️ Не указан файл с credentials. Положите google_sheets_credentials.json в корень проекта или передайте --credentials.")
+        print("\n📊 Собранные метрики (последний запуск по каждой паре модель+метод):")
+        for model_key, methods in sorted(all_metrics.items()):
+            print(f"\n  {model_key}:")
+            for method, groups in sorted(methods.items()):
+                print(f"    {method}: {groups}")
+        return
+
+    if not spreadsheet_id:
+        print("⚠️ Не указан ID таблицы. Задайте GOOGLE_SHEETS_SPREADSHEET_ID в config_secrets.py или переменной окружения, либо передайте --spreadsheet-id.")
+        print("\n📊 Собранные метрики (последний запуск по каждой паре модель+метод):")
+        for model_key, methods in sorted(all_metrics.items()):
+            print(f"\n  {model_key}:")
+            for method, groups in sorted(methods.items()):
+                print(f"    {method}: {groups}")
+        return
+
+    worksheet_name = args.worksheet or DEFAULT_WORKSHEET_MASS
+    if args.group:
         integration.upload_to_sheet(
-            spreadsheet_id=args.spreadsheet_id,
-            worksheet_name=args.worksheet,
+            spreadsheet_id=spreadsheet_id,
+            worksheet_name=worksheet_name,
             group=args.group
         )
     else:
-        # Просто выводим собранные данные
-        all_metrics = integration.collect_all_metrics()
-        print(f"\n📊 Собранные метрики:")
-        for model_key, methods in sorted(all_metrics.items()):
-            print(f"\n{model_key}:")
-            for method, groups in sorted(methods.items()):
-                print(f"  {method}:")
-                for group, f1_score in groups.items():
-                    print(f"    {group}: {f1_score:.4f}")
+        integration.upload_to_sheet(
+            spreadsheet_id=spreadsheet_id,
+            worksheet_name=DEFAULT_WORKSHEET_MASS,
+            group="массовая доля"
+        )
+        integration.upload_to_sheet(
+            spreadsheet_id=spreadsheet_id,
+            worksheet_name=DEFAULT_WORKSHEET_OTHER,
+            group="прочее"
+        )
+        print("✅ Загружены оба листа: «массовая доля» и «прочее».")
 
 
 if __name__ == "__main__":

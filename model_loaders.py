@@ -90,25 +90,62 @@ def _generate_with_outlines(
     except AttributeError:
         outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
 
-    whitespace_pattern = r"[\n\t ]*"
-    try:
-        from outlines.types import JsonSchema  # type: ignore
-        from outlines.types.dsl import to_regex  # type: ignore
-        from outlines.backends import get_regex_logits_processor  # type: ignore
-
-        schema_term = JsonSchema(schema_str, whitespace_pattern=whitespace_pattern)
-        regex_str = to_regex(schema_term)
-        processor = get_regex_logits_processor(None, outlines_model, regex_str)
-        generator = Generator(outlines_model, processor=processor)
-    except (ImportError, TypeError, AttributeError):
-        generator = Generator(outlines_model, schema_str)
-
+    generator = Generator(outlines_model, schema_str)
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
         import json as _json
         # RUS-схема уже возвращает кириллические ключи, Latin — конвертируем
+        if prompt_template_name and prompt_template_name.endswith("_RUS"):
+            converted = generated
+        else:
+            from structured_schemas import latin_to_cyrillic_output
+            converted = latin_to_cyrillic_output(generated)
+        return _json.dumps(converted, ensure_ascii=False, indent=2)
+    return str(generated).strip()
+
+
+def _generate_with_guidance(
+    model: Any,
+    tokenizer: Any,
+    prompt: str,
+    schema_str: str,
+    max_new_tokens: int = 1024,
+    prompt_template_name: str = None,
+) -> str:
+    """
+    Генерация JSON через outlines с бэкендом llguidance (constrained decoding).
+    По умолчанию используется схема с кириллическими ключами (outlines_schema_rus).
+    """
+    prompt = _apply_chat_template_if_available(tokenizer, prompt)
+    try:
+        import outlines  # type: ignore
+        from outlines import Generator  # type: ignore
+        from outlines.types import JsonSchema  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            f"Не удалось загрузить outlines: {e}. Установите: pip install \"outlines[transformers]\""
+        ) from e
+    try:
+        import llguidance  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "Для режима --guidance нужен llguidance. Установите: pip install llguidance"
+        ) from e
+
+    try:
+        outlines_model = outlines.from_transformers(model, tokenizer)
+    except AttributeError:
+        outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
+
+    schema_term = JsonSchema(schema_str)
+    generator = Generator(outlines_model, schema_term, backend="llguidance")
+    gen_kwargs = {"max_new_tokens": max_new_tokens}
+    generated = generator(prompt, **gen_kwargs)
+
+    if isinstance(generated, (dict, list)):
+        import json as _json
         if prompt_template_name and prompt_template_name.endswith("_RUS"):
             converted = generated
         else:
@@ -480,6 +517,7 @@ def generate_gemma(
     use_outlines: bool = False,
     prompt_template_name: str = None,
     pydantic_outlines: bool = False,
+    use_guidance: bool = False,
 ) -> str:
     """
     Функция генерации для Gemma 3 моделей с использованием правильного формата сообщений
@@ -494,7 +532,13 @@ def generate_gemma(
         response_schema: схема для structured output
         use_outlines: использовать ли outlines для структурированной генерации JSON
         prompt_template_name: имя промпта (при _RUS используется кириллическая схема outlines)
+        use_guidance: использовать llguidance (по умолчанию схема RUS)
     """
+    if use_guidance and response_schema is not None:
+        from outlines_schema import get_outlines_schema_rus_str, get_outlines_schema_str
+        schema_str = get_outlines_schema_rus_str() if prompt_template_name is None else get_outlines_schema_str(prompt_template_name)
+        return _generate_with_guidance(model, tokenizer, prompt, schema_str, max_new_tokens,
+                                      prompt_template_name=prompt_template_name)
     if use_outlines and response_schema is not None:
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
@@ -634,6 +678,7 @@ def generate_standard(
     use_outlines: bool = False,
     prompt_template_name: str = None,
     pydantic_outlines: bool = False,
+    use_guidance: bool = False,
 ) -> str:
     """
     Стандартная функция генерации для большинства моделей
@@ -645,6 +690,11 @@ def generate_standard(
         max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
     """
+    if use_guidance and response_schema is not None:
+        from outlines_schema import get_outlines_schema_rus_str, get_outlines_schema_str
+        schema_str = get_outlines_schema_rus_str() if prompt_template_name is None else get_outlines_schema_str(prompt_template_name)
+        return _generate_with_guidance(model, tokenizer, prompt, schema_str, max_new_tokens,
+                                      prompt_template_name=prompt_template_name)
     if use_outlines and response_schema is not None:
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
@@ -698,6 +748,7 @@ def generate_qwen(
     use_outlines: bool = False,
     prompt_template_name: str = None,
     pydantic_outlines: bool = False,
+    use_guidance: bool = False,
 ) -> str:
     """
     Функция генерации для Qwen с дополнительными стоп-строками
@@ -713,7 +764,13 @@ def generate_qwen(
         use_outlines: использовать ли outlines для структурированной генерации JSON
         prompt_template_name: имя промпта (при _RUS используется кириллическая схема outlines)
         pydantic_outlines: схема из Pydantic model_json_schema()
+        use_guidance: использовать llguidance (по умолчанию схема RUS)
     """
+    if use_guidance and response_schema is not None:
+        from outlines_schema import get_outlines_schema_rus_str, get_outlines_schema_str
+        schema_str = get_outlines_schema_rus_str() if prompt_template_name is None else get_outlines_schema_str(prompt_template_name)
+        return _generate_with_guidance(model, tokenizer, prompt, schema_str, max_new_tokens,
+                                      prompt_template_name=prompt_template_name)
     if use_outlines and response_schema is not None:
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
@@ -761,6 +818,7 @@ def generate_t5(
     use_outlines: bool = False,
     prompt_template_name: str = None,
     pydantic_outlines: bool = False,
+    use_guidance: bool = False,
 ) -> str:
     """
     Функция генерации для T5/Seq2Seq моделей
@@ -880,6 +938,7 @@ def generate_qwen_3(
     use_outlines: bool = False,
     prompt_template_name: str = None,
     pydantic_outlines: bool = False,
+    use_guidance: bool = False,
 ) -> str:
     """
     Функция генерации для Qwen3 с поддержкой thinking mode

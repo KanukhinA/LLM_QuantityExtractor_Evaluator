@@ -10,7 +10,8 @@ from model_evaluator import StopAllModelsInterrupt
 
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                    structured_output: bool = False, use_outlines: bool = False,
-                   prompt_template_name: str = None, pydantic_outlines: bool = False):
+                   prompt_template_name: str = None, pydantic_outlines: bool = False,
+                   use_guidance: bool = False):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -44,6 +45,9 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
     if use_outlines or pydantic_outlines:
         print(f"📌 Outlines: Включен" + (" (схема из Pydantic)" if pydantic_outlines else " (outlines_schema.py)"))
+    if use_guidance:
+        effective_prompt = prompt_template_name or "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS"
+        print(f"📌 Guidance (llguidance): Включен, промпт: {effective_prompt}")
     if prompt_template_name:
         print(f"📌 Промпт: {prompt_template_name}")
     print()
@@ -92,7 +96,12 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
             if use_outlines or pydantic_outlines:
                 config["hyperparameters"]["use_outlines"] = True
                 config["hyperparameters"]["pydantic_outlines"] = pydantic_outlines
-            if prompt_template_name is not None:
+            if use_guidance:
+                config["hyperparameters"]["use_guidance"] = True
+                config["hyperparameters"]["prompt_template_name"] = (
+                    prompt_template_name or "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS"
+                )
+            elif prompt_template_name is not None:
                 config["hyperparameters"]["prompt_template_name"] = prompt_template_name
             
             result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=False, stop_all_on_interrupt=True)  # Короткий вывод; при Ctrl+C — опция прервать все модели
@@ -231,6 +240,11 @@ if __name__ == "__main__":
         help="Использовать outlines со схемой из Pydantic (model_json_schema) вместо outlines_schema.py"
     )
     parser.add_argument(
+        "--guidance",
+        action="store_true",
+        help="Constrained decoding через llguidance (по умолчанию схема RUS)"
+    )
+    parser.add_argument(
         "--prompt",
         type=str,
         metavar="NAME",
@@ -244,6 +258,7 @@ if __name__ == "__main__":
         structured_output=args.structured_output,
         use_outlines=args.outlines,
         prompt_template_name=args.prompt,
-        pydantic_outlines=args.pydantic_outlines
+        pydantic_outlines=args.pydantic_outlines,
+        use_guidance=args.guidance
     )
 

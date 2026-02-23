@@ -601,15 +601,19 @@ python run_all_models.py
 - **По горизонтали**: методы (название папки = prompt_template или multi_agent_mode)
 - **Значения**: F1 метрики для выбранной группы ("массовая доля" или "прочее")
 
-**Настройка Google Sheets API:**
+**Настройка Google Sheets API (где взять JSON):**
 
-1. Создайте проект в Google Cloud Console: https://console.cloud.google.com/
-2. Включите Google Sheets API и Google Drive API
-3. Создайте Service Account:
-   - Перейдите в "IAM & Admin" → "Service Accounts"
-   - Создайте новый Service Account
-   - Скачайте JSON файл с credentials
-4. Поделитесь Google Таблицей с email из Service Account (найдите в JSON файле, поле `client_email`)
+1. **Откройте Google Cloud Console:** https://console.cloud.google.com/
+2. **Создайте проект** (если ещё нет): сверху нажмите выпадающий список с названием проекта → «Создать проект» → введите имя (например `SmallLLM`) → «Создать».
+3. **Включите API:** слева меню «API и сервисы» → «Библиотека» → в поиске введите **Google Sheets API** → откройте → нажмите **«Включить»**. То же для **Google Drive API** (поиск → открыть → «Включить»).
+4. **Создайте Service Account и скачайте JSON:**
+   - Слева «API и сервисы» → **«Учётные данные»** (Credentials).
+   - Вверху вкладка **«Учётные данные»** → кнопка **«+ Создать учётные данные»** → выберите **«Сервисный аккаунт»** (Service account).
+   - Имя сервисного аккаунта — любое (например `sheets-export`), нажмите **«Создать и продолжить»** → роль можно не менять → **«Готово»**.
+   - Вернётесь на список учётных данных. В блоке **«Сервисные аккаунты»** найдите только что созданный аккаунт, кликните по нему.
+   - Откроется страница аккаунта. Вверху вкладка **«Ключи»** (Keys) → **«Добавить ключ»** → **«Создать ключ»** → тип **JSON** → **«Создать»**. Файл сразу скачается в папку «Загрузки».
+5. **Переименуйте скачанный файл** в `google_sheets_credentials.json` и положите его в **корень проекта** SmallLLMEvaluator (рядом с `google_sheets_integration.py`). Файл в .gitignore, в репозиторий не попадёт.
+6. **Доступ к таблице:** откройте вашу Google Таблицу → «Настройки доступа» (Поделиться) → добавьте **email** вида `something@project-name.iam.gserviceaccount.com` (этот email лежит в JSON в поле `client_email`) с правом «Редактор».
 
 **Примеры использования:**
 
@@ -635,7 +639,7 @@ python google_sheets_integration.py --results-dir results
 
 Обязательные (для загрузки в Google Таблицу):
 - `--credentials` - путь к JSON файлу с credentials для Google API
-- `--spreadsheet-id` - ID Google Таблицы (из URL: `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`)
+- `--spreadsheet-id` - ID Google Таблицы (из URL: `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`). Либо задайте `GOOGLE_SHEETS_SPREADSHEET_ID` в `config_secrets.py` — тогда при запуске без аргументов данные будут загружаться в эту таблицу.
 
 Опциональные:
 - `--results-dir` - путь к директории с результатами (по умолчанию: `results`)

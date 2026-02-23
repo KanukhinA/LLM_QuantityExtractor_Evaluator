@@ -254,6 +254,7 @@ def main():
         print("  --outlines          - (опционально) использовать библиотеку outlines для структурированной генерации JSON")
         print("                        Работает для локальных моделей вместе с --structured-output и Pydantic схемой")
         print("  --pydantic-outlines - (опционально) генерировать схему outlines из Pydantic model_json_schema() вместо outlines_schema.py")
+        print("  --guidance          - (опционально) constrained decoding через llguidance (по умолчанию схема RUS)")
         print("  --no-gemini         - (опционально) отключить анализ ошибок через Gemini API")
         print("  --verbose           - (опционально) включить подробный вывод (включен по умолчанию)")
         print("  --no-verbose        - (опционально) отключить подробный вывод")
@@ -281,6 +282,7 @@ def main():
     structured_output = False
     use_outlines = False
     pydantic_outlines = False
+    use_guidance = False
     use_gemini = True  # По умолчанию включен
     verbose = True  # По умолчанию включен для main.py
     prompt_template_name = None
@@ -321,6 +323,9 @@ def main():
                 use_outlines = True  # pydantic-outlines заменяет --outlines
                 pydantic_outlines = True
                 i += 1
+            elif arg == "--guidance":
+                use_guidance = True
+                i += 1
             elif arg == "--no-gemini" or arg == "--skip-gemini":
                 use_gemini = False
                 i += 1
@@ -332,7 +337,7 @@ def main():
                 i += 1
             else:
                 print(f"Неизвестный аргумент: {arg}")
-                print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+                print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--guidance] [--no-gemini] [--verbose] [--no-verbose]")
                 return
         else:
             # Это модель или список моделей через запятую
@@ -343,6 +348,9 @@ def main():
             else:
                 model_keys.append(arg)
             i += 1
+    
+    if use_guidance and prompt_template_name is None:
+        prompt_template_name = "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS"
     
     # Проверяем, что указаны модели
     if not model_keys:
@@ -416,6 +424,8 @@ def main():
         print(f"📌 Structured Output: Включен (Pydantic валидация)")
     if use_outlines:
         print(f"📌 Outlines: Включен" + (" (схема из Pydantic)" if pydantic_outlines else ""))
+    if use_guidance:
+        print(f"📌 Guidance (llguidance): Включен" + (f", промпт: {prompt_template_name}" if prompt_template_name else ""))
     if prompt_template_name:
         print(f"📌 Промпт: {prompt_template_name}")
     if verbose:
@@ -451,6 +461,8 @@ def main():
             config["hyperparameters"]["use_outlines"] = True
         if pydantic_outlines:
             config["hyperparameters"]["pydantic_outlines"] = True
+        if use_guidance:
+            config["hyperparameters"]["use_guidance"] = True
         if prompt_template_name is not None:
             config["hyperparameters"]["prompt_template_name"] = prompt_template_name
         

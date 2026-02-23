@@ -300,19 +300,22 @@ class FileManager:
         multi_agent_mode = evaluation_result.get("multi_agent_mode")
         prompt_template_name = evaluation_result.get("prompt_template", "unknown")
         
-        # Проверяем использование structured_output и outlines
+        # Проверяем использование structured_output, outlines и guidance
         hyperparameters = evaluation_result.get("hyperparameters", {})
         structured_output = hyperparameters.get("structured_output", False)
         use_outlines = hyperparameters.get("use_outlines", False)
+        use_guidance = hyperparameters.get("use_guidance", False)
         
         if multi_agent_mode:
             prompt_folder_name = FileManager.sanitize_filename(multi_agent_mode)
         else:
             prompt_folder_name = FileManager.sanitize_filename(prompt_template_name)
         
-        # Добавляем информацию о режимах structured_output и outlines в название папки
+        # Добавляем информацию о режимах structured_output, outlines и guidance в название папки
         mode_suffixes = []
-        if use_outlines:
+        if use_guidance:
+            mode_suffixes.append("GUIDANCE")
+        elif use_outlines:
             mode_suffixes.append("OUTLINES")
         elif structured_output:
             mode_suffixes.append("STRUCTURED")

@@ -142,3 +142,8 @@ def get_outlines_schema_str(prompt_template_name: str = None) -> str:
     if prompt_template_name and prompt_template_name.endswith("_RUS"):
         return json.dumps(OUTLINES_SCHEMA_RUS, ensure_ascii=False, indent=2)
     return json.dumps(OUTLINES_SCHEMA, ensure_ascii=False, indent=2)
+
+
+def get_outlines_schema_rus_str() -> str:
+    """Схема с кириллическими ключами (для режима --guidance по умолчанию)."""
+    return json.dumps(OUTLINES_SCHEMA_RUS, ensure_ascii=False, indent=2)

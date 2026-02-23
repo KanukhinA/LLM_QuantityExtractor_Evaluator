@@ -197,9 +197,13 @@ class ModelEvaluator:
                 # Извлекаем параметры для structured output и outlines
                 structured_output = hyperparameters.get("structured_output", False)
                 use_outlines = hyperparameters.get("use_outlines", False)
+                use_guidance = hyperparameters.get("use_guidance", False)
                 response_schema = None
-                # response_schema: для outlines (локальные) - Latin (совместимость с токенизатором); для API/без outlines - Cyrillic alias
-                if use_outlines or structured_output:
+                # response_schema: для outlines (локальные) - Latin; для guidance/RUS - Cyrillic; для API - Cyrillic
+                if use_guidance:
+                    from structured_schemas import FertilizerExtractionOutput
+                    response_schema = FertilizerExtractionOutput
+                elif use_outlines or structured_output:
                     from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                     response_schema = FertilizerExtractionOutputLatin if (use_outlines and not is_api_model) else FertilizerExtractionOutput
                 
@@ -214,6 +218,15 @@ class ModelEvaluator:
                         model_name=hyperparameters["model_name"],
                         structured_output=structured_output,
                         response_schema=response_schema
+                    )
+                # Для локальных моделей с guidance (llguidance, по умолчанию схема RUS)
+                elif use_guidance and not is_api_model and response_schema is not None:
+                    response_text = generate_func(
+                        model, tokenizer, prompt, max_new_tokens,
+                        structured_output=True,
+                        response_schema=response_schema,
+                        use_guidance=True,
+                        prompt_template_name=pt_name
                     )
                 # Для локальных моделей с outlines (response_schema используется outlines; structured_output добавляет схему в промпт)
                 elif use_outlines and not is_api_model and response_schema is not None:
@@ -850,16 +863,20 @@ class ModelEvaluator:
                     # Одноагентный подход (оригинальный)
                     so = hyperparameters.get("structured_output", False)
                     uo = hyperparameters.get("use_outlines", False)
+                    use_guidance = hyperparameters.get("use_guidance", False)
                     pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
                     rs = None
-                    if uo or so:
+                    if use_guidance:
+                        from structured_schemas import FertilizerExtractionOutput
+                        rs = FertilizerExtractionOutput
+                    elif uo or so:
                         from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                         # _RUS промпт — схема и outlines с кириллическими ключами
                         rs = FertilizerExtractionOutput if (pt_name and pt_name.endswith("_RUS")) else (
                             FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
                         )
-                    # При --structured-output передаём Pydantic-схему в промпт
-                    prompt = prompt_template(text, structured_output=so, response_schema=rs, prompt_template_name=pt_name)
+                    # При --structured-output / --guidance передаём Pydantic-схему в промпт
+                    prompt = prompt_template(text, structured_output=so or use_guidance, response_schema=rs, prompt_template_name=pt_name)
                     
                     # Генерируем ответ с повторными попытками
                     response_text, elapsed, error_msg, outlines_skip = self._generate_response_with_retries(
@@ -1047,12 +1064,16 @@ class ModelEvaluator:
                                 else:
                                     so = hyperparameters.get("structured_output", False)
                                     uo = hyperparameters.get("use_outlines", False)
+                                    use_guidance = hyperparameters.get("use_guidance", False)
                                     rs = None
-                                    if uo or so:
+                                    if use_guidance:
+                                        from structured_schemas import FertilizerExtractionOutput
+                                        rs = FertilizerExtractionOutput
+                                    elif uo or so:
                                         from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                                         rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
                                     pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
-                                    prompt = prompt_template(self.texts[i], structured_output=so, response_schema=rs, prompt_template_name=pt_name)
+                                    prompt = prompt_template(self.texts[i], structured_output=so or use_guidance, response_schema=rs, prompt_template_name=pt_name)
                                     
                                     # Генерируем ответ с повторными попытками
                                     response_text, elapsed, error_msg, outlines_skip = self._generate_response_with_retries(
