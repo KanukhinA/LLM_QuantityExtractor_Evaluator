@@ -90,7 +90,19 @@ def _generate_with_outlines(
     except AttributeError:
         outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
 
-    generator = Generator(outlines_model, schema_str)
+    whitespace_pattern = r"[\n\t ]*"
+    try:
+        from outlines.types import JsonSchema  # type: ignore
+        from outlines.types.dsl import to_regex  # type: ignore
+        from outlines.backends import get_regex_logits_processor  # type: ignore
+
+        schema_term = JsonSchema(schema_str, whitespace_pattern=whitespace_pattern)
+        regex_str = to_regex(schema_term)
+        processor = get_regex_logits_processor(None, outlines_model, regex_str)
+        generator = Generator(outlines_model, processor=processor)
+    except (ImportError, TypeError, AttributeError):
+        generator = Generator(outlines_model, schema_str)
+
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     generated = generator(prompt, **gen_kwargs)
 
