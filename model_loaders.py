@@ -387,10 +387,10 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         return _load_causal_4bit(model_name, AutoModelForCausalLM, hyperparameters)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name,
-        token=HF_TOKEN
-    )
+    tokenizer_kwargs = {"token": HF_TOKEN}
+    if "yandex" in model_name.lower() or "yandexgpt" in model_name.lower():
+        tokenizer_kwargs["legacy"] = False
+    tokenizer = AutoTokenizer.from_pretrained(model_name, **tokenizer_kwargs)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 

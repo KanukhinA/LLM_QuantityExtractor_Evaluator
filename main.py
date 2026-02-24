@@ -74,11 +74,13 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
     # Запускаем оценку
     # Для API моделей используем больше попыток (10 вместо 2)
     num_retries = 10 if model_config["hyperparameters"].get("api_model", False) else 2
+    max_new_tokens = model_config["hyperparameters"].get("max_new_tokens", 1024)
     result = evaluator.evaluate_model(
         model_name=model_config["name"],
         load_model_func=model_config["load_func"],
         generate_func=model_config["generate_func"],
         hyperparameters=model_config["hyperparameters"],
+        max_new_tokens=max_new_tokens,
         num_retries=num_retries,
         verbose=verbose,  # Передаем флаг verbose
         use_gemini_analysis=use_gemini,
