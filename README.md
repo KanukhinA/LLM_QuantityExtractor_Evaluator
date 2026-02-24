@@ -150,6 +150,23 @@ GOOGLE_SHEETS_SPREADSHEET_ID = ""  # опционально, для экспор
 1. Файл `config_secrets.py` (если существует)
 2. Переменные окружения
 
+### 3.4. Расчёт max_new_tokens по датасету
+
+Чтобы подобрать разумное значение `max_new_tokens` для моделей (в `models.yaml` или при вызове), можно оценить длину ответов в токенах по ground truth из тестового датасета. Скрипт `calc_max_new_tokens.py`:
+
+- загружает датасет (по умолчанию через `find_dataset_path()`, колонка `json_parsed`);
+- сериализует каждый ответ в JSON-строку в том же формате, что и вывод модели (`indent=2`);
+- считает длину в токенах через указанный токенизатор Hugging Face;
+- выводит max, mean, перцентили (p90, p95, p99) и рекомендуемое значение (max + запас, с округлением).
+
+Запуск из корня проекта:
+
+```bash
+python calc_max_new_tokens.py
+```
+
+Опции: `--dataset PATH` — путь к Excel; `--tokenizer NAME` — модель токенизатора (по умолчанию `Qwen/Qwen2.5-3B-Instruct`); `--margin 0.15` — запас к max (15%); `--min 256` — минимальное рекомендуемое значение; `--round 64` — округлять до кратного 64. Полученное значение можно прописать в `models.yaml` в `hyperparameters.max_new_tokens` для нужных моделей.
+
 ## 4. Структура проекта
 
 ```
@@ -157,6 +174,7 @@ SmallLLMEvaluator/
 ├── main.py                 # Основной скрипт для запуска оценки одной модели
 ├── run_all_models.py       # Скрипт для запуска оценки всех моделей
 ├── reevaluate.py           # Скрипт для переоценки результатов из файла
+├── calc_max_new_tokens.py  # Расчёт max_new_tokens по длине ground truth в токенах
 ├── model_evaluator.py      # Класс для оценки моделей
 ├── model_loaders.py        # Функции загрузки локальных моделей
 ├── model_loaders_api.py    # Функции загрузки и генерации для API моделей
@@ -671,58 +689,52 @@ python google_sheets_integration.py --spreadsheet-id YOUR_SPREADSHEET_ID --group
 
 ## 6. Доступные модели
 
-Проект поддерживает следующие модели. Полный список моделей и их конфигураций можно найти в файле `models.yaml`:
+Список моделей задаётся в `models.yaml`. Ниже перечислены используемые в проекте модели (по состоянию конфигурации).
 
 ### 6.1. Локальные модели (загружаются с Hugging Face)
 
+**Gemma:**
+- `gemma-2-2b` — google/gemma-2-2b-it
+- `gemma-3-4b` — google/gemma-3-4b-it
+- `gemma-3-12b` — google/gemma-3-12b-it
+- `codegemma-7b` — google/codegemma-7b-it
+
+**Qwen:**
+- `qwen-2.5-3b` — Qwen/Qwen2.5-3B-Instruct
+- `qwen-3-4b` — Qwen/Qwen3-4B-Instruct-2507
+- `qwen-3-8b` — Qwen/Qwen3-8B
+- `qwen-3-14b` — Qwen/Qwen3-14B
+
+**Mistral (Ministral-3):** загрузчик `load_mistral_3` выбирается автоматически по `name`.
+- `mistral-3-3b-reasoning` — mistralai/Ministral-3-3B-Reasoning-2512
+- `mistral-3-8b-instruct` — mistralai/Ministral-3-8B-Instruct-2512
+- `mistral-3-14b-instruct` — mistralai/Ministral-3-14B-Instruct-2512
+
+**Прочие локальные:**
+- `gigachat3-10b-1.8b` — ai-sage/GigaChat3-10B-A1.8B-bf16
+- `yandexgpt-5-lite-8b-instruct` — yandex/YandexGPT-5-Lite-8B-instruct (для токенизатора нужен `protobuf`, см. requirements.txt)
+
 Для локальных моделей по умолчанию используется Flash Attention 2, если установлен пакет `flash-attn` (см. раздел 3.3 и 10.2).
 
-**Gemma модели:**
-- **google/gemma-2-2b-it** - Gemma 2.2B it (ключ: `gemma-2-2b`)
-- **google/gemma-3-4b-it** - Gemma 3 4B it (ключ: `gemma-3-4b`). Загрузчик выбирается по `name` автоматически (`load_gemma_3`).
-- **google/gemma-3-12b-it** - Gemma 3 12B it (ключ: `gemma-3-12b`), ~24GB VRAM
-- **google/gemma-3-27b-it** - Gemma 3 27B: 4-bit (ключ: `gemma-3-27b-4bit`), ~18–22GB VRAM
-- **google/codegemma-7b-it** - CodeGemma 7B it (ключ: `codegemma-7b`) — специализирована для работы с кодом, ~14GB VRAM
-
-**Qwen модели:**
-- **Qwen/Qwen2.5-3B-Instruct** - Qwen 2.5 3B (ключ: `qwen-2.5-3b`)
-- **Qwen/Qwen2.5-4B-Instruct** - Qwen 2.5 4B (ключ: `qwen-2.5-4b`)
-- **Qwen/Qwen3-8B** - Qwen 3 8B (ключ: `qwen-3-8b`) - поддерживает thinking mode
-- **Qwen/Qwen3-32B** - Qwen 3 32B (ключ: `qwen-3-32b`) - поддерживает thinking mode, требует ~64GB+ VRAM для полной загрузки
-
-**Mistral модели:** загрузчик выбирается по `name` автоматически (`load_mistral_3`).
-- **mistralai/Ministral-3-3B-Reasoning-2512** (ключ: `mistral-3-3b-reasoning` или `ministral-3-3b-reasoning-2512`)
-- **mistralai/Ministral-3-8B-Instruct-2512** (ключ: `mistral-3-8b-instruct`) — ~16GB VRAM
-- **mistralai/Ministral-3-14B-Instruct-2512** (ключ: `mistral-3-14b-instruct`) — ~28GB VRAM
-
-**Другие модели:**
-- **microsoft/Phi-4-mini-instruct** - Phi 4 Mini (ключ: `phi-4-mini-instruct`)
-
-**Важно для Mistral 3 моделей:**
-- Требуется `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
-- Требуется `mistral-common>=1.8.6`: см. `requirements.txt` или `pip install mistral-common --upgrade`
+**Требования для Mistral 3:**
+- `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
+- `mistral-common>=1.8.6`: см. `requirements.txt`
 
 ### 6.2. API модели
 
-**Требования и особенности API моделей:**
-- Для моделей Gemma 3 требуется `GEMINI_API_KEY` в `config_secrets.py` или переменных окружения
-- Для моделей через OpenRouter требуется `OPENAI_API_KEY` в `config_secrets.py` или переменных окружения
-- Библиотека `google-genai` должна быть установлена для моделей Gemma 3
-- Библиотека `openai` должна быть установлена для моделей через OpenRouter
-- Модели работают через API, не требуют локальной GPU
-- Автоматическая обработка rate limits с повторными попытками (до 10 попыток)
+**Через Google Generative AI API** (нужен `GEMINI_API_KEY`):
+- `gemma-3-4b-api` — gemma-3-4b-it
+- `gemma-3-12b-api` — gemma-3-12b-it
+- `gemma-3-27b-api` — gemma-3-27b-it
 
-**Доступные API модели:**
+**Через OpenRouter (или другой OpenAI-совместимый endpoint)** (нужен `OPENAI_API_KEY`, при необходимости `OPENAI_BASE_URL`):
+- `mistral-small-3.1-24b-api` — mistralai/mistral-small-3.1-24b-instruct:free
+- `qwen-3-32b-api` — qwen/qwen3-32b
 
-*Через Google Generative AI API:*
-- **gemma-3-4b-it** (ключ: `gemma-3-4b-api`) - Gemma 3 4B через API
-- **gemma-3-12b-it** (ключ: `gemma-3-12b-api`) - Gemma 3 12B через API
-- **gemma-3-27b-it** (ключ: `gemma-3-27b-api`) - Gemma 3 27B через API
-
-*Через OpenRouter API:*
-- **deepseek-r1t-chimera** (ключ: `deepseek-r1t-chimera-api`) - DeepSeek R1T Chimera через OpenRouter API (free tier)
-- **mistral-small-3.1-24b-instruct** (ключ: `mistral-small-3.1-24b-api`) - Mistral Small 3.1 24B it через OpenRouter API (free tier)
-- **qwen/qwen3-32b** (ключ: `qwen-3-32b-api`) - Qwen3 32B через OpenRouter API
+**Требования для API моделей:**
+- Для Gemma 3: `GEMINI_API_KEY`, библиотека `google-genai`
+- Для OpenRouter: `OPENAI_API_KEY`, библиотека `openai`
+- Модели работают через API, локальная GPU не требуется
 
 **Пример запуска API модели:**
 ```bash
@@ -731,13 +743,9 @@ python main.py gemma-3-4b-api
 python main.py gemma-3-12b-api --multi-agent simple_4agents
 
 # Модели через OpenRouter API
-python main.py deepseek-r1t-chimera-api
-python main.py deepseek-r1t-chimera-api --multi-agent simple_4agents
 python main.py mistral-small-3.1-24b-api
-python main.py mistral-small-3.1-24b-api --multi-agent simple_4agents
 python main.py qwen-3-32b-api
 python main.py qwen-3-32b-api --multi-agent simple_4agents
-python main.py mistral-small-3.1-24b-api --multi-agent qa_workflow
 ```
 
 ## 7. Метрики и результаты

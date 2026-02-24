@@ -95,7 +95,7 @@ class StandardGenerator(BaseGenerator):
         
         if self.tokenizer.eos_token_id is not None:
             generate_kwargs["eos_token_id"] = self.tokenizer.eos_token_id
-        
+
         if repetition_penalty is not None:
             generate_kwargs["repetition_penalty"] = repetition_penalty
         

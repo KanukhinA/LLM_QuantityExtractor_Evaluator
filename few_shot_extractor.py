@@ -433,10 +433,9 @@ def generate_multiple_responses(
                         "temperature": temperature,
                         "top_p": top_p,
                     }
-                    
                     if tokenizer.eos_token_id is not None:
                         generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-                    
+
                     with torch.inference_mode():
                         outputs = model.generate(**inputs, **generate_kwargs)
                     
@@ -465,8 +464,7 @@ def generate_multiple_responses(
                             temperature=temperature,
                             top_p=top_p,
                             num_return_sequences=1,
-                            pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
-                            eos_token_id=tokenizer.eos_token_id
+                            eos_token_id=tokenizer.eos_token_id,
                         )
                     
                     # Декодируем только новые токены

@@ -88,6 +88,8 @@ def _generate_with_outlines(
     outlines_model = _outlines_model_from_transformers(model, tokenizer)
     generator = Generator(outlines_model, schema_str)
     gen_kwargs = {"max_new_tokens": max_new_tokens}
+    if getattr(tokenizer, "eos_token_id", None) is not None:
+        gen_kwargs["eos_token_id"] = tokenizer.eos_token_id
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -155,6 +157,8 @@ def _generate_with_guidance(
     schema_term = JsonSchema(schema_str)
     generator = Generator(outlines_model, schema_term, backend="llguidance")
     gen_kwargs = {"max_new_tokens": max_new_tokens}
+    if getattr(tokenizer, "eos_token_id", None) is not None:
+        gen_kwargs["eos_token_id"] = tokenizer.eos_token_id
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -325,7 +329,10 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     except Exception as e:
         print(f"   ❌ Ошибка загрузки токенизатора: {e}")
         raise
-    
+
+    if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None) is not None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     print(f"   Загрузка модели {model_name}...")
     try:
         start_time = time.time()
@@ -384,7 +391,9 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
         model_name,
         token=HF_TOKEN
     )
-    
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     # Определяем параметры для загрузки модели
     model_kwargs = {
         "device_map": device_map,
@@ -600,15 +609,11 @@ def generate_gemma(
             "max_new_tokens": max_new_tokens,
             "do_sample": False,
         }
-        
-        # Добавляем eos_token_id, если он есть
         if tokenizer.eos_token_id is not None:
             generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-        
-        # Добавляем repetition_penalty, если указан
         if repetition_penalty is not None:
             generate_kwargs["repetition_penalty"] = repetition_penalty
-        
+
         with torch.inference_mode():
             outputs = model.generate(**inputs, **generate_kwargs)
         
@@ -651,23 +656,19 @@ def generate_gemma(
             "max_new_tokens": max_new_tokens,
             "do_sample": False,
         }
-        
-        # Добавляем eos_token_id, если он есть
         if tokenizer.eos_token_id is not None:
             generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-        
-        # Добавляем repetition_penalty, если указан
         if repetition_penalty is not None:
             generate_kwargs["repetition_penalty"] = repetition_penalty
-        
+
         with torch.no_grad():
             output_ids = model.generate(**generate_kwargs)
-        
+
         # Декодируем только новые токены (игнорируя входные)
         input_length = input_ids.shape[1]
         generated_ids = output_ids[0][input_length:]
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-        
+
         # Если декодирование новых токенов дало пустой результат, пробуем декодировать весь ответ
         if not text.strip():
             text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
@@ -676,7 +677,7 @@ def generate_gemma(
                 text = text[len(formatted_prompt):].strip()
             elif text.startswith(prompt):
                 text = text[len(prompt):].strip()
-        
+
         return text.strip()
 
 
@@ -794,24 +795,23 @@ def generate_qwen(
         "input_ids": input_ids,
         "max_new_tokens": max_new_tokens,
         "do_sample": False,
-        "eos_token_id": tokenizer.eos_token_id,
         "stop_strings": ["Human:", "Example"],
         "tokenizer": tokenizer
     }
-    
-    # Добавляем repetition_penalty, если указан
+    if tokenizer.eos_token_id is not None:
+        generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
     if repetition_penalty is not None:
         generate_kwargs["repetition_penalty"] = repetition_penalty
-    
+
     with torch.no_grad():
         output_ids = model.generate(**generate_kwargs)
-    
+
     text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    
+
     # Убираем повтор prompt
     if text.startswith(prompt):
         text = text[len(prompt):].strip()
-    
+
     # Удаляем стоп-строки
     for s in ["Human:", "Example"]:
         if s in text:
@@ -904,15 +904,21 @@ def generate_t5(
         "max_length": input_ids.shape[1] + max_new_tokens,  # T5 использует max_length вместо max_new_tokens
         "do_sample": False,
     }
-    
-    # Добавляем decoder_start_token_id для T5 моделей
+    _decoder = decoder
+    if _decoder is not None:
+        eos_id = getattr(_decoder, "eos_token_id", None)
+        if eos_id is None and hasattr(_decoder, "tokenizer"):
+            eos_id = getattr(_decoder.tokenizer, "eos_token_id", None)
+        if eos_id is not None:
+            generate_kwargs["eos_token_id"] = eos_id
+    # decoder_start_token_id для T5
     if decoder is not None:
         if hasattr(decoder, 'pad_token_id') and decoder.pad_token_id is not None:
             generate_kwargs["decoder_start_token_id"] = decoder.pad_token_id
         elif hasattr(decoder, 'tokenizer') and hasattr(decoder.tokenizer, 'pad_token_id'):
             if decoder.tokenizer.pad_token_id is not None:
                 generate_kwargs["decoder_start_token_id"] = decoder.tokenizer.pad_token_id
-    
+
     with torch.no_grad():
         output_ids = model.generate(**generate_kwargs)
     
@@ -989,19 +995,14 @@ def generate_qwen_3(
         "max_new_tokens": max_new_tokens,
         "do_sample": False,
     }
-    
-    # Добавляем eos_token_id, если он есть
     if tokenizer.eos_token_id is not None:
         generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-    
-    # Добавляем repetition_penalty, если указан
     if repetition_penalty is not None:
         generate_kwargs["repetition_penalty"] = repetition_penalty
-    
-    # Генерируем
+
     with torch.no_grad():
         generated_ids = model.generate(**generate_kwargs)
-    
+
     # Извлекаем только новые токены (ответ модели)
     input_length = model_inputs["input_ids"].shape[1]
     output_ids = generated_ids[0][input_length:].tolist()
