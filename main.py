@@ -270,7 +270,7 @@ def main():
         print("  python main.py qwen-2.5-3b --structured-output --outlines")
         print("  python main.py qwen-2.5-3b --structured-output --pydantic-outlines")
         print("  python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines")
-        print("\nДоступные модели:")
+        print("\nДоступные модели (из models.yaml):")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
         return
