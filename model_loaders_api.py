@@ -241,6 +241,25 @@ def generate_gemma_api(
 # API модели через OpenRouter
 # ============================================================================
 
+def load_openrouter_api() -> Tuple[Optional[Any], Optional[Any]]:
+    """Универсальная загрузка для API-моделей через OpenRouter (или другой OpenAI-совместимый endpoint)."""
+    if not OPENAI_AVAILABLE:
+        raise ImportError("Библиотека openai не установлена. Установите: pip install openai")
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY не установлен. Установите переменную окружения или в config_secrets.py")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    if not OPENAI_API_KEY.startswith("sk-") and not OPENAI_API_KEY.startswith("sk-or-"):
+        print("   Предупреждение: API ключ не начинается с 'sk-' или 'sk-or-'.")
+    print(f"   Инициализация API клиента (base_url={base_url})...")
+    try:
+        client = OpenAI(base_url=base_url, api_key=OPENAI_API_KEY)
+        print("   API клиент инициализирован")
+        return client, None
+    except Exception as e:
+        print(f"   Ошибка инициализации API клиента: {e}")
+        raise
+
+
 def load_deepseek_r1t_chimera_api() -> Tuple[Optional[Any], Optional[Any]]:
     """Загрузка deepseek-r1t-chimera через OpenRouter API (возвращает клиент API вместо модели)"""
     if not OPENAI_AVAILABLE:

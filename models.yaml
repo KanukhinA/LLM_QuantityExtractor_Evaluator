@@ -143,12 +143,6 @@ models:
       torch_dtype: "bfloat16"
       enable_thinking: false
 
-  qwen3.5-397b-a17b-api:
-    name: "Qwen/Qwen3.5-397B-A17B"
-    hyperparameters:
-      max_new_tokens: 512
-      api_model: true
-
   mistral-3-8b-instruct:
     name: "mistralai/Ministral-3-8B-Instruct-2512"
     hyperparameters:

@@ -157,9 +157,15 @@ def load_model_configs():
                         hyperparameters=_hp,
                     )
         elif load_module_name == "model_loaders_api":
-            load_func = getattr(model_loaders_api_module, load_func_name)
+            try:
+                load_func = getattr(model_loaders_api_module, load_func_name)
+            except AttributeError:
+                load_func = model_loaders_api_module.load_openrouter_api
         else:
-            load_func = getattr(model_loaders_api_module, load_func_name)
+            try:
+                load_func = getattr(model_loaders_api_module, load_func_name)
+            except AttributeError:
+                load_func = model_loaders_api_module.load_openrouter_api
 
         if load_module_name != "model_loaders_ollama":
             if generate_module_name == "model_loaders":
