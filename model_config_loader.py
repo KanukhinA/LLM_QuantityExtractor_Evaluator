@@ -78,7 +78,9 @@ def load_model_configs():
                     generate_func_name = "generate_openrouter_api"
             else:
                 # Для локальных моделей
-                if "qwen-3" in model_key:
+                if "qwen3.5" in model_key:
+                    generate_func_name = "generate_qwen_3"
+                elif "qwen-3" in model_key:
                     generate_func_name = "generate_qwen_3"
                 elif "qwen" in model_key:
                     generate_func_name = "generate_qwen"

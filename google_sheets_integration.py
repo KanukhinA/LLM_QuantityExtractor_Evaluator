@@ -365,7 +365,7 @@ class GoogleSheetsIntegration:
                 worksheet.clear()
             
             # Загружаем данные
-            worksheet.update('A1', table_data)
+            worksheet.update(values=table_data, range_name="A1")
             
             # Форматируем заголовок
             worksheet.format('A1:Z1', {
@@ -402,7 +402,7 @@ class GoogleSheetsIntegration:
                 worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
             if clear_existing:
                 worksheet.clear()
-            worksheet.update("A1", table_data)
+            worksheet.update(values=table_data, range_name="A1")
             worksheet.format("A1:Z1", {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
@@ -430,7 +430,7 @@ class GoogleSheetsIntegration:
                 worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
             if clear_existing:
                 worksheet.clear()
-            worksheet.update("A1", table_data)
+            worksheet.update(values=table_data, range_name="A1")
             worksheet.format("A1:Z1", {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}

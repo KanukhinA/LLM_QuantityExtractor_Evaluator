@@ -85,11 +85,7 @@ def _generate_with_outlines(
         from outlines_schema import get_outlines_schema_str
         schema_str = get_outlines_schema_str(prompt_template_name)
 
-    try:
-        outlines_model = outlines.from_transformers(model, tokenizer)
-    except AttributeError:
-        outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-
+    outlines_model = _outlines_model_from_transformers(model, tokenizer)
     generator = Generator(outlines_model, schema_str)
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     generated = generator(prompt, **gen_kwargs)
@@ -104,6 +100,27 @@ def _generate_with_outlines(
             converted = latin_to_cyrillic_output(generated)
         return _json.dumps(converted, ensure_ascii=False, indent=2)
     return str(generated).strip()
+
+
+def _outlines_model_from_transformers(model: Any, tokenizer: Any):
+    """
+    Обёртка над outlines.from_transformers. Для моделей с нестандартным токенизатором
+    (например Mistral 3 / MistralCommonBackend) from_transformers может выбросить ошибку
+    «Please provide a transformers tokenizer or processor»; в этом случае используем
+    напрямую Transformers(model, tokenizer).
+    """
+    try:
+        import outlines  # type: ignore
+        return outlines.from_transformers(model, tokenizer)
+    except AttributeError:
+        import outlines  # type: ignore
+        return outlines.models.transformers.Transformers(model, tokenizer)
+    except Exception as e:
+        msg = str(e).lower()
+        if "tokenizer or processor" in msg or "text-2-text or a multi-modal" in msg:
+            import outlines  # type: ignore
+            return outlines.models.transformers.Transformers(model, tokenizer)
+        raise
 
 
 def _generate_with_guidance(
@@ -134,11 +151,7 @@ def _generate_with_guidance(
             "Для режима --guidance нужен llguidance. Установите: pip install llguidance"
         ) from e
 
-    try:
-        outlines_model = outlines.from_transformers(model, tokenizer)
-    except AttributeError:
-        outlines_model = outlines.models.transformers.Transformers(model, tokenizer)
-
+    outlines_model = _outlines_model_from_transformers(model, tokenizer)
     schema_term = JsonSchema(schema_str)
     generator = Generator(outlines_model, schema_term, backend="llguidance")
     gen_kwargs = {"max_new_tokens": max_new_tokens}
