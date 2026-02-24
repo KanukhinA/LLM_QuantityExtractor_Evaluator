@@ -140,19 +140,19 @@ def load_model_configs():
                 # Единый вызов: всегда два аргумента (model_name, hyperparameters)
                 load_func = (lambda name, hp: lambda: raw_load(model_name=name, hyperparameters=hp))(_name, _hp)
             except AttributeError:
-                # Используем универсальную функцию загрузки как fallback
-                model_name = model_config['name']
+                # Используем универсальную функцию загрузки как fallback; захват по значению через аргумент по умолчанию
+                _name = model_config["name"]
                 _hp = hyperparameters
 
-                def load_func():
+                def load_func(_n=_name, _hyper=_hp):
                     from model_loaders import load_standard_model
                     return load_standard_model(
-                        model_name=model_name,
-                        dtype=_hp.get('dtype'),
-                        torch_dtype=_hp.get('torch_dtype'),
-                        device_map=_hp.get('device_map', 'auto'),
-                        trust_remote_code=_hp.get('trust_remote_code', True),
-                        hyperparameters=_hp,
+                        model_name=_n,
+                        dtype=_hyper.get("dtype"),
+                        torch_dtype=_hyper.get("torch_dtype"),
+                        device_map=_hyper.get("device_map", "auto"),
+                        trust_remote_code=_hyper.get("trust_remote_code", True),
+                        hyperparameters=_hyper,
                     )
         elif load_module_name == "model_loaders_api":
             try:
