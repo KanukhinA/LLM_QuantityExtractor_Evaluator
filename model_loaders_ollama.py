@@ -37,7 +37,7 @@ def generate_ollama(
     model: Any,
     tokenizer: Any,
     prompt: str,
-    max_new_tokens: int = 1024,
+    max_new_tokens: int = 1792,
     **kwargs
 ) -> str:
     """

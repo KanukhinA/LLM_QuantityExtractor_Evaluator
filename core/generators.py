@@ -41,7 +41,7 @@ class APIGenerator(BaseGenerator):
     def generate(
         self, 
         prompt: str, 
-        max_new_tokens: int = 1024,
+        max_new_tokens: int = 1792,
         repetition_penalty: Optional[float] = None,
         **kwargs
     ) -> str:
@@ -77,7 +77,7 @@ class StandardGenerator(BaseGenerator):
     def generate(
         self, 
         prompt: str, 
-        max_new_tokens: int = 1024,
+        max_new_tokens: int = 1792,
         repetition_penalty: Optional[float] = None,
         **kwargs
     ) -> str:

@@ -26,14 +26,14 @@ models:
   gemma-2-2b:
     name: "google/gemma-2-2b-it"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   qwen-2.5-3b:
     name: "Qwen/Qwen2.5-3B-Instruct"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 1792
       do_sample: false
       dtype: "bfloat16"
 
@@ -48,7 +48,7 @@ models:
   qwen-3-8b:
     name: "Qwen/Qwen3-8B"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
@@ -56,7 +56,7 @@ models:
   qwen-3-14b:
     name: "Qwen/Qwen3-14B"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
@@ -64,7 +64,7 @@ models:
   # qwen-3-32b:
   #   name: "Qwen/Qwen3-32B"
   #   hyperparameters:
-  #     max_new_tokens: 1024
+  #     max_new_tokens: 1792
   #     do_sample: false
   #     torch_dtype: "auto"
   #     enable_thinking: false
@@ -72,28 +72,28 @@ models:
   gemma-3-4b:
     name: "google/gemma-3-4b-it"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   codegemma-7b:
     name: "google/codegemma-7b-it"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   gemma-3-12b:
     name: "google/gemma-3-12b-it"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   # gemma-3-27b:
   #   name: "google/gemma-3-27b-it"
   #   hyperparameters:
-  #     max_new_tokens: 512
+  #     max_new_tokens: 1792
   #     do_sample: false
   #     torch_dtype: "bfloat16"
 
@@ -101,71 +101,71 @@ models:
   #   name: "google/gemma-3-27b-it"
   #   hyperparameters:
   #     torch_dtype: "nf4"
-  #     max_new_tokens: 512
+  #     max_new_tokens: 1792
   #     do_sample: false
 
   gemma-3-4b-api:
     name: "gemma-3-4b-it"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       api_model: true
 
   gemma-3-12b-api:
     name: "gemma-3-12b-it"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       api_model: true
 
   gemma-3-27b-api:
     name: "gemma-3-27b-it"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 1792
       api_model: true
 
   mistral-small-3.1-24b-api:
     name: "mistralai/mistral-small-3.1-24b-instruct:free"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       api_model: true
 
   qwen-3-32b-api:
     name: "qwen/qwen3-32b"
     hyperparameters:
-      max_new_tokens: 1025
+      max_new_tokens: 1792
       api_model: true
 
   mistral-3-8b-instruct:
     name: "mistralai/Ministral-3-8B-Instruct-2512"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   mistral-3-14b-instruct:
     name: "mistralai/Ministral-3-14B-Instruct-2512"
     hyperparameters:
-      max_new_tokens: 1024
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   mistral-3-3b-reasoning:
     name: "mistralai/Ministral-3-3B-Reasoning-2512"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   gigachat3-10b-1.8b:
     name: "ai-sage/GigaChat3-10B-A1.8B-bf16"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "bfloat16"
 
   yandexgpt-5-lite-8b-instruct:
     name: "yandex/YandexGPT-5-Lite-8B-instruct"
     hyperparameters:
-      max_new_tokens: 512
+      max_new_tokens: 1792
       do_sample: false
       torch_dtype: "auto"
 

@@ -61,7 +61,7 @@ def _generate_with_outlines(
     tokenizer: Any,
     prompt: str,
     response_schema: Any,
-    max_new_tokens: int = 1024,
+    max_new_tokens: int = 1792,
     prompt_template_name: str = None,
     pydantic_outlines: bool = False,
 ) -> str:
@@ -130,7 +130,7 @@ def _generate_with_guidance(
     tokenizer: Any,
     prompt: str,
     schema_str: str,
-    max_new_tokens: int = 1024,
+    max_new_tokens: int = 1792,
     prompt_template_name: str = None,
 ) -> str:
     """
@@ -532,7 +532,7 @@ def generate_gemma(
     model, 
     tokenizer, 
     prompt: str, 
-    max_new_tokens: int = 1024, 
+    max_new_tokens: int = 1792, 
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
@@ -685,7 +685,7 @@ def generate_standard(
     model,
     tokenizer,
     prompt: str,
-    max_new_tokens: int = 1024,
+    max_new_tokens: int = 1792,
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
@@ -755,7 +755,7 @@ def generate_qwen(
     model, 
     tokenizer, 
     prompt: str, 
-    max_new_tokens: int = 512, 
+    max_new_tokens: int = 1792,
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
@@ -824,7 +824,7 @@ def generate_t5(
     model, 
     tokenizer_or_processor, 
     prompt: str, 
-    max_new_tokens: int = 1024, 
+    max_new_tokens: int = 1792, 
     repetition_penalty: float = None,
     structured_output: bool = False,
     response_schema: Any = None,
@@ -949,7 +949,7 @@ def generate_qwen_3(
     model, 
     tokenizer, 
     prompt: str, 
-    max_new_tokens: int = 32768, 
+    max_new_tokens: int = 1792,
     repetition_penalty: float = None, 
     enable_thinking: bool = False,
     structured_output: bool = False,
@@ -966,7 +966,7 @@ def generate_qwen_3(
         model: модель
         tokenizer: токенизатор
         prompt: промпт
-        max_new_tokens: максимальное количество новых токенов (по умолчанию 32768 для Qwen3)
+        max_new_tokens: максимальное количество новых токенов
         repetition_penalty: штраф за повторения (если None, не используется)
         enable_thinking: включить thinking mode (по умолчанию False)
         structured_output: флаг для structured output (игнорируется для Qwen3)

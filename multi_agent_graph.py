@@ -283,7 +283,7 @@ def handle_agent_error(agent_num: int, error: Exception, elapsed: float,
     }
 
 
-def run_agent_generation(generator, prompt: str, agent_num: int, max_new_tokens: int = 512) -> tuple:
+def run_agent_generation(generator, prompt: str, agent_num: int, max_new_tokens: int = 1792) -> tuple:
     """Выполняет генерацию ответа агента с обработкой прерываний"""
     start_time = time.time()
     try:
@@ -1363,7 +1363,7 @@ def create_multi_agent_graph(mode: str = "simple_4agents"):
 def process_with_multi_agent(
     text: str,
     generator,
-    max_new_tokens: int = 1024,
+    max_new_tokens: int = 1792,
     multi_agent_mode: str = "simple_4agents"
 ) -> dict:
     """

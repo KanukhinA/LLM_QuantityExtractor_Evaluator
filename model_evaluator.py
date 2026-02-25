@@ -560,7 +560,7 @@ class ModelEvaluator:
                       generate_func: Callable,
                       hyperparameters: Dict[str, Any],
                       prompt_template: str = None,
-                      max_new_tokens: int = 1024,
+                      max_new_tokens: int = 1792,
                       num_retries: int = 2,
                       verbose: bool = False,
                       use_gemini_analysis: bool = False,
@@ -583,7 +583,7 @@ class ModelEvaluator:
             словарь с результатами оценки
         """
         # max_new_tokens всегда из hyperparameters (models.yaml), иначе переданный аргумент
-        max_new_tokens = hyperparameters.get("max_new_tokens", max_new_tokens)
+        max_new_tokens = hyperparameters.get("max_new_tokens", 1792)
 
         # Определяем режим работы из гиперпараметров
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)
