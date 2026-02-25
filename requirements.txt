@@ -1,5 +1,11 @@
 torch>=2.0.0
-transformers>=4.50.0.dev0  # Требуется для поддержки Ministral-3 моделей с FP8 (рекомендуется установить из GitHub: pip install git+https://github.com/huggingface/transformers)
+# Локальные модели и версия transformers:
+#   Qwen3 (4B/8B/14B): >=4.51.0 (generation_config, chat template)
+#   Gemma 3 (4b/12b): 4.49+ (Gemma3ForCausalLM), стабильно в 4.51+
+#   Ministral-3 / Mistral 3 (3B/8B/14B): 4.50+ (Mistral3ForConditionalGeneration, MistralCommonBackend), в 4.51.1+ в стабильном
+#   Qwen2.5, Gemma 2, CodeGemma, GigaChat3, YandexGPT: работают на 4.37+
+# Итог: единая нижняя граница для всех — transformers>=4.51.0
+transformers>=4.51.0
 pandas>=1.5.0
 openpyxl>=3.0.0
 accelerate>=0.20.0

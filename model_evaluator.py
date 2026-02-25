@@ -584,6 +584,7 @@ class ModelEvaluator:
         """
         # max_new_tokens всегда из hyperparameters (models.yaml), иначе переданный аргумент
         max_new_tokens = hyperparameters.get("max_new_tokens", 1792)
+        print(f"   max_new_tokens для генерации: {max_new_tokens}")
 
         # Определяем режим работы из гиперпараметров
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)

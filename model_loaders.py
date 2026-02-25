@@ -989,23 +989,30 @@ def generate_qwen_3(
     # Токенизируем
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
-    # Параметры генерации. Для Qwen3 не передаём eos_token_id (<|im_end|>): модель иногда
-    # генерирует его преждевременно (посреди JSON), из-за чего ответ обрывается. Остановка только по max_new_tokens.
-    generate_kwargs = {
-        **model_inputs,
-        "max_new_tokens": max_new_tokens,
-        "do_sample": False,
-    }
+    # У модели в репозитории есть generation_config.json; при загрузке он может переопределять
+    # max_new_tokens. Явно передаём GenerationConfig с нашим max_new_tokens, EOS берём из
+    # model.generation_config или токенизатора.
+    from transformers import GenerationConfig
+    max_tokens_val = int(max_new_tokens)
+    eos_ids = getattr(model.generation_config, "eos_token_id", None) if getattr(model, "generation_config", None) else None
+    if eos_ids is None:
+        eos_ids = tokenizer.eos_token_id
+    if eos_ids is not None and not isinstance(eos_ids, list):
+        eos_ids = [eos_ids]
+    gen_config = GenerationConfig(
+        max_new_tokens=max_tokens_val,
+        do_sample=False,
+        eos_token_id=eos_ids if eos_ids else None,
+    )
     if repetition_penalty is not None:
-        generate_kwargs["repetition_penalty"] = repetition_penalty
-
+        gen_config.repetition_penalty = repetition_penalty
     with torch.no_grad():
-        generated_ids = model.generate(**generate_kwargs)
+        generated_ids = model.generate(**model_inputs, generation_config=gen_config)
 
     # Извлекаем только новые токены (ответ модели)
     input_length = model_inputs["input_ids"].shape[1]
     output_ids = generated_ids[0][input_length:].tolist()
-    
+
     # Декодируем ответ
     text = tokenizer.decode(output_ids, skip_special_tokens=True)
     
