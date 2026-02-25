@@ -582,6 +582,9 @@ class ModelEvaluator:
         Returns:
             словарь с результатами оценки
         """
+        # max_new_tokens всегда из hyperparameters (models.yaml), иначе переданный аргумент
+        max_new_tokens = hyperparameters.get("max_new_tokens", max_new_tokens)
+
         # Определяем режим работы из гиперпараметров
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)
         use_multi_agent = multi_agent_mode is not None and multi_agent_mode != ""
