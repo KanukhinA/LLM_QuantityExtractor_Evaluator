@@ -989,14 +989,13 @@ def generate_qwen_3(
     # Токенизируем
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
-    # Параметры генерации
+    # Параметры генерации. Для Qwen3 не передаём eos_token_id (<|im_end|>): модель иногда
+    # генерирует его преждевременно (посреди JSON), из-за чего ответ обрывается. Остановка только по max_new_tokens.
     generate_kwargs = {
         **model_inputs,
         "max_new_tokens": max_new_tokens,
         "do_sample": False,
     }
-    if tokenizer.eos_token_id is not None:
-        generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
     if repetition_penalty is not None:
         generate_kwargs["repetition_penalty"] = repetition_penalty
 
