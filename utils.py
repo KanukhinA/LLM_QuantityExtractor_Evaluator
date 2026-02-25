@@ -1,16 +1,69 @@
 """
 Утилиты для парсинга JSON и построения промптов
 """
+import io
 import json
 import re
 import ast
 import codecs
 import os
 import inspect
+import sys
 import warnings
 from typing import Dict, Any, Optional
 import prompt_config
 from config import PROMPT_TEMPLATE_NAME, DATASET_FILENAME
+
+
+class _TeeWriter:
+    """Пишет в два потока: оригинальный и буфер (для сохранения лога консоли)."""
+    def __init__(self, stream, buffer):
+        self._stream = stream
+        self._buffer = buffer
+
+    def write(self, data):
+        self._stream.write(data)
+        self._buffer.write(data)
+
+    def flush(self):
+        self._stream.flush()
+        self._buffer.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+class ConsoleLogCapture:
+    """
+    Контекстный менеджер: перехватывает stdout/stderr в буфер и при выходе
+    перезаписывает файл evaluation_summary.log содержимым буфера.
+    """
+    def __init__(self, log_path: str):
+        self.log_path = log_path
+        self._buffer = None
+        self._orig_stdout = None
+        self._orig_stderr = None
+
+    def __enter__(self):
+        self._buffer = io.StringIO()
+        self._orig_stdout = sys.stdout
+        self._orig_stderr = sys.stderr
+        sys.stdout = _TeeWriter(sys.stdout, self._buffer)
+        sys.stderr = _TeeWriter(sys.stderr, self._buffer)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout = self._orig_stdout
+        sys.stderr = self._orig_stderr
+        try:
+            d = os.path.dirname(self.log_path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                f.write(self._buffer.getvalue())
+        except Exception:
+            pass
+        return None
 
 
 def find_dataset_path(dataset_filename: str = None) -> str:

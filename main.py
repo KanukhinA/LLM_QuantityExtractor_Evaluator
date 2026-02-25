@@ -373,7 +373,23 @@ def main():
         print(f"Датасет не найден: {dataset_path}")
         print("Убедитесь, что файл results_var3.xlsx находится в папке data/")
         return
-    
+
+    from utils import ConsoleLogCapture
+    log_path = os.path.join(OUTPUT_DIR, "evaluation_summary.log")
+    capture = ConsoleLogCapture(log_path)
+    capture.__enter__()
+    try:
+        _run_evaluation_loop(
+            model_keys, multi_agent_mode, structured_output, use_outlines,
+            pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name
+        )
+    finally:
+        capture.__exit__(None, None, None)
+
+
+def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_outlines,
+                         pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name):
+    """Основной цикл оценки моделей (вывод перехватывается в evaluation_summary.log)."""
     # Проверяем работоспособность Gemini API (только если use_gemini=True)
     if use_gemini:
         print(f"\n{'='*80}")

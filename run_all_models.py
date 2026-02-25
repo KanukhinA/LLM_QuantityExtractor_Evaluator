@@ -1,11 +1,13 @@
 """
 Скрипт для запуска оценки всех моделей подряд
 """
+import os
 import sys
 import argparse
 from main import run_evaluation
 from gemini_analyzer import check_gemini_api
-from config import GEMINI_API_KEY, MODEL_CONFIGS
+from config import GEMINI_API_KEY, MODEL_CONFIGS, OUTPUT_DIR
+from utils import ConsoleLogCapture
 from model_evaluator import StopAllModelsInterrupt
 
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
@@ -251,14 +253,16 @@ if __name__ == "__main__":
         help="Название промпта из prompt_config.py (например, DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES)"
     )
     args = parser.parse_args()
-    
-    run_all_models(
-        local_only=args.local_only,
-        multi_agent_mode=args.multi_agent,
-        structured_output=args.structured_output,
-        use_outlines=args.outlines,
-        prompt_template_name=args.prompt,
-        pydantic_outlines=args.pydantic_outlines,
-        use_guidance=args.guidance
-    )
+
+    log_path = os.path.join(OUTPUT_DIR, "evaluation_summary.log")
+    with ConsoleLogCapture(log_path):
+        run_all_models(
+            local_only=args.local_only,
+            multi_agent_mode=args.multi_agent,
+            structured_output=args.structured_output,
+            use_outlines=args.outlines,
+            prompt_template_name=args.prompt,
+            pydantic_outlines=args.pydantic_outlines,
+            use_guidance=args.guidance
+        )
 

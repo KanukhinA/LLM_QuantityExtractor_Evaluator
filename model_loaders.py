@@ -23,6 +23,40 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
 
+# Отладка max_new_tokens: при DEBUG_MAX_NEW_TOKENS=1 в консоль пишется переданное значение и фактическая длина ответа
+DEBUG_MAX_NEW_TOKENS = os.environ.get("DEBUG_MAX_NEW_TOKENS", "").lower() in ("1", "true", "yes")
+
+
+def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None):
+    """
+    Собирает GenerationConfig с явным max_new_tokens и eos_token_id,
+    чтобы конфиг модели (generation_config.json) не переопределял лимит.
+    EOS берём из model.generation_config (если есть), иначе из tokenizer — чтобы
+    модели вроде Qwen3 с несколькими EOS (thinking/reply) работали корректно.
+    """
+    from transformers import GenerationConfig
+    eos = None
+    if getattr(model, "generation_config", None) is not None:
+        eos = getattr(model.generation_config, "eos_token_id", None)
+    if eos is None and tokenizer is not None:
+        eos = getattr(tokenizer, "eos_token_id", None)
+    if eos is not None and not isinstance(eos, list):
+        eos = [eos]
+    kwargs = {"max_new_tokens": int(max_new_tokens), "do_sample": False, "eos_token_id": eos}
+    if repetition_penalty is not None:
+        kwargs["repetition_penalty"] = repetition_penalty
+    return GenerationConfig(**kwargs)
+
+
+def _debug_max_new_tokens_before(max_new_tokens):
+    if DEBUG_MAX_NEW_TOKENS:
+        print(f"[DEBUG max_new_tokens] passed to generate: {max_new_tokens}", flush=True)
+
+
+def _debug_max_new_tokens_after(input_len, output_len):
+    if DEBUG_MAX_NEW_TOKENS:
+        print(f"[DEBUG max_new_tokens] generated {output_len - input_len} new tokens (input={input_len}, output={output_len})", flush=True)
+
 
 def _get_flash_attn_kwargs() -> dict:
     """
@@ -604,19 +638,13 @@ def generate_gemma(
             else:
                 inputs[key] = value
         
-        # Генерируем ответ
-        generate_kwargs = {
-            "max_new_tokens": max_new_tokens,
-            "do_sample": False,
-        }
-        if tokenizer.eos_token_id is not None:
-            generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-        if repetition_penalty is not None:
-            generate_kwargs["repetition_penalty"] = repetition_penalty
-
+        # Генерируем ответ (явный GenerationConfig чтобы max_new_tokens не переопределялся конфигом модели)
+        gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+        _debug_max_new_tokens_before(max_new_tokens)
         with torch.inference_mode():
-            outputs = model.generate(**inputs, **generate_kwargs)
-        
+            outputs = model.generate(**inputs, generation_config=gen_config)
+        _debug_max_new_tokens_after(inputs["input_ids"].shape[1], outputs.shape[1])
+
         # Декодируем ответ
         outputs_decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
         full_text = outputs_decoded[0] if outputs_decoded else ""
@@ -650,19 +678,12 @@ def generate_gemma(
             formatted_prompt = prompt
         
         input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
-        
-        generate_kwargs = {
-            "input_ids": input_ids,
-            "max_new_tokens": max_new_tokens,
-            "do_sample": False,
-        }
-        if tokenizer.eos_token_id is not None:
-            generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-        if repetition_penalty is not None:
-            generate_kwargs["repetition_penalty"] = repetition_penalty
 
+        gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+        _debug_max_new_tokens_before(max_new_tokens)
         with torch.no_grad():
-            output_ids = model.generate(**generate_kwargs)
+            output_ids = model.generate(input_ids, generation_config=gen_config)
+        _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
         # Декодируем только новые токены (игнорируя входные)
         input_length = input_ids.shape[1]
@@ -716,26 +737,17 @@ def generate_standard(
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
     input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
 
-    generate_kwargs = {
-        "input_ids": input_ids,
-        "max_new_tokens": max_new_tokens,
-        "do_sample": False,
-        "use_cache": True,
-    }
-    if tokenizer.eos_token_id is not None:
-        generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-    if repetition_penalty is not None:
-        generate_kwargs["repetition_penalty"] = repetition_penalty
-
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+    _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
         try:
-            output_ids = model.generate(**generate_kwargs)
+            output_ids = model.generate(input_ids, generation_config=gen_config, use_cache=True)
         except AttributeError as e:
             if "from_legacy_cache" in str(e):
-                generate_kwargs["use_cache"] = False
-                output_ids = model.generate(**generate_kwargs)
+                output_ids = model.generate(input_ids, generation_config=gen_config, use_cache=False)
             else:
                 raise
+    _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
     input_length = input_ids.shape[1]
     generated_ids = output_ids[0][input_length:]
@@ -790,21 +802,12 @@ def generate_qwen(
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
-    
-    generate_kwargs = {
-        "input_ids": input_ids,
-        "max_new_tokens": max_new_tokens,
-        "do_sample": False,
-        "stop_strings": ["Human:", "Example"],
-        "tokenizer": tokenizer
-    }
-    if tokenizer.eos_token_id is not None:
-        generate_kwargs["eos_token_id"] = tokenizer.eos_token_id
-    if repetition_penalty is not None:
-        generate_kwargs["repetition_penalty"] = repetition_penalty
 
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+    _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
-        output_ids = model.generate(**generate_kwargs)
+        output_ids = model.generate(input_ids, generation_config=gen_config)
+    _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
     text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
@@ -816,7 +819,7 @@ def generate_qwen(
     for s in ["Human:", "Example"]:
         if s in text:
             text = text.split(s)[0].strip()
-    
+
     return text.strip()
 
 
@@ -899,9 +902,11 @@ def generate_t5(
     if input_ids is None:
         raise RuntimeError("Не удалось получить input_ids из processor/tokenizer")
     
+    # T5 использует max_length, не max_new_tokens
+    max_length_val = input_ids.shape[1] + max_new_tokens
     generate_kwargs = {
         "input_ids": input_ids,
-        "max_length": input_ids.shape[1] + max_new_tokens,  # T5 использует max_length вместо max_new_tokens
+        "max_length": max_length_val,
         "do_sample": False,
     }
     _decoder = decoder
@@ -919,9 +924,11 @@ def generate_t5(
             if decoder.tokenizer.pad_token_id is not None:
                 generate_kwargs["decoder_start_token_id"] = decoder.tokenizer.pad_token_id
 
+    _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
         output_ids = model.generate(**generate_kwargs)
-    
+    _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
+
     # Декодируем ответ
     if decoder is None:
         raise RuntimeError("Decoder не определен для декодирования ответа")
@@ -989,28 +996,16 @@ def generate_qwen_3(
     # Токенизируем
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
-    # У модели в репозитории есть generation_config.json; при загрузке он может переопределять
-    # max_new_tokens. Явно передаём GenerationConfig с нашим max_new_tokens, EOS берём из
-    # model.generation_config или токенизатора.
-    from transformers import GenerationConfig
-    max_tokens_val = int(max_new_tokens)
-    eos_ids = getattr(model.generation_config, "eos_token_id", None) if getattr(model, "generation_config", None) else None
-    if eos_ids is None:
-        eos_ids = tokenizer.eos_token_id
-    if eos_ids is not None and not isinstance(eos_ids, list):
-        eos_ids = [eos_ids]
-    gen_config = GenerationConfig(
-        max_new_tokens=max_tokens_val,
-        do_sample=False,
-        eos_token_id=eos_ids if eos_ids else None,
-    )
-    if repetition_penalty is not None:
-        gen_config.repetition_penalty = repetition_penalty
+    # Явный GenerationConfig чтобы max_new_tokens не переопределялся generation_config.json модели
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+    _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
         generated_ids = model.generate(**model_inputs, generation_config=gen_config)
 
-    # Извлекаем только новые токены (ответ модели)
     input_length = model_inputs["input_ids"].shape[1]
+    _debug_max_new_tokens_after(input_length, generated_ids.shape[1])
+
+    # Извлекаем только новые токены (ответ модели)
     output_ids = generated_ids[0][input_length:].tolist()
 
     # Декодируем ответ
