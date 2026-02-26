@@ -28,11 +28,10 @@ HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300")) 
 DEBUG_MAX_NEW_TOKENS = os.environ.get("DEBUG_MAX_NEW_TOKENS", "1").lower() in ("1", "true", "yes")
 
 
-def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None):
+def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None, max_length=None):
     """
-    Собирает GenerationConfig с явным max_new_tokens, eos_token_id и pad_token_id,
-    чтобы конфиг модели (generation_config.json) не переопределял лимит и не было
-    предупреждений про pad_token_id / attention_mask.
+    Собирает GenerationConfig с явным max_new_tokens, eos_token_id и pad_token_id.
+    max_length (из models.yaml) задаёт верхнюю границу общей длины последовательности (input + output).
     """
     from transformers import GenerationConfig
     eos = None
@@ -48,6 +47,8 @@ def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty
     kwargs = {"max_new_tokens": int(max_new_tokens), "do_sample": False, "eos_token_id": eos, "pad_token_id": pad}
     if repetition_penalty is not None:
         kwargs["repetition_penalty"] = repetition_penalty
+    if max_length is not None:
+        kwargs["max_length"] = int(max_length)
     return GenerationConfig(**kwargs)
 
 
@@ -591,11 +592,12 @@ def load_codegemma_7b(model_name: Optional[str] = None, hyperparameters: Optiona
 
 
 def generate_gemma(
-    model, 
-    tokenizer, 
-    prompt: str, 
-    max_new_tokens: int = 1792, 
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int = 1792,
     repetition_penalty: float = None,
+    max_length: int = None,
     structured_output: bool = False,
     response_schema: Any = None,
     use_outlines: bool = False,
@@ -667,7 +669,7 @@ def generate_gemma(
                 inputs[key] = value
         
         # Генерируем ответ (явный GenerationConfig чтобы max_new_tokens не переопределялся конфигом модели)
-        gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+        gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
         _debug_max_new_tokens_before(max_new_tokens)
         with torch.inference_mode():
             outputs = model.generate(**inputs, generation_config=gen_config)
@@ -698,7 +700,7 @@ def generate_gemma(
         inputs_fb = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
         input_ids = inputs_fb["input_ids"]
         attention_mask = inputs_fb.get("attention_mask")
-        gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+        gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
         _debug_max_new_tokens_before(max_new_tokens)
         gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
         if attention_mask is not None:
@@ -727,6 +729,7 @@ def generate_standard(
     prompt: str,
     max_new_tokens: int = 1792,
     repetition_penalty: float = None,
+    max_length: int = None,
     structured_output: bool = False,
     response_schema: Any = None,
     use_outlines: bool = False,
@@ -735,14 +738,9 @@ def generate_standard(
     use_guidance: bool = False,
 ) -> str:
     """
-    Стандартная функция генерации для большинства моделей
-    
-    Args:
-        model: модель
-        tokenizer: токенизатор
-        prompt: промпт
-        max_new_tokens: максимальное количество новых токенов
-        repetition_penalty: штраф за повторения (если None, не используется)
+    Стандартная функция генерации для большинства моделей.
+
+    max_length: из models.yaml — верхняя граница общей длины (input + output).
     """
     if use_guidance and response_schema is not None:
         from outlines_schema import get_outlines_schema_rus_str, get_outlines_schema_str
@@ -758,7 +756,7 @@ def generate_standard(
     input_ids = inputs["input_ids"]
     attention_mask = inputs.get("attention_mask")
 
-    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
     _debug_max_new_tokens_before(max_new_tokens)
     gen_kw = {"input_ids": input_ids, "generation_config": gen_config, "use_cache": True}
     if attention_mask is not None:
@@ -789,11 +787,12 @@ def generate_standard(
 
 
 def generate_qwen(
-    model, 
-    tokenizer, 
-    prompt: str, 
+    model,
+    tokenizer,
+    prompt: str,
     max_new_tokens: int = 1792,
     repetition_penalty: float = None,
+    max_length: int = None,
     structured_output: bool = False,
     response_schema: Any = None,
     use_outlines: bool = False,
@@ -829,7 +828,7 @@ def generate_qwen(
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     input_ids = inputs["input_ids"]
     attention_mask = inputs.get("attention_mask")
-    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
     _debug_max_new_tokens_before(max_new_tokens)
     gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
     if attention_mask is not None:
@@ -982,11 +981,12 @@ def generate_t5(
 
 
 def generate_qwen_3(
-    model, 
-    tokenizer, 
-    prompt: str, 
+    model,
+    tokenizer,
+    prompt: str,
     max_new_tokens: int = 1792,
-    repetition_penalty: float = None, 
+    repetition_penalty: float = None,
+    max_length: int = None,
     enable_thinking: bool = False,
     structured_output: bool = False,
     response_schema: Any = None,
@@ -1026,7 +1026,7 @@ def generate_qwen_3(
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
     # Явный GenerationConfig чтобы max_new_tokens не переопределялся generation_config.json модели
-    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
     _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
         generated_ids = model.generate(**model_inputs, generation_config=gen_config)

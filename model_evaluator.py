@@ -209,17 +209,19 @@ class ModelEvaluator:
                     from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
                     response_schema = FertilizerExtractionOutputLatin if (use_outlines and not is_api_model) else FertilizerExtractionOutput
                 
-                # Передаем repetition_penalty из гиперпараметров, если есть
+                # Передаем repetition_penalty и max_length из гиперпараметров, если есть
                 repetition_penalty = hyperparameters.get("repetition_penalty")
+                max_length = hyperparameters.get("max_length")
                 pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
-                
+
                 # Для API моделей передаем model_name и structured_output из hyperparameters
                 if is_api_model and "model_name" in hyperparameters:
                     response_text = generate_func(
-                        model, tokenizer, prompt, max_new_tokens, 
+                        model, tokenizer, prompt, max_new_tokens,
                         model_name=hyperparameters["model_name"],
                         structured_output=structured_output,
-                        response_schema=response_schema
+                        response_schema=response_schema,
+                        max_length=max_length
                     )
                 # Для локальных моделей с guidance (llguidance, по умолчанию схема RUS)
                 elif use_guidance and not is_api_model and response_schema is not None:
@@ -228,7 +230,8 @@ class ModelEvaluator:
                         structured_output=True,
                         response_schema=response_schema,
                         use_guidance=True,
-                        prompt_template_name=pt_name
+                        prompt_template_name=pt_name,
+                        max_length=max_length
                     )
                 # Для локальных моделей с outlines (response_schema используется outlines; structured_output добавляет схему в промпт)
                 elif use_outlines and not is_api_model and response_schema is not None:
@@ -238,7 +241,8 @@ class ModelEvaluator:
                         response_schema=response_schema,
                         use_outlines=True,
                         prompt_template_name=pt_name,
-                        pydantic_outlines=hyperparameters.get("pydantic_outlines", False)
+                        pydantic_outlines=hyperparameters.get("pydantic_outlines", False),
+                        max_length=max_length
                     )
                 # Для локальных моделей с structured_output (без outlines)
                 elif structured_output and not is_api_model and response_schema is not None:
@@ -246,16 +250,17 @@ class ModelEvaluator:
                         model, tokenizer, prompt, max_new_tokens,
                         structured_output=structured_output,
                         response_schema=response_schema,
-                        use_outlines=False
+                        use_outlines=False,
+                        max_length=max_length
                     )
                 elif repetition_penalty is not None:
-                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty)
+                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, repetition_penalty=repetition_penalty, max_length=max_length)
                 elif "enable_thinking" in hyperparameters:
                     # Для Qwen3 передаем enable_thinking из hyperparameters (по умолчанию False)
                     enable_thinking_value = hyperparameters.get("enable_thinking", False)
-                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=enable_thinking_value)
+                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, enable_thinking=enable_thinking_value, max_length=max_length)
                 else:
-                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens)
+                    response_text = generate_func(model, tokenizer, prompt, max_new_tokens, max_length=max_length)
                 elapsed = time.time() - start_time
                 times.append(elapsed)
                 

@@ -84,12 +84,13 @@ def load_gemma_3_27b_api() -> Tuple[Optional[Any], Optional[Any]]:
 
 
 def generate_gemma_api(
-    client, 
-    tokenizer, 
-    prompt: str, 
+    client,
+    tokenizer,
+    prompt: str,
     max_new_tokens: int = 1792,
     model_name: str = "gemma-3-4b-it",
     repetition_penalty: float = None,
+    max_length: int = None,
     temperature: float = None,
     top_k: int = None,
     top_p: float = None,
@@ -336,12 +337,13 @@ def load_qwen_3_32b_api() -> Tuple[Optional[Any], Optional[Any]]:
 
 
 def generate_openrouter_api(
-    client, 
-    tokenizer, 
-    prompt: str, 
+    client,
+    tokenizer,
+    prompt: str,
     max_new_tokens: int = 1792,
     model_name: str = "tngtech/deepseek-r1t-chimera:free",
     repetition_penalty: float = None,
+    max_length: int = None,
     temperature: float = None,
     top_k: int = None,
     top_p: float = None,
