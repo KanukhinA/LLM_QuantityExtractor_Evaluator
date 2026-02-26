@@ -41,6 +41,7 @@ models:
     name: "Qwen/Qwen3-4B-Instruct-2507"
     hyperparameters:
       max_new_tokens: 1792
+      max_length: 32768
       do_sample: false
       dtype: "bfloat16"
       enable_thinking: false
@@ -73,7 +74,6 @@ models:
     name: "google/gemma-3-4b-it"
     hyperparameters:
       max_new_tokens: 1792
-      max_length: 32768
       do_sample: false
       torch_dtype: "bfloat16"
 

@@ -23,11 +23,6 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
 
-# Отладка max_new_tokens: в консоль пишется переданное значение и фактическая длина ответа.
-# По умолчанию включена; выключить: DEBUG_MAX_NEW_TOKENS=0
-DEBUG_MAX_NEW_TOKENS = os.environ.get("DEBUG_MAX_NEW_TOKENS", "1").lower() in ("1", "true", "yes")
-
-
 def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None, max_length=None):
     """
     Собирает GenerationConfig с явным max_new_tokens, eos_token_id и pad_token_id.
@@ -70,19 +65,6 @@ def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
         import re
         text = re.sub(r"\s+", " ", text.replace("\u2581", "")).strip()
     return text
-
-
-def _debug_max_new_tokens_before(max_new_tokens):
-    """Выводит переданный лимит. Всегда печатается при DEBUG_MAX_NEW_TOKENS (по умолчанию True)."""
-    if DEBUG_MAX_NEW_TOKENS:
-        print(f"[DEBUG max_new_tokens] passed to generate: {max_new_tokens}", flush=True)
-
-
-def _debug_max_new_tokens_after(input_len, output_len):
-    """Выводит фактическое число новых токенов."""
-    if DEBUG_MAX_NEW_TOKENS:
-        n = output_len - input_len
-        print(f"[DEBUG max_new_tokens] generated {n} new tokens (input={input_len}, output={output_len})", flush=True)
 
 
 def _get_flash_attn_kwargs() -> dict:
@@ -151,7 +133,6 @@ def _generate_with_outlines(
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     if getattr(tokenizer, "eos_token_id", None) is not None:
         gen_kwargs["eos_token_id"] = tokenizer.eos_token_id
-    _debug_max_new_tokens_before(max_new_tokens)
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -221,7 +202,6 @@ def _generate_with_guidance(
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     if getattr(tokenizer, "eos_token_id", None) is not None:
         gen_kwargs["eos_token_id"] = tokenizer.eos_token_id
-    _debug_max_new_tokens_before(max_new_tokens)
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -670,10 +650,8 @@ def generate_gemma(
         
         # Генерируем ответ (явный GenerationConfig чтобы max_new_tokens не переопределялся конфигом модели)
         gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-        _debug_max_new_tokens_before(max_new_tokens)
         with torch.inference_mode():
             outputs = model.generate(**inputs, generation_config=gen_config)
-        _debug_max_new_tokens_after(inputs["input_ids"].shape[1], outputs.shape[1])
 
         # Декодируем ответ (с очисткой SentencePiece ▁ для YandexGPT и др.)
         full_text = _decode_and_clean(tokenizer, outputs[0])
@@ -701,13 +679,11 @@ def generate_gemma(
         input_ids = inputs_fb["input_ids"]
         attention_mask = inputs_fb.get("attention_mask")
         gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-        _debug_max_new_tokens_before(max_new_tokens)
         gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
         if attention_mask is not None:
             gen_kw["attention_mask"] = attention_mask
         with torch.no_grad():
             output_ids = model.generate(**gen_kw)
-        _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
         input_length = input_ids.shape[1]
         generated_ids = output_ids[0][input_length:]
@@ -757,7 +733,6 @@ def generate_standard(
     attention_mask = inputs.get("attention_mask")
 
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    _debug_max_new_tokens_before(max_new_tokens)
     gen_kw = {"input_ids": input_ids, "generation_config": gen_config, "use_cache": True}
     if attention_mask is not None:
         gen_kw["attention_mask"] = attention_mask
@@ -770,7 +745,6 @@ def generate_standard(
                 output_ids = model.generate(**gen_kw)
             else:
                 raise
-    _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
     input_length = input_ids.shape[1]
     generated_ids = output_ids[0][input_length:]
@@ -829,13 +803,11 @@ def generate_qwen(
     input_ids = inputs["input_ids"]
     attention_mask = inputs.get("attention_mask")
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    _debug_max_new_tokens_before(max_new_tokens)
     gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
     if attention_mask is not None:
         gen_kw["attention_mask"] = attention_mask
     with torch.no_grad():
         output_ids = model.generate(**gen_kw)
-    _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
     text = _decode_and_clean(tokenizer, output_ids[0])
 
@@ -952,10 +924,8 @@ def generate_t5(
             if decoder.tokenizer.pad_token_id is not None:
                 generate_kwargs["decoder_start_token_id"] = decoder.tokenizer.pad_token_id
 
-    _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
         output_ids = model.generate(**generate_kwargs)
-    _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
     # Декодируем ответ
     if decoder is None:
@@ -1027,12 +997,10 @@ def generate_qwen_3(
     
     # Явный GenerationConfig чтобы max_new_tokens не переопределялся generation_config.json модели
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    _debug_max_new_tokens_before(max_new_tokens)
     with torch.no_grad():
         generated_ids = model.generate(**model_inputs, generation_config=gen_config)
 
     input_length = model_inputs["input_ids"].shape[1]
-    _debug_max_new_tokens_after(input_length, generated_ids.shape[1])
 
     # Извлекаем только новые токены (ответ модели)
     output_ids = generated_ids[0][input_length:]

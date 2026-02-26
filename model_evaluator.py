@@ -194,8 +194,6 @@ class ModelEvaluator:
         for attempt in range(num_retries):
             try:
                 start_time = time.time()
-                if attempt == 0 and text_index == 0:
-                    print(f"[max_new_tokens] первый вызов генерации с max_new_tokens={max_new_tokens}", flush=True)
                 # Извлекаем параметры для structured output и outlines
                 structured_output = hyperparameters.get("structured_output", False)
                 use_outlines = hyperparameters.get("use_outlines", False)
@@ -592,12 +590,6 @@ class ModelEvaluator:
         # max_new_tokens всегда из hyperparameters (models.yaml), иначе переданный аргумент
         max_new_tokens = hyperparameters.get("max_new_tokens", 1792)
         print(f"   max_new_tokens для генерации: {max_new_tokens}")
-        try:
-            from model_loaders import DEBUG_MAX_NEW_TOKENS
-            if DEBUG_MAX_NEW_TOKENS:
-                print("   [DEBUG] DEBUG_MAX_NEW_TOKENS=1: в лог выводятся переданное значение и фактическое число сгенерированных токенов.")
-        except Exception:
-            pass
 
         # Определяем режим работы из гиперпараметров
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)
