@@ -39,7 +39,9 @@ def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty
     pad = getattr(tokenizer, "pad_token_id", None) if tokenizer else None
     if pad is None and eos is not None:
         pad = eos[0] if isinstance(eos, list) else eos
-    kwargs = {"max_new_tokens": int(max_new_tokens), "do_sample": False, "eos_token_id": eos, "pad_token_id": pad}
+    kwargs = {"do_sample": False, "eos_token_id": eos, "pad_token_id": pad}
+    if max_new_tokens is not None:
+        kwargs["max_new_tokens"] = int(max_new_tokens)
     if repetition_penalty is not None:
         kwargs["repetition_penalty"] = repetition_penalty
     if max_length is not None:

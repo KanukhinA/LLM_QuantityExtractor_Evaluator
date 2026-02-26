@@ -587,9 +587,13 @@ class ModelEvaluator:
         Returns:
             словарь с результатами оценки
         """
-        # max_new_tokens всегда из hyperparameters (models.yaml), иначе переданный аргумент
-        max_new_tokens = hyperparameters.get("max_new_tokens", 1792)
-        print(f"   max_new_tokens для генерации: {max_new_tokens}")
+        # max_new_tokens и max_length только из hyperparameters (models.yaml), без подстановок
+        max_new_tokens = hyperparameters.get("max_new_tokens")
+        max_length_hp = hyperparameters.get("max_length")
+        if max_new_tokens is not None:
+            print(f"   max_new_tokens для генерации: {max_new_tokens}")
+        if max_length_hp is not None:
+            print(f"   max_length для генерации: {max_length_hp}")
 
         # Определяем режим работы из гиперпараметров
         multi_agent_mode = hyperparameters.get("multi_agent_mode", None)
