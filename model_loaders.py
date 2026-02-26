@@ -23,16 +23,16 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
 
-# Отладка max_new_tokens: при DEBUG_MAX_NEW_TOKENS=1 в консоль пишется переданное значение и фактическая длина ответа
-DEBUG_MAX_NEW_TOKENS = os.environ.get("DEBUG_MAX_NEW_TOKENS", "").lower() in ("1", "true", "yes")
+# Отладка max_new_tokens: в консоль пишется переданное значение и фактическая длина ответа.
+# По умолчанию включена; выключить: DEBUG_MAX_NEW_TOKENS=0
+DEBUG_MAX_NEW_TOKENS = os.environ.get("DEBUG_MAX_NEW_TOKENS", "1").lower() in ("1", "true", "yes")
 
 
 def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None):
     """
-    Собирает GenerationConfig с явным max_new_tokens и eos_token_id,
-    чтобы конфиг модели (generation_config.json) не переопределял лимит.
-    EOS берём из model.generation_config (если есть), иначе из tokenizer — чтобы
-    модели вроде Qwen3 с несколькими EOS (thinking/reply) работали корректно.
+    Собирает GenerationConfig с явным max_new_tokens, eos_token_id и pad_token_id,
+    чтобы конфиг модели (generation_config.json) не переопределял лимит и не было
+    предупреждений про pad_token_id / attention_mask.
     """
     from transformers import GenerationConfig
     eos = None
@@ -42,20 +42,46 @@ def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty
         eos = getattr(tokenizer, "eos_token_id", None)
     if eos is not None and not isinstance(eos, list):
         eos = [eos]
-    kwargs = {"max_new_tokens": int(max_new_tokens), "do_sample": False, "eos_token_id": eos}
+    pad = getattr(tokenizer, "pad_token_id", None) if tokenizer else None
+    if pad is None and eos is not None:
+        pad = eos[0] if isinstance(eos, list) else eos
+    kwargs = {"max_new_tokens": int(max_new_tokens), "do_sample": False, "eos_token_id": eos, "pad_token_id": pad}
     if repetition_penalty is not None:
         kwargs["repetition_penalty"] = repetition_penalty
     return GenerationConfig(**kwargs)
 
 
+def _is_yandex_tokenizer(tokenizer) -> bool:
+    """Проверяет, что токенизатор от YandexGPT (нужна постобработка ▁)."""
+    name = (getattr(tokenizer, "name_or_path", None) or getattr(tokenizer, "model_id", None) or "") or ""
+    return "yandex" in str(name).lower() or "yandexgpt" in str(name).lower()
+
+
+def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
+    """
+    Декодирует токены. Для YandexGPT убирает артефакты SentencePiece (▁ U+2581);
+    для остальных моделей возвращает обычный decode без постобработки.
+    """
+    if hasattr(token_ids, "tolist"):
+        token_ids = token_ids.tolist()
+    text = tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
+    if _is_yandex_tokenizer(tokenizer) and "\u2581" in text:
+        import re
+        text = re.sub(r"\s+", " ", text.replace("\u2581", "")).strip()
+    return text
+
+
 def _debug_max_new_tokens_before(max_new_tokens):
+    """Выводит переданный лимит. Всегда печатается при DEBUG_MAX_NEW_TOKENS (по умолчанию True)."""
     if DEBUG_MAX_NEW_TOKENS:
         print(f"[DEBUG max_new_tokens] passed to generate: {max_new_tokens}", flush=True)
 
 
 def _debug_max_new_tokens_after(input_len, output_len):
+    """Выводит фактическое число новых токенов."""
     if DEBUG_MAX_NEW_TOKENS:
-        print(f"[DEBUG max_new_tokens] generated {output_len - input_len} new tokens (input={input_len}, output={output_len})", flush=True)
+        n = output_len - input_len
+        print(f"[DEBUG max_new_tokens] generated {n} new tokens (input={input_len}, output={output_len})", flush=True)
 
 
 def _get_flash_attn_kwargs() -> dict:
@@ -124,6 +150,7 @@ def _generate_with_outlines(
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     if getattr(tokenizer, "eos_token_id", None) is not None:
         gen_kwargs["eos_token_id"] = tokenizer.eos_token_id
+    _debug_max_new_tokens_before(max_new_tokens)
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -193,6 +220,7 @@ def _generate_with_guidance(
     gen_kwargs = {"max_new_tokens": max_new_tokens}
     if getattr(tokenizer, "eos_token_id", None) is not None:
         gen_kwargs["eos_token_id"] = tokenizer.eos_token_id
+    _debug_max_new_tokens_before(max_new_tokens)
     generated = generator(prompt, **gen_kwargs)
 
     if isinstance(generated, (dict, list)):
@@ -645,26 +673,16 @@ def generate_gemma(
             outputs = model.generate(**inputs, generation_config=gen_config)
         _debug_max_new_tokens_after(inputs["input_ids"].shape[1], outputs.shape[1])
 
-        # Декодируем ответ
-        outputs_decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        full_text = outputs_decoded[0] if outputs_decoded else ""
-        
-        # Нужно извлечь только новые токены (ответ модели)
-        # Для этого декодируем входные данные отдельно
-        inputs_decoded = tokenizer.batch_decode(
-            inputs['input_ids'] if isinstance(inputs, dict) else inputs, 
-            skip_special_tokens=True
-        )
-        input_text = inputs_decoded[0] if inputs_decoded else ""
-        
+        # Декодируем ответ (с очисткой SentencePiece ▁ для YandexGPT и др.)
+        full_text = _decode_and_clean(tokenizer, outputs[0])
+        input_text = _decode_and_clean(tokenizer, inputs["input_ids"][0])
+
         # Извлекаем только новую часть ответа
         if full_text.startswith(input_text):
             text = full_text[len(input_text):].strip()
         else:
-            # Если не начинается с input_text, пытаемся найти ответ другим способом
-            # Просто возвращаем весь текст и пусть парсер разберется
             text = full_text
-        
+
         return text
     
     else:
@@ -677,23 +695,24 @@ def generate_gemma(
         else:
             formatted_prompt = prompt
         
-        input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
-
+        inputs_fb = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+        input_ids = inputs_fb["input_ids"]
+        attention_mask = inputs_fb.get("attention_mask")
         gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
         _debug_max_new_tokens_before(max_new_tokens)
+        gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
+        if attention_mask is not None:
+            gen_kw["attention_mask"] = attention_mask
         with torch.no_grad():
-            output_ids = model.generate(input_ids, generation_config=gen_config)
+            output_ids = model.generate(**gen_kw)
         _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
-        # Декодируем только новые токены (игнорируя входные)
         input_length = input_ids.shape[1]
         generated_ids = output_ids[0][input_length:]
-        text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        text = _decode_and_clean(tokenizer, generated_ids)
 
-        # Если декодирование новых токенов дало пустой результат, пробуем декодировать весь ответ
         if not text.strip():
-            text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-            # Убираем повтор prompt
+            text = _decode_and_clean(tokenizer, output_ids[0])
             if text.startswith(formatted_prompt):
                 text = text[len(formatted_prompt):].strip()
             elif text.startswith(prompt):
@@ -735,26 +754,32 @@ def generate_standard(
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
-    input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to(model.device)
+    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+    input_ids = inputs["input_ids"]
+    attention_mask = inputs.get("attention_mask")
 
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
     _debug_max_new_tokens_before(max_new_tokens)
+    gen_kw = {"input_ids": input_ids, "generation_config": gen_config, "use_cache": True}
+    if attention_mask is not None:
+        gen_kw["attention_mask"] = attention_mask
     with torch.no_grad():
         try:
-            output_ids = model.generate(input_ids, generation_config=gen_config, use_cache=True)
+            output_ids = model.generate(**gen_kw)
         except AttributeError as e:
             if "from_legacy_cache" in str(e):
-                output_ids = model.generate(input_ids, generation_config=gen_config, use_cache=False)
+                gen_kw["use_cache"] = False
+                output_ids = model.generate(**gen_kw)
             else:
                 raise
     _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
     input_length = input_ids.shape[1]
     generated_ids = output_ids[0][input_length:]
-    text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    text = _decode_and_clean(tokenizer, generated_ids)
 
     if not text.strip():
-        text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        text = _decode_and_clean(tokenizer, output_ids[0])
         if text.startswith(formatted_prompt):
             text = text[len(formatted_prompt):].strip()
         elif text.startswith(prompt):
@@ -801,15 +826,19 @@ def generate_qwen(
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
-
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    input_ids = inputs["input_ids"]
+    attention_mask = inputs.get("attention_mask")
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty)
     _debug_max_new_tokens_before(max_new_tokens)
+    gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
+    if attention_mask is not None:
+        gen_kw["attention_mask"] = attention_mask
     with torch.no_grad():
-        output_ids = model.generate(input_ids, generation_config=gen_config)
+        output_ids = model.generate(**gen_kw)
     _debug_max_new_tokens_after(input_ids.shape[1], output_ids.shape[1])
 
-    text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    text = _decode_and_clean(tokenizer, output_ids[0])
 
     # Убираем повтор prompt
     if text.startswith(prompt):
@@ -1006,10 +1035,10 @@ def generate_qwen_3(
     _debug_max_new_tokens_after(input_length, generated_ids.shape[1])
 
     # Извлекаем только новые токены (ответ модели)
-    output_ids = generated_ids[0][input_length:].tolist()
+    output_ids = generated_ids[0][input_length:]
 
-    # Декодируем ответ
-    text = tokenizer.decode(output_ids, skip_special_tokens=True)
-    
+    # Декодируем ответ (с очисткой SentencePiece ▁ для YandexGPT и др.)
+    text = _decode_and_clean(tokenizer, output_ids)
+
     return text.strip()
 

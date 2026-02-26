@@ -194,6 +194,8 @@ class ModelEvaluator:
         for attempt in range(num_retries):
             try:
                 start_time = time.time()
+                if attempt == 0 and text_index == 0:
+                    print(f"[max_new_tokens] первый вызов генерации с max_new_tokens={max_new_tokens}", flush=True)
                 # Извлекаем параметры для structured output и outlines
                 structured_output = hyperparameters.get("structured_output", False)
                 use_outlines = hyperparameters.get("use_outlines", False)
