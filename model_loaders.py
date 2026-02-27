@@ -57,15 +57,21 @@ def _is_yandex_tokenizer(tokenizer) -> bool:
 
 def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
     """
-    Декодирует токены. Для YandexGPT убирает артефакты SentencePiece (▁ U+2581);
-    для остальных моделей возвращает обычный decode без постобработки.
+    Декодирует токены. Для YandexGPT убирает артефакты SentencePiece (▁ U+2581)
+    и лишние пробелы между буквами/цифрами, если декодер вставил пробелы между токенами.
     """
     if hasattr(token_ids, "tolist"):
         token_ids = token_ids.tolist()
-    text = tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
-    if _is_yandex_tokenizer(tokenizer) and "\u2581" in text:
-        import re
-        text = re.sub(r"\s+", " ", text.replace("\u2581", "")).strip()
+    text = tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=True)
+    if not _is_yandex_tokenizer(tokenizer):
+        return text
+    import re
+    if "\u2581" in text:
+        text = text.replace("\u2581", "")
+    # Убрать пробелы между буквами (кириллица/латиница) и между цифрами
+    text = re.sub(r"(?<=[a-zA-Zа-яА-ЯёЁ])\s+(?=[a-zA-Zа-яА-ЯёЁ])", "", text)
+    text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
@@ -435,6 +441,7 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     tokenizer_kwargs = {"token": HF_TOKEN}
     if "yandex" in model_name.lower() or "yandexgpt" in model_name.lower():
         tokenizer_kwargs["legacy"] = False
+        tokenizer_kwargs["use_fast"] = False  # медленный токенизатор декодирует без лишних пробелов между токенами
     tokenizer = AutoTokenizer.from_pretrained(model_name, **tokenizer_kwargs)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

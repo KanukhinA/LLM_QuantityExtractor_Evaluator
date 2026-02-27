@@ -974,6 +974,7 @@ class ModelEvaluator:
                 model_name=model_name,
                 message=error_text,
             )
+            parsing_errors.sort(key=lambda e: e.get("text_index", 999999) if isinstance(e, dict) else 999999)
             return {
                 "status": "error",
                 "error": error_text,
@@ -1168,6 +1169,7 @@ class ModelEvaluator:
                                 model_name=model_name,
                                 message=error_text,
                             )
+                            parsing_errors.sort(key=lambda e: e.get("text_index", 999999) if isinstance(e, dict) else 999999)
                             return {
                                 "status": "error",
                                 "error": error_text,
@@ -1522,7 +1524,12 @@ class ModelEvaluator:
         # Формируем итоговый результат
         # Создаем копию гиперпараметров для сохранения (чтобы гарантировать сохранение всех значений)
         hyperparameters_to_save = copy.deepcopy(hyperparameters)
-        
+
+        # Ошибки в JSON по возрастанию text_index
+        def _text_index_sort_key(e):
+            return e.get("text_index", 999999) if isinstance(e, dict) else 999999
+        parsing_errors.sort(key=_text_index_sort_key)
+
         # Формируем итоговый результат с правильным порядком полей
         # 1. Сначала метрики парсинга и валидации
         # 2. Затем quality_metrics

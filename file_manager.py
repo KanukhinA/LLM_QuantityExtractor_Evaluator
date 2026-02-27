@@ -418,7 +418,8 @@ class FileManager:
                 errors_by_text[text_idx]["errors"].append(error)
         
         errors_list = [v for v in errors_by_text.values() if v.get("errors")]
-        
+        errors_list.sort(key=lambda v: v.get("text_index", 999999))
+
         # Добавляем остальные поля (ошибки — в самом конце JSON)
         excluded_keys = {
             "raw_output_metrics",  # Сохраняется отдельно в raw_metrics.json
@@ -671,7 +672,8 @@ class FileManager:
                 errors_by_text[text_idx]["errors"].append(error)
         
         errors_list = [v for v in errors_by_text.values() if v.get("errors")]
-        
+        errors_list.sort(key=lambda v: v.get("text_index", 999999))
+
         excluded_keys = {"raw_output_metrics", "parsing_errors", "ошибки"}
         for key in evaluation_result:
             if key not in evaluation_result_for_json and key not in excluded_keys:
