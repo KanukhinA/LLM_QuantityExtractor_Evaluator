@@ -49,47 +49,38 @@ def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty
     return GenerationConfig(**kwargs)
 
 
-def _is_yandex_tokenizer(tokenizer) -> bool:
-    """Проверяет, что токенизатор от YandexGPT (нужна постобработка ▁)."""
-    name = (getattr(tokenizer, "name_or_path", None) or getattr(tokenizer, "model_id", None) or "") or ""
-    return "yandex" in str(name).lower() or "yandexgpt" in str(name).lower()
-
-
 def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
-    """
-    Декодирует токены. Для YandexGPT: убирает ▁ (U+2581), убирает пробелы только
-    между цифрами и между буквой и цифрой (формулы P2O5, числа 13), не трогает пробелы между словами.
-    """
+    """Декодирует токены в строку (без постобработки под конкретные модели)."""
     if hasattr(token_ids, "tolist"):
         token_ids = token_ids.tolist()
-    text = tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=True)
-    if not _is_yandex_tokenizer(tokenizer):
-        return text
-    import re
-    if "\u2581" in text:
-        text = text.replace("\u2581", "")
-    # Только формулы и числа: пробелы между цифрами и между буквой/цифрой (не между двумя буквами)
-    text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
-    text = re.sub(r"(?<=[a-zA-Zа-яА-ЯёЁ])\s+(?=\d)", "", text)
-    text = re.sub(r"(?<=\d)\s+(?=[a-zA-Zа-яА-ЯёЁ])", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=True)
 
 
-def _generate_yandex_official(model, tokenizer, prompt: str, max_new_tokens, repetition_penalty=None, max_length=None):
+def generate_yandex(
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int = 1792,
+    repetition_penalty: float = None,
+    max_length: int = None,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    use_outlines: bool = False,
+    prompt_template_name: str = None,
+    pydantic_outlines: bool = False,
+    use_guidance: bool = False,
+) -> str:
     """
-    Генерация для YandexGPT по примеру из документации: apply_chat_template с tokenize=True,
-    затем decode только новых токенов (skip_special_tokens=True), без постобработки.
+    Генерация для YandexGPT по официальному примеру:
+    apply_chat_template(messages, tokenize=True) -> generate -> decode только новых токенов.
     """
     messages = [{"role": "user", "content": prompt}]
     input_ids = tokenizer.apply_chat_template(
         messages, tokenize=True, return_tensors="pt"
     ).to(model.device)
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    with torch.no_grad():
-        output_ids = model.generate(input_ids, generation_config=gen_config)
-    new_tokens = output_ids[0][input_ids.size(1):]
-    text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    outputs = model.generate(input_ids, generation_config=gen_config)
+    text = tokenizer.decode(outputs[0][input_ids.size(1):], skip_special_tokens=True)
     return text.strip()
 
 
@@ -456,11 +447,7 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         return _load_causal_4bit(model_name, AutoModelForCausalLM, hyperparameters)
-    tokenizer_kwargs = {"token": HF_TOKEN}
-    if "yandex" in model_name.lower() or "yandexgpt" in model_name.lower():
-        tokenizer_kwargs["legacy"] = False
-        tokenizer_kwargs["use_fast"] = False  # медленный токенизатор декодирует без лишних пробелов между токенами
-    tokenizer = AutoTokenizer.from_pretrained(model_name, **tokenizer_kwargs)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, token=HF_TOKEN)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -680,7 +667,6 @@ def generate_gemma(
         with torch.inference_mode():
             outputs = model.generate(**inputs, generation_config=gen_config)
 
-        # Декодируем ответ (с очисткой SentencePiece ▁ для YandexGPT и др.)
         full_text = _decode_and_clean(tokenizer, outputs[0])
         input_text = _decode_and_clean(tokenizer, inputs["input_ids"][0])
 
@@ -753,9 +739,6 @@ def generate_standard(
     if use_outlines and response_schema is not None:
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
-
-    if _is_yandex_tokenizer(tokenizer):
-        return _generate_yandex_official(model, tokenizer, prompt, max_new_tokens, repetition_penalty, max_length)
 
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
@@ -1035,7 +1018,6 @@ def generate_qwen_3(
     # Извлекаем только новые токены (ответ модели)
     output_ids = generated_ids[0][input_length:]
 
-    # Декодируем ответ (с очисткой SentencePiece ▁ для YandexGPT и др.)
     text = _decode_and_clean(tokenizer, output_ids)
 
     return text.strip()
