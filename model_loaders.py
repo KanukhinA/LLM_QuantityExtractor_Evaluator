@@ -57,8 +57,8 @@ def _is_yandex_tokenizer(tokenizer) -> bool:
 
 def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
     """
-    Декодирует токены. Для YandexGPT убирает артефакты SentencePiece (▁ U+2581)
-    и лишние пробелы между буквами/цифрами, если декодер вставил пробелы между токенами.
+    Декодирует токены. Для YandexGPT: убирает ▁ (U+2581), убирает пробелы только
+    между цифрами и между буквой и цифрой (формулы P2O5, числа 13), не трогает пробелы между словами.
     """
     if hasattr(token_ids, "tolist"):
         token_ids = token_ids.tolist()
@@ -68,11 +68,29 @@ def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
     import re
     if "\u2581" in text:
         text = text.replace("\u2581", "")
-    # Убрать пробелы между буквами (кириллица/латиница) и между цифрами
-    text = re.sub(r"(?<=[a-zA-Zа-яА-ЯёЁ])\s+(?=[a-zA-Zа-яА-ЯёЁ])", "", text)
+    # Только формулы и числа: пробелы между цифрами и между буквой/цифрой (не между двумя буквами)
     text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
+    text = re.sub(r"(?<=[a-zA-Zа-яА-ЯёЁ])\s+(?=\d)", "", text)
+    text = re.sub(r"(?<=\d)\s+(?=[a-zA-Zа-яА-ЯёЁ])", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _generate_yandex_official(model, tokenizer, prompt: str, max_new_tokens, repetition_penalty=None, max_length=None):
+    """
+    Генерация для YandexGPT по примеру из документации: apply_chat_template с tokenize=True,
+    затем decode только новых токенов (skip_special_tokens=True), без постобработки.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    input_ids = tokenizer.apply_chat_template(
+        messages, tokenize=True, return_tensors="pt"
+    ).to(model.device)
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
+    with torch.no_grad():
+        output_ids = model.generate(input_ids, generation_config=gen_config)
+    new_tokens = output_ids[0][input_ids.size(1):]
+    text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    return text.strip()
 
 
 def _get_flash_attn_kwargs() -> dict:
@@ -735,6 +753,9 @@ def generate_standard(
     if use_outlines and response_schema is not None:
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
+
+    if _is_yandex_tokenizer(tokenizer):
+        return _generate_yandex_official(model, tokenizer, prompt, max_new_tokens, repetition_penalty, max_length)
 
     formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
