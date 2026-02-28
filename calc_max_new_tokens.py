@@ -36,6 +36,16 @@ def _load_dataset(path):
     )
 
 
+def _expand_json_formatting(s):
+    """
+    Разворачивает строку к виду «сырого» вывода модели: при парсинге датасета
+    символы \\n и \\ теряются (превращаются в один символ). Для расчёта длины
+    учитываем, что модель выдаёт \\n (два символа) и \\ (два символа).
+    Порядок замен: сначала \\ -> \\\\, затем \\n -> \\n (чтобы не удваивать уже экранированные).
+    """
+    return s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
+
 def _longest_string_from_dataset(df, col, parse_json_safe):
     strings = []
     for j in df[col]:
@@ -130,7 +140,8 @@ def run_all_models(args, dataset_path, df, col, longest_str, HF_TOKEN):
             results.append((model_key, name, None, None))
             continue
         try:
-            n_tokens, _ = _load_tokenizer_and_count(hf_name, longest_str, HF_TOKEN, fallback_printed)
+            longest_expanded = _expand_json_formatting(longest_str)
+            n_tokens, _ = _load_tokenizer_and_count(hf_name, longest_expanded, HF_TOKEN, fallback_printed)
             rec = n_tokens + int(n_tokens * args.margin)
             rec = max(rec, args.min)
             if args.round > 0:
@@ -139,7 +150,7 @@ def run_all_models(args, dataset_path, df, col, longest_str, HF_TOKEN):
         except Exception as e:
             results.append((model_key, hf_name, None, str(e)))
 
-    print(f"\nТекст: самый длинный ответ из датасета ({len(longest_str)} символов)")
+    print(f"\nТекст: самый длинный ответ из датасета (исходно {len(longest_str)} символов, с учётом \\n/\\\\ разметки JSON — {len(_expand_json_formatting(longest_str))} символов)")
     print(f"Запас: {int(args.margin*100)}%, min={args.min}, округление до {args.round}\n")
     print(f"{'Модель':<35} {'Токенизатор':<45} {'Токенов':>8} {'max_new_tokens':>16}")
     print("-" * 110)
@@ -244,7 +255,7 @@ def main():
         if not s:
             lengths.append(0)
             continue
-        lengths.append(encode_fn(s))
+        lengths.append(encode_fn(_expand_json_formatting(s)))
 
     lengths = [l for l in lengths if l > 0]
     if not lengths:

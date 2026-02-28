@@ -154,18 +154,23 @@ GOOGLE_SHEETS_SPREADSHEET_ID = ""  # опционально, для экспор
 
 Чтобы подобрать разумное значение `max_new_tokens` для моделей (в `models.yaml` или при вызове), можно оценить длину ответов в токенах по ground truth из тестового датасета. Скрипт `calc_max_new_tokens.py`:
 
-- загружает датасет (по умолчанию через `find_dataset_path()`, колонка `json_parsed`);
+- загружает датасет (по умолчанию через `find_dataset_path()`, колонка `json_parsed` или `json`);
 - сериализует каждый ответ в JSON-строку в том же формате, что и вывод модели (`indent=2`);
+- **учитывает разметку JSON:** при парсинге датасета символы `\n` и `\` в сыром выводе модели превращаются в один символ; перед подсчётом токенов строка «разворачивается» (каждый перевод строки — как `\n`, каждый обратный слэш — как `\\`), чтобы оценка соответствовала длине реального вывода модели;
 - считает длину в токенах через указанный токенизатор Hugging Face;
 - выводит max, mean, перцентили (p90, p95, p99) и рекомендуемое значение (max + запас, с округлением).
 
 Запуск из корня проекта:
 
 ```bash
+# Один токенизатор (по умолчанию Qwen/Qwen2.5-3B-Instruct), статистика по всем ответам
 python calc_max_new_tokens.py
+
+# Прогнать самый длинный ответ через токенизаторы всех локальных моделей из models.yaml
+python calc_max_new_tokens.py --all-models
 ```
 
-Опции: `--dataset PATH` — путь к Excel; `--tokenizer NAME` — модель токенизатора (по умолчанию `Qwen/Qwen2.5-3B-Instruct`); `--margin 0.15` — запас к max (15%); `--min 256` — минимальное рекомендуемое значение; `--round 64` — округлять до кратного 64. Полученное значение можно прописать в `models.yaml` в `hyperparameters.max_new_tokens` для нужных моделей.
+Опции: `--dataset PATH` — путь к датасету (Excel или CSV); `--tokenizer NAME` — модель токенизатора (по умолчанию `Qwen/Qwen2.5-3B-Instruct`); `--all-models` — один самый длинный ответ через все локальные токенизаторы (API и Ollama пропускаются); `--margin 0.15` — запас к max (15%); `--min 256` — минимальное рекомендуемое значение; `--round 64` — округлять до кратного 64. Полученное значение можно прописать в `models.yaml` в `hyperparameters.max_new_tokens` (или `max_length` при необходимости) для нужных моделей.
 
 ## 4. Структура проекта
 
@@ -712,7 +717,7 @@ python google_sheets_integration.py --spreadsheet-id YOUR_SPREADSHEET_ID --group
 
 **Прочие локальные:**
 - `gigachat3-10b-1.8b` — ai-sage/GigaChat3-10B-A1.8B-bf16
-- `yandexgpt-5-lite-8b-instruct` — yandex/YandexGPT-5-Lite-8B-instruct (для токенизатора нужен `protobuf`, см. requirements.txt)
+- `yandexgpt-5-lite-8b-instruct` — yandex/YandexGPT-5-Lite-8B-instruct (используется отдельная функция генерации `generate_yandex` по официальному примеру: `apply_chat_template` с `tokenize=True`, декодирование только новых токенов; для токенизатора может потребоваться `protobuf`, см. requirements.txt)
 
 Для локальных моделей по умолчанию используется Flash Attention 2, если установлен пакет `flash-attn` (см. раздел 3.3 и 10.2).
 
@@ -813,7 +818,9 @@ python main.py qwen-3-32b-api --multi-agent simple_4agents
 
 4. **evaluation_summary.jsonl** - Общий файл со всеми прогонами (JSON Lines формат)
 
-5. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
+5. **evaluation_summary.log** - Лог консольного вывода последнего запуска оценки (`main.py` или `run_all_models.py`); файл перезаписывается при каждом новом запуске
+
+6. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
 
 **Структура папок результатов:**
 
@@ -1018,6 +1025,7 @@ models:
 - `qwen` → `generate_qwen`
 - `gemma` → `generate_gemma`
 - `t5` или `t5gemma` → `generate_t5`
+- `yandex` в ключе модели → `generate_yandex`
 - иначе → `generate_standard`
 
 **Переопределение:** при необходимости укажите `load_func` или `generate_func` явно в YAML.
