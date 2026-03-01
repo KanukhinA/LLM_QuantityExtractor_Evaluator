@@ -140,12 +140,13 @@ def main():
             results.append((model_key, hf_name, None, None, None))
             continue
         try:
-            tokenizer = AutoTokenizer.from_pretrained(hf_name, token=HF_TOKEN)
+            from utils import from_pretrained_local_first
+            tokenizer = from_pretrained_local_first(AutoTokenizer.from_pretrained, hf_name, token=HF_TOKEN)
             ids = tokenizer.encode(full_sequence, add_special_tokens=True)
             n_tokens = len(ids)
             max_pos = None
             try:
-                cfg = AutoConfig.from_pretrained(hf_name, token=HF_TOKEN)
+                cfg = from_pretrained_local_first(AutoConfig.from_pretrained, hf_name, token=HF_TOKEN)
                 max_pos = getattr(cfg, "max_position_embeddings", None)
             except Exception:
                 pass

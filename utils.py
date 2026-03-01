@@ -1,6 +1,20 @@
 """
 Утилиты для парсинга JSON и построения промптов
 """
+
+
+def from_pretrained_local_first(loader, *args, **kwargs):
+    """
+    Вызов loader(*args, **kwargs): сначала с local_files_only=True (только локальный кэш HF).
+    Если не найдено локально — повтор с доступом к сети. Для использования в calc_max_new_tokens и check_max_position_embeddings.
+    """
+    kwargs_clean = {k: v for k, v in kwargs.items() if k != "local_files_only"}
+    try:
+        return loader(*args, local_files_only=True, **kwargs_clean)
+    except Exception:
+        return loader(*args, **kwargs_clean)
+
+
 import io
 import json
 import re

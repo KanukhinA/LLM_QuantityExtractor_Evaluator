@@ -87,10 +87,11 @@ def _tokenizer_name_from_model_name(name):
 
 
 def _load_tokenizer_and_count(hf_name, text, hf_token, _fallback_printed=None):
-    """Загрузка токенизатора: сначала transformers, при OSError (DLL/torch) — tokenizers (без PyTorch)."""
+    """Загрузка токенизатора: сначала transformers (сначала локально, при отсутствии — с HF), при OSError — tokenizers."""
+    from utils import from_pretrained_local_first
     try:
         from transformers import AutoTokenizer
-        tok = AutoTokenizer.from_pretrained(hf_name, token=hf_token or None)
+        tok = from_pretrained_local_first(AutoTokenizer.from_pretrained, hf_name, token=hf_token or None)
         return len(tok.encode(text, add_special_tokens=False)), _fallback_printed
     except OSError:
         if _fallback_printed is not None and not _fallback_printed[0]:
@@ -100,24 +101,25 @@ def _load_tokenizer_and_count(hf_name, text, hf_token, _fallback_printed=None):
             from tokenizers import Tokenizer
             if hf_token:
                 os.environ["HF_TOKEN"] = hf_token
-            tok = Tokenizer.from_pretrained(hf_name)
+            tok = from_pretrained_local_first(Tokenizer.from_pretrained, hf_name)
             return len(tok.encode(text).ids), _fallback_printed
         except Exception:
             raise
 
 
 def _make_tokenizer_encoder(hf_name, hf_token):
-    """Возвращает функцию (text) -> число токенов. При OSError (DLL) или отсутствии transformers использует tokenizers."""
+    """Возвращает функцию (text) -> число токенов. Сначала загрузка с локального кэша, иначе с HF."""
+    from utils import from_pretrained_local_first
     try:
         from transformers import AutoTokenizer
-        tok = AutoTokenizer.from_pretrained(hf_name, token=hf_token or None)
+        tok = from_pretrained_local_first(AutoTokenizer.from_pretrained, hf_name, token=hf_token or None)
         return lambda s: len(tok.encode(s, add_special_tokens=False))
     except (OSError, ImportError):
         print("Используется библиотека tokenizers (без PyTorch/transformers).\n")
         from tokenizers import Tokenizer
         if hf_token:
             os.environ["HF_TOKEN"] = hf_token
-        tok = Tokenizer.from_pretrained(hf_name)
+        tok = from_pretrained_local_first(Tokenizer.from_pretrained, hf_name)
         return lambda s: len(tok.encode(s).ids)
 
 

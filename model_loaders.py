@@ -23,6 +23,20 @@ warnings.filterwarnings("ignore", message=".*Unrecognized keys in `rope_paramete
 # Настройки для загрузки
 HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300"))  # 5 минут по умолчанию
 
+
+def _from_pretrained_local_first(loader, *args, **kwargs):
+    """
+    Вызывает loader(*args, **kwargs) сначала с local_files_only=True (только локальный кэш).
+    Если модель не найдена локально — повторяет вызов без local_files_only (с доступом к HF).
+    Так инференс работает без интернета, если модель уже скачана.
+    """
+    kwargs_no_local = {k: v for k, v in kwargs.items() if k != "local_files_only"}
+    try:
+        return loader(*args, local_files_only=True, **kwargs_no_local)
+    except Exception:
+        return loader(*args, **kwargs_no_local)
+
+
 def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None, max_length=None):
     """
     Собирает GenerationConfig с явным max_new_tokens, eos_token_id и pad_token_id.
@@ -215,7 +229,8 @@ def _load_causal_4bit(
     """
     from transformers import BitsAndBytesConfig
     print(f"   Загрузка токенизатора {model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = _from_pretrained_local_first(
+        AutoTokenizer.from_pretrained,
         model_name,
         token=HF_TOKEN,
         timeout=HF_HUB_DOWNLOAD_TIMEOUT,
@@ -229,7 +244,8 @@ def _load_causal_4bit(
         bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_quant_type="nf4",
     )
-    model = model_class.from_pretrained(
+    model = _from_pretrained_local_first(
+        model_class.from_pretrained,
         model_name,
         device_map="auto",
         quantization_config=quantization_config,
@@ -268,11 +284,12 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
     
     try:
         start_time = time.time()
-        tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer = _from_pretrained_local_first(
+            AutoTokenizer.from_pretrained,
             model_name,
             token=HF_TOKEN,
             timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
+            resume_download=True,
         )
         elapsed = time.time() - start_time
         print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
@@ -298,7 +315,8 @@ def load_gemma_3(model_name: str, vram_warning: Optional[str] = None, model_size
     
     try:
         start_time = time.time()
-        model = Gemma3ForCausalLM.from_pretrained(
+        model = _from_pretrained_local_first(
+            Gemma3ForCausalLM.from_pretrained,
             model_name,
             device_map="auto",
             torch_dtype=torch.bfloat16,
@@ -355,7 +373,7 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     
     try:
         start_time = time.time()
-        tokenizer = MistralCommonBackend.from_pretrained(model_name, token=HF_TOKEN)
+        tokenizer = _from_pretrained_local_first(MistralCommonBackend.from_pretrained, model_name, token=HF_TOKEN)
         elapsed = time.time() - start_time
         print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
     except Exception as e:
@@ -368,7 +386,8 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     print(f"   Загрузка модели {model_name}...")
     try:
         start_time = time.time()
-        model = Mistral3ForConditionalGeneration.from_pretrained(
+        model = _from_pretrained_local_first(
+            Mistral3ForConditionalGeneration.from_pretrained,
             model_name,
             device_map="auto",
             dtype=torch.bfloat16,
@@ -419,7 +438,7 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
     hp = hyperparameters or {}
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         return _load_causal_4bit(model_name, AutoModelForCausalLM, hyperparameters)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, token=HF_TOKEN)
+    tokenizer = _from_pretrained_local_first(AutoTokenizer.from_pretrained, model_name, token=HF_TOKEN)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -445,10 +464,7 @@ def load_standard_model(model_name: str, dtype: Optional[str] = None, torch_dtyp
         elif dtype == "float16":
             model_kwargs["dtype"] = torch.float16
     
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        **model_kwargs
-    )
+    model = _from_pretrained_local_first(AutoModelForCausalLM.from_pretrained, model_name, **model_kwargs)
     
     return model, tokenizer
 
@@ -505,11 +521,12 @@ def load_codegemma_7b(model_name: Optional[str] = None, hyperparameters: Optiona
     
     try:
         start_time = time.time()
-        tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer = _from_pretrained_local_first(
+            AutoTokenizer.from_pretrained,
             model_id,
             token=HF_TOKEN,
             timeout=HF_HUB_DOWNLOAD_TIMEOUT,
-            resume_download=True
+            resume_download=True,
         )
         elapsed = time.time() - start_time
         print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
@@ -533,7 +550,8 @@ def load_codegemma_7b(model_name: Optional[str] = None, hyperparameters: Optiona
     print(f"   ⚠️ Это может занять некоторое время из-за размера модели (~7B параметров)")
     try:
         start_time = time.time()
-        model = AutoModelForCausalLM.from_pretrained(
+        model = _from_pretrained_local_first(
+            AutoModelForCausalLM.from_pretrained,
             model_id,
             device_map="auto",
             torch_dtype=torch.bfloat16,
