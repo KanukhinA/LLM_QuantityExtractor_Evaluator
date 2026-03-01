@@ -162,13 +162,6 @@ models:
       do_sample: false
       torch_dtype: "bfloat16"
 
-  yandexgpt-5-lite-8b-instruct:
-    name: "yandex/YandexGPT-5-Lite-8B-instruct"
-    hyperparameters:
-      max_new_tokens: 3904
-      do_sample: false
-      torch_dtype: "auto"
-
   # Ollama: локальный API (ollama pull <name> перед запуском). Хост: OLLAMA_HOST или http://localhost:11434
   # gemma3-4b-ollama:
   #   name: "gemma3:4b"

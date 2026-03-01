@@ -717,13 +717,8 @@ python google_sheets_integration.py --spreadsheet-id YOUR_SPREADSHEET_ID --group
 
 **Прочие локальные:**
 - `gigachat3-10b-1.8b` — ai-sage/GigaChat3-10B-A1.8B-bf16
-- `yandexgpt-5-lite-8b-instruct` — yandex/YandexGPT-5-Lite-8B-instruct (используется отдельная функция генерации `generate_yandex` по официальному примеру: `apply_chat_template` с `tokenize=True`, декодирование только новых токенов; для токенизатора может потребоваться `protobuf`, см. requirements.txt)
 
 Для локальных моделей по умолчанию используется Flash Attention 2, если установлен пакет `flash-attn` (см. раздел 3.3 и 10.2).
-
-**Требования для Mistral 3:**
-- `transformers>=4.50.0.dev0`: `pip install git+https://github.com/huggingface/transformers`
-- `mistral-common>=1.8.6`: см. `requirements.txt`
 
 ### 6.2. API модели
 
@@ -1025,7 +1020,6 @@ models:
 - `qwen` → `generate_qwen`
 - `gemma` → `generate_gemma`
 - `t5` или `t5gemma` → `generate_t5`
-- `yandex` в ключе модели → `generate_yandex`
 - иначе → `generate_standard`
 
 **Переопределение:** при необходимости укажите `load_func` или `generate_func` явно в YAML.

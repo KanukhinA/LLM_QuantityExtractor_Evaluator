@@ -140,10 +140,7 @@ def main():
             results.append((model_key, hf_name, None, None, None))
             continue
         try:
-            tokenizer_kwargs = {"token": HF_TOKEN}
-            if "yandex" in hf_name.lower() or "yandexgpt" in hf_name.lower():
-                tokenizer_kwargs["legacy"] = False
-            tokenizer = AutoTokenizer.from_pretrained(hf_name, **tokenizer_kwargs)
+            tokenizer = AutoTokenizer.from_pretrained(hf_name, token=HF_TOKEN)
             ids = tokenizer.encode(full_sequence, add_special_tokens=True)
             n_tokens = len(ids)
             max_pos = None

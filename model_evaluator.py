@@ -970,7 +970,7 @@ class ModelEvaluator:
             error_text = f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}"
             _append_to_model_errors_log(
                 self.output_dir,
-                title="КРИТИЧЕСКАЯ ОШИБКА ГЕНЕРАЦИИ (OUTLINES / ИНФЕРЕНС)",
+                title="КРИТИЧЕСКАЯ ОШИБКА ГЕНЕРАЦИИ",
                 model_name=model_name,
                 message=error_text,
             )
@@ -1165,7 +1165,7 @@ class ModelEvaluator:
                             error_text = f"Досрочное завершение: не удалось получить ответ после {e.num_retries} попыток на примере #{e.text_index + 1}. {e.message}"
                             _append_to_model_errors_log(
                                 self.output_dir,
-                                title="КРИТИЧЕСКАЯ ОШИБКА ГЕНЕРАЦИИ (OUTLINES / ИНФЕРЕНС)",
+                                title="КРИТИЧЕСКАЯ ОШИБКА ГЕНЕРАЦИИ",
                                 model_name=model_name,
                                 message=error_text,
                             )

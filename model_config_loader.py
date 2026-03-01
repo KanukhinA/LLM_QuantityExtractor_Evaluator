@@ -86,8 +86,6 @@ def load_model_configs():
                     generate_func_name = "generate_gemma"
                 elif "t5" in model_key or "t5gemma" in model_key:
                     generate_func_name = "generate_t5"
-                elif "yandex" in model_key:
-                    generate_func_name = "generate_yandex"
                 else:
                     generate_func_name = "generate_standard"
         

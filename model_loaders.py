@@ -56,34 +56,6 @@ def _decode_and_clean(tokenizer, token_ids, skip_special_tokens=True):
     return tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=True)
 
 
-def generate_yandex(
-    model,
-    tokenizer,
-    prompt: str,
-    max_new_tokens: int = 1792,
-    repetition_penalty: float = None,
-    max_length: int = None,
-    structured_output: bool = False,
-    response_schema: Any = None,
-    use_outlines: bool = False,
-    prompt_template_name: str = None,
-    pydantic_outlines: bool = False,
-    use_guidance: bool = False,
-) -> str:
-    """
-    Генерация для YandexGPT по официальному примеру:
-    apply_chat_template(messages, tokenize=True) -> generate -> decode только новых токенов.
-    """
-    messages = [{"role": "user", "content": prompt}]
-    input_ids = tokenizer.apply_chat_template(
-        messages, tokenize=True, return_tensors="pt"
-    ).to(model.device)
-    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    outputs = model.generate(input_ids, generation_config=gen_config)
-    text = tokenizer.decode(outputs[0][input_ids.size(1):], skip_special_tokens=True)
-    return text.strip()
-
-
 def _get_flash_attn_kwargs() -> dict:
     """
     Возвращает kwargs для использования Flash Attention 2 при загрузке модели.
