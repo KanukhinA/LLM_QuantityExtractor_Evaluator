@@ -6,7 +6,7 @@ JSON-схема для outlines (структурированная генера
 import json
 from typing import Any, Dict
 
-# Схема совпадает по структуре с FertilizerExtractionOutputLatin (mass_fractions, other_params).
+# Схема совпадает по структуре с FertilizerExtractionOutput (mass_fractions, other_params; в Pydantic — alias «массовая доля», «прочее»).
 OUTLINES_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {

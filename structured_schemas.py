@@ -117,32 +117,3 @@ class FertilizerExtractionOutput(BaseModel):
     )
 
     model_config = ConfigDict(populate_by_name=True)
-
-
-# Схема только с латиницей — для outlines (без alias, JSON schema с Latin keys)
-class MassDolyaItemLatin(BaseModel):
-    substance_name: str = Field(description="Название вещества (N, P2O5, K2O)")
-    mass_fraction: Union[float, List[Optional[float]]] = Field(
-        description="Массовая доля в процентах. Число или [min, max]"
-    )
-
-
-class ProcheeItemLatin(BaseModel):
-    parameter_name: str = Field(description="Название параметра")
-    mass: Optional[Union[float, List[Optional[float]]]] = Field(default=None, description="Масса в кг")
-    volume: Optional[Union[float, List[Optional[float]]]] = Field(default=None, description="Объем в л или мл")
-    quantity: Optional[Union[float, List[Optional[float]]]] = Field(default=None, description="Количество в шт")
-    value: Optional[Union[str, float]] = Field(default=None, description="Текстовое или числовое значение")
-    unit: Optional[str] = Field(default=None, description="Единица измерения")
-
-
-class FertilizerExtractionOutputLatin(BaseModel):
-    """Только латинские ключи — для outlines (совместимость с токенизатором)."""
-    mass_fractions: List[MassDolyaItemLatin] = Field(
-        default_factory=list,
-        description="Список веществ с их массовыми долями"
-    )
-    other_params: List[ProcheeItemLatin] = Field(
-        default_factory=list,
-        description="Список прочих параметров"
-    )

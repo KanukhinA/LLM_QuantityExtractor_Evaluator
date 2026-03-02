@@ -167,6 +167,9 @@ class GoogleSheetsIntegration:
             avg_inference_sec = data.get("average_response_time_seconds")
             if avg_inference_sec is not None and not isinstance(avg_inference_sec, (int, float)):
                 avg_inference_sec = None
+            gpu_mem_gb = data.get("gpu_memory_during_inference_gb")
+            if gpu_mem_gb is not None and not isinstance(gpu_mem_gb, (int, float)):
+                gpu_mem_gb = None
             
             return {
                 "model_key": model_key,
@@ -174,6 +177,7 @@ class GoogleSheetsIntegration:
                 "f1_scores": f1_scores,
                 "validation_str": validation_str,
                 "average_response_time_seconds": avg_inference_sec,
+                "gpu_memory_during_inference_gb": gpu_mem_gb,
                 "file_path": file_path,
                 "timestamp": data.get("timestamp")
             }
@@ -183,7 +187,7 @@ class GoogleSheetsIntegration:
     
     def collect_all_metrics(
         self, latest_only: bool = True
-    ) -> Tuple[Dict[str, Dict[str, Dict[str, float]]], Dict[str, Dict[str, str]], Dict[str, Dict[str, float]]]:
+    ) -> Tuple[Dict[str, Dict[str, Dict[str, float]]], Dict[str, Dict[str, str]], Dict[str, Dict[str, float]], Dict[str, Dict[str, float]]]:
         """
         Собирает метрики из metrics.json. Читает только последний файл по каждой
         паре (модель, метод) — по дате изменения файла (без разбора остальных).
@@ -193,10 +197,11 @@ class GoogleSheetsIntegration:
                 только один самый свежий metrics.json.
 
         Returns:
-            (all_data, validation_data, inference_time_data):
+            (all_data, validation_data, inference_time_data, gpu_memory_data):
             - all_data: {model_key: {method: {group: f1_score}}}
             - validation_data: {model_key: {method: "0.99(0.88)"}} (parsed(raw))
             - inference_time_data: {model_key: {method: avg_seconds}}
+            - gpu_memory_data: {model_key: {method: gpu_memory_during_inference_gb}}
         """
         if latest_only:
             metrics_files = self.get_latest_metrics_files()
@@ -204,11 +209,12 @@ class GoogleSheetsIntegration:
             metrics_files = self.find_metrics_files()
         if not metrics_files:
             print(f"📊 В {self.results_dir} не найдено файлов metrics_*.json")
-            return {}, {}, {}
+            return {}, {}, {}, {}
 
         all_data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
         validation_data: Dict[str, Dict[str, str]] = defaultdict(dict)
         inference_time_data: Dict[str, Dict[str, float]] = defaultdict(dict)
+        gpu_memory_data: Dict[str, Dict[str, float]] = defaultdict(dict)
         for file_path in metrics_files:
             parsed = self.parse_metrics_file(file_path)
             if not parsed:
@@ -222,10 +228,12 @@ class GoogleSheetsIntegration:
                 validation_data[model_key][method] = parsed["validation_str"]
             if parsed.get("average_response_time_seconds") is not None:
                 inference_time_data[model_key][method] = float(parsed["average_response_time_seconds"])
+            if parsed.get("gpu_memory_during_inference_gb") is not None:
+                gpu_memory_data[model_key][method] = float(parsed["gpu_memory_during_inference_gb"])
 
         total = len(metrics_files)
         print(f"📊 Прочитано {total} файлов metrics.json (последний запуск по каждой паре модель+метод)")
-        return dict(all_data), dict(validation_data), dict(inference_time_data)
+        return dict(all_data), dict(validation_data), dict(inference_time_data), dict(gpu_memory_data)
     
     def create_table_data(
         self, group: str = "массовая доля", all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None
@@ -241,7 +249,7 @@ class GoogleSheetsIntegration:
             кортеж: (данные таблицы, список моделей, список методов)
         """
         if all_metrics is None:
-            all_metrics, _, _ = self.collect_all_metrics()
+            all_metrics, _, _, _ = self.collect_all_metrics()
         
         # Собираем уникальные модели и методы
         models = sorted(set(all_metrics.keys()))
@@ -323,6 +331,35 @@ class GoogleSheetsIntegration:
                 sec = inference_time_data.get(model, {}).get(method)
                 if sec is not None:
                     row.append(f"{sec:.3f}")
+                else:
+                    row.append("")
+            table_data.append(row)
+        return table_data, models, methods
+
+    def create_gpu_memory_table_data(
+        self, gpu_memory_data: Dict[str, Dict[str, float]]
+    ) -> Tuple[List[List], List[str], List[str]]:
+        """
+        Создаёт данные для таблицы GPU memory during inference (GB).
+
+        Args:
+            gpu_memory_data: {model_key: {method: gpu_memory_during_inference_gb}}
+
+        Returns:
+            (данные таблицы, список моделей, список методов)
+        """
+        models = sorted(set(gpu_memory_data.keys()))
+        methods = set()
+        for per_model in gpu_memory_data.values():
+            methods.update(per_model.keys())
+        methods = sorted(methods)
+        table_data = [["Модель"] + methods]
+        for model in models:
+            row = [model]
+            for method in methods:
+                gb = gpu_memory_data.get(model, {}).get(method)
+                if gb is not None:
+                    row.append(f"{gb:.2f}")
                 else:
                     row.append("")
             table_data.append(row)
@@ -439,6 +476,34 @@ class GoogleSheetsIntegration:
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
 
+    def upload_gpu_memory_to_sheet(
+        self,
+        spreadsheet_id: str,
+        worksheet_name: str,
+        gpu_memory_data: Dict[str, Dict[str, float]],
+        clear_existing: bool = True,
+    ):
+        """Загружает таблицу GPU memory during inference (GB) на отдельный лист."""
+        if not self.client:
+            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        table_data, models, methods = self.create_gpu_memory_table_data(gpu_memory_data)
+        try:
+            spreadsheet = self.client.open_by_key(spreadsheet_id)
+            try:
+                worksheet = spreadsheet.worksheet(worksheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
+            if clear_existing:
+                worksheet.clear()
+            worksheet.update(values=table_data, range_name="A1")
+            worksheet.format("A1:Z1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
+            })
+            print(f"✅ GPU memory during inference загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
+        except Exception as e:
+            raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
+
     def export_to_csv(self, output_path: str, group: str = "массовая доля"):
         """
         Экспортирует данные в CSV файл
@@ -469,6 +534,7 @@ DEFAULT_WORKSHEET_MASS = "F1 Scores"
 DEFAULT_WORKSHEET_OTHER = "F1 Scores (прочее)"
 DEFAULT_WORKSHEET_VALIDATION = "Validation (parsed(raw))"
 DEFAULT_WORKSHEET_INFERENCE = "Avg inference time (s)"
+DEFAULT_WORKSHEET_GPU_MEMORY = "GPU memory during inference (GB)"
 
 
 def _default_results_dir() -> str:
@@ -538,8 +604,8 @@ def main():
         integration.export_to_csv(args.export_csv, group=group)
         return
 
-    all_metrics, validation_data, inference_time_data = integration.collect_all_metrics(latest_only=True)
-    if not all_metrics and not validation_data and not inference_time_data:
+    all_metrics, validation_data, inference_time_data, gpu_memory_data = integration.collect_all_metrics(latest_only=True)
+    if not all_metrics and not validation_data and not inference_time_data and not gpu_memory_data:
         return
 
     def _print_metrics():
@@ -560,6 +626,12 @@ def main():
                 print(f"\n  {model_key}:")
                 for method, sec in sorted(methods.items()):
                     print(f"    {method}: {sec:.3f}")
+        if gpu_memory_data:
+            print("\n📊 GPU memory during inference (GB):")
+            for model_key, methods in sorted(gpu_memory_data.items()):
+                print(f"\n  {model_key}:")
+                for method, gb in sorted(methods.items()):
+                    print(f"    {method}: {gb:.2f}")
 
     if args.no_upload:
         _print_metrics()
@@ -608,11 +680,19 @@ def main():
                 worksheet_name=DEFAULT_WORKSHEET_INFERENCE,
                 inference_time_data=inference_time_data,
             )
+        if gpu_memory_data:
+            integration.upload_gpu_memory_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=DEFAULT_WORKSHEET_GPU_MEMORY,
+                gpu_memory_data=gpu_memory_data,
+            )
         extra = []
         if validation_data:
             extra.append("«Validation (parsed(raw))»")
         if inference_time_data:
             extra.append("«Avg inference time (s)»")
+        if gpu_memory_data:
+            extra.append("«GPU memory during inference (GB)»")
         print("✅ Загружены листы: «массовая доля», «прочее»" + (", " + ", ".join(extra) + "." if extra else "."))
 
 

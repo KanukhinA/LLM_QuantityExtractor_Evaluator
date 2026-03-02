@@ -199,13 +199,13 @@ class ModelEvaluator:
                 use_outlines = hyperparameters.get("use_outlines", False)
                 use_guidance = hyperparameters.get("use_guidance", False)
                 response_schema = None
-                # response_schema: для outlines (локальные) - Latin; для guidance/RUS - Cyrillic; для API - Cyrillic
+                # response_schema: общая схема с кириллическими alias для всех режимов
                 if use_guidance:
                     from structured_schemas import FertilizerExtractionOutput
                     response_schema = FertilizerExtractionOutput
                 elif use_outlines or structured_output:
-                    from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
-                    response_schema = FertilizerExtractionOutputLatin if (use_outlines and not is_api_model) else FertilizerExtractionOutput
+                    from structured_schemas import FertilizerExtractionOutput
+                    response_schema = FertilizerExtractionOutput
                 
                 # Передаем repetition_penalty и max_length из гиперпараметров, если есть
                 repetition_penalty = hyperparameters.get("repetition_penalty")
@@ -894,11 +894,8 @@ class ModelEvaluator:
                         from structured_schemas import FertilizerExtractionOutput
                         rs = FertilizerExtractionOutput
                     elif uo or so:
-                        from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
-                        # _RUS промпт — схема и outlines с кириллическими ключами
-                        rs = FertilizerExtractionOutput if (pt_name and pt_name.endswith("_RUS")) else (
-                            FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
-                        )
+                        from structured_schemas import FertilizerExtractionOutput
+                        rs = FertilizerExtractionOutput
                     # При --structured-output / --guidance передаём Pydantic-схему в промпт
                     prompt = prompt_template(text, structured_output=so or use_guidance, response_schema=rs, prompt_template_name=pt_name)
                     
@@ -1095,8 +1092,8 @@ class ModelEvaluator:
                                         from structured_schemas import FertilizerExtractionOutput
                                         rs = FertilizerExtractionOutput
                                     elif uo or so:
-                                        from structured_schemas import FertilizerExtractionOutput, FertilizerExtractionOutputLatin
-                                        rs = FertilizerExtractionOutputLatin if (uo and not is_api_model and not is_ollama) else FertilizerExtractionOutput
+                                        from structured_schemas import FertilizerExtractionOutput
+                                        rs = FertilizerExtractionOutput
                                     pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
                                     prompt = prompt_template(self.texts[i], structured_output=so or use_guidance, response_schema=rs, prompt_template_name=pt_name)
                                     
