@@ -295,6 +295,17 @@ class ModelEvaluator:
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Guidance vocabulary/encoding, пустой ответ, лог записан")
                     return "", 0, error_msg, True
 
+                # 400 (bad request) у API — не повторяем
+                if is_api_model and ("400" in error_msg or "Ошибка запроса (400)" in error_msg):
+                    print(f"  ❌ Ответ #{text_index+1}/{total_texts} - Ошибка запроса (400), повторные попытки не выполняются")
+                    parsing_errors.append({
+                        "text_index": text_index,
+                        "text": text,
+                        "error": f"Ошибка запроса API (400): {error_msg}",
+                        "response": ""
+                    })
+                    raise InferenceCriticalFailure(error_msg, text_index, 1)
+
                 if is_api_model:
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
                     print(f"     {error_msg}")
@@ -987,22 +998,29 @@ class ModelEvaluator:
             print(f"Последний обработанный индекс: {last_processed_index + 1}")
             print()
             
-            menu_lines = [
-                "Выберите действие:",
-                "  1 - Завершить (метрики в консоль, без сохранения)",
-                "  2 - Продолжить обработку",
-                "  3 - Завершить без сохранения",
-            ]
             if stop_all_on_interrupt:
-                menu_lines.append("  4 - Прервать оценку всех моделей (выйти из run_all_models)")
+                menu_lines = [
+                    "Выберите действие:",
+                    "  1 - Сохранить текущую модель и завершить её (к следующей модели)",
+                    "  2 - Продолжить обработку текущей модели",
+                    "  3 - Не сохранять текущую модель (предыдущие уже сохранены), к следующей модели",
+                    "  4 - Прервать оценку всех моделей (выйти из run_all_models)",
+                ]
+            else:
+                menu_lines = [
+                    "Выберите действие:",
+                    "  1 - Сохранить текущий прогресс и завершить",
+                    "  2 - Продолжить обработку",
+                    "  3 - Завершить без сохранения (метрики в консоль)",
+                ]
             menu_prompt = "\n".join(menu_lines) + "\nВаш выбор (1/2/3" + ("/4" if stop_all_on_interrupt else "") + "): "
             while True:
                 try:
                     choice = input(menu_prompt).strip()
                     
                     if choice == "1":
-                        print("\n💾 Сохранение промежуточных результатов...")
-                        # Продолжим выполнение для сохранения результатов
+                        print("\n💾 Сохранение текущего прогресса и завершение...")
+                        interrupted = False  # чтобы ниже выполнилось _save_results
                         break
                     elif choice == "2":
                         print("\n▶️  Продолжаем обработку...\n")
@@ -1178,12 +1196,17 @@ class ModelEvaluator:
                             break
                         break
                     elif choice == "3":
-                        print("\n❌ Завершение без сохранения...")
-                        return {
-                            "status": "interrupted",
-                            "message": "Обработка прервана пользователем без сохранения",
-                            "processed_count": len(results)
-                        }
+                        if stop_all_on_interrupt:
+                            print("\n❌ Текущая модель не сохраняется (предыдущие уже сохранены). Переход к следующей модели...")
+                            return {
+                                "status": "interrupted",
+                                "message": "Обработка прервана пользователем без сохранения текущей модели",
+                                "processed_count": len(results)
+                            }
+                        else:
+                            print("\n📊 Завершение без сохранения (метрики будут выведены в консоль)...")
+                            interrupted = True
+                            break
                     elif stop_all_on_interrupt and choice == "4":
                         print("\n❌ Прерывание оценки всех моделей...")
                         raise StopAllModelsInterrupt()

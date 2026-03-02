@@ -185,6 +185,10 @@ def generate_gemma_api(
             if "404" in error_str or "not found" in error_str or "model not found" in error_str:
                 raise Exception(f"Модель не найдена (404): {last_error}")
             
+            # 400 (bad request) — не повторяем запрос
+            if "400" in error_str or "bad request" in error_str:
+                raise Exception(f"Ошибка запроса (400): {last_error}")
+            
             # Проверяем, является ли это ошибкой 429 (rate limit / resource exhausted)
             is_rate_limit = (
                 "429" in error_str or 
@@ -455,6 +459,10 @@ def generate_openrouter_api(
             # Проверяем, является ли это ошибкой 401 (аутентификация)
             if "401" in error_str or "unauthorized" in error_str or "cookie auth" in error_str or "no cookie" in error_str:
                 raise Exception(f"Ошибка аутентификации (401): {last_error}. Проверьте правильность OPENAI_API_KEY.")
+            
+            # 400 (bad request) — не повторяем запрос
+            if "400" in error_str or "bad request" in error_str:
+                raise Exception(f"Ошибка запроса (400): {last_error}")
             
             # Проверяем, является ли это ошибкой 429 (rate limit)
             is_rate_limit = (

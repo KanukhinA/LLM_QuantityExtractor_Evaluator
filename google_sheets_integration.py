@@ -24,6 +24,30 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 import re
 
+BASELINE_KEYWORD = "BASELINE"
+
+
+def _sort_methods_baseline_first(methods) -> List[str]:
+    """Список методов: сначала содержащие BASELINE в названии, остальные по алфавиту."""
+    methods_list = sorted(set(methods))
+    return sorted(methods_list, key=lambda m: (0 if BASELINE_KEYWORD.upper() in m.upper() else 1, m))
+
+
+def _col_letter_1based(col_1based: int) -> str:
+    """Буква(ы) столбца для 1-based индекса: 1=A, 2=B, ..., 26=Z, 27=AA."""
+    s = ""
+    n = col_1based
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _data_cell_a1(row_idx: int, col_idx: int) -> str:
+    """A1-нотация ячейки: row_idx 0 = первая строка данных (вторая строка листа), col_idx 0 = первый столбец метрик (B)."""
+    col_1based = col_idx + 2
+    return f"{_col_letter_1based(col_1based)}{row_idx + 2}"
+
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -237,67 +261,89 @@ class GoogleSheetsIntegration:
     
     def create_table_data(
         self, group: str = "массовая доля", all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None
-    ) -> Tuple[List[List], List[str], List[str]]:
+    ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
-        Создает данные для таблицы F1.
-
-        Args:
-            group: группа метрик ("массовая доля" или "прочее")
-            all_metrics: если передан, используется вместо повторного сбора
+        Создает данные для таблицы F1: значение и разница с baseline в скобках.
+        Лучшее значение по столбцу выделяется жирным; + зелёный, - красный.
 
         Returns:
-            кортеж: (данные таблицы, список моделей, список методов)
+            (данные таблицы, список моделей, список методов, format_info: {"green", "red", "bold"} -> список A1 ячеек)
         """
         if all_metrics is None:
             all_metrics, _, _, _ = self.collect_all_metrics()
         
-        # Собираем уникальные модели и методы
         models = sorted(set(all_metrics.keys()))
-        methods = set()
+        methods_set = set()
         for model_data in all_metrics.values():
-            # Пропускаем служебное поле _timestamp
-            methods.update(k for k in model_data.keys() if k != "_timestamp")
-        methods = sorted(methods)
+            methods_set.update(k for k in model_data.keys() if k != "_timestamp")
+        methods = _sort_methods_baseline_first(methods_set)
+        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         
-        # Создаем таблицу
-        table_data = []
+        table_data = [["Модель"] + methods]
+        green_cells: List[str] = []
+        red_cells: List[str] = []
+        bold_cells: List[str] = []
         
-        # Заголовок
-        header = ["Модель"] + methods
-        table_data.append(header)
-        
-        # Данные
-        for model in models:
+        for row_idx, model in enumerate(models):
             row = [model]
-            for method in methods:
+            baseline_val = None
+            if baseline_method:
+                baseline_val = all_metrics.get(model, {}).get(baseline_method, {}).get(group)
+            for col_idx, method in enumerate(methods):
                 method_data = all_metrics.get(model, {}).get(method, {})
-                # Пропускаем служебное поле _timestamp
                 f1_score = method_data.get(group) if group in method_data else None
                 if f1_score is not None:
-                    row.append(f"{f1_score:.4f}")
+                    if method == baseline_method or baseline_val is None:
+                        row.append(f"{f1_score:.4f}")
+                    else:
+                        diff = f1_score - baseline_val
+                        sign = "+" if diff >= 0 else ""
+                        row.append(f"{f1_score:.4f} ({sign}{diff:.2f})")
+                        cell_a1 = _data_cell_a1(row_idx, col_idx)
+                        if diff > 0:
+                            green_cells.append(cell_a1)
+                        elif diff < 0:
+                            red_cells.append(cell_a1)
                 else:
                     row.append("")
             table_data.append(row)
         
-        return table_data, models, methods
+        for col_idx in range(len(methods)):
+            col_values = []
+            for row_idx, model in enumerate(models):
+                v = all_metrics.get(model, {}).get(methods[col_idx], {}).get(group)
+                col_values.append((row_idx, v))
+            valid = [(ri, v) for ri, v in col_values if v is not None]
+            if valid:
+                best_row_idx = max(valid, key=lambda x: x[1])[0]
+                bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
+        
+        format_info = {"green": green_cells, "red": red_cells, "bold": bold_cells}
+        return table_data, models, methods, format_info
+
+    def _apply_cell_format(self, worksheet, format_info: Dict[str, List[str]]):
+        """Применяет к ячейкам зелёный/красный фон и жирный шрифт по спискам A1."""
+        if not format_info:
+            return
+        green = format_info.get("green") or []
+        red = format_info.get("red") or []
+        bold = format_info.get("bold") or []
+        if green:
+            worksheet.format(green, {"backgroundColor": {"red": 0.7, "green": 1.0, "blue": 0.7}})
+        if red:
+            worksheet.format(red, {"backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7}})
+        if bold:
+            worksheet.format(bold, {"textFormat": {"bold": True}})
 
     def create_validation_table_data(
         self, validation_data: Dict[str, Dict[str, str]]
     ) -> Tuple[List[List], List[str], List[str]]:
         """
         Создаёт данные для таблицы validation: ячейки в формате 0.99(0.88) = parsed(raw).
-
-        Args:
-            validation_data: {model_key: {method: "0.99(0.88)"}}
-
-        Returns:
-            (данные таблицы, список моделей, список методов)
+        Методы: сначала с BASELINE в названии.
         """
         models = sorted(set(validation_data.keys()))
-        methods = set()
-        for per_model in validation_data.values():
-            methods.update(per_model.keys())
-        methods = sorted(methods)
+        methods = _sort_methods_baseline_first(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
         table_data = [["Модель"] + methods]
         for model in models:
             row = [model]
@@ -309,50 +355,65 @@ class GoogleSheetsIntegration:
 
     def create_inference_time_table_data(
         self, inference_time_data: Dict[str, Dict[str, float]]
-    ) -> Tuple[List[List], List[str], List[str]]:
+    ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
-        Создаёт данные для таблицы среднего времени инференса (сек/ответ).
-
-        Args:
-            inference_time_data: {model_key: {method: seconds}}
+        Создаёт данные для таблицы среднего времени инференса: значение и разница с baseline.
+        Меньше время = лучше: зелёный при отрицательной разнице, красный при положительной.
+        Лучшее (мин) по столбцу — жирным.
 
         Returns:
-            (данные таблицы, список моделей, список методов)
+            (данные таблицы, модели, методы, format_info)
         """
         models = sorted(set(inference_time_data.keys()))
-        methods = set()
-        for per_model in inference_time_data.values():
-            methods.update(per_model.keys())
-        methods = sorted(methods)
+        methods = _sort_methods_baseline_first(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
+        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
+        
         table_data = [["Модель"] + methods]
-        for model in models:
+        green_cells: List[str] = []
+        red_cells: List[str] = []
+        bold_cells: List[str] = []
+        
+        for row_idx, model in enumerate(models):
             row = [model]
-            for method in methods:
+            baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
+            for col_idx, method in enumerate(methods):
                 sec = inference_time_data.get(model, {}).get(method)
                 if sec is not None:
-                    row.append(f"{sec:.3f}")
+                    if method == baseline_method or baseline_val is None:
+                        row.append(f"{sec:.3f}")
+                    else:
+                        diff = sec - baseline_val
+                        sign = "+" if diff >= 0 else ""
+                        row.append(f"{sec:.3f} ({sign}{diff:.3f})")
+                        cell_a1 = _data_cell_a1(row_idx, col_idx)
+                        if diff < 0:
+                            green_cells.append(cell_a1)
+                        elif diff > 0:
+                            red_cells.append(cell_a1)
                 else:
                     row.append("")
             table_data.append(row)
-        return table_data, models, methods
+        
+        for col_idx in range(len(methods)):
+            col_values = [(row_idx, inference_time_data.get(models[row_idx], {}).get(methods[col_idx]))
+                          for row_idx in range(len(models))]
+            valid = [(ri, v) for ri, v in col_values if v is not None]
+            if valid:
+                best_row_idx = min(valid, key=lambda x: x[1])[0]
+                bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
+        
+        format_info = {"green": green_cells, "red": red_cells, "bold": bold_cells}
+        return table_data, models, methods, format_info
 
     def create_gpu_memory_table_data(
         self, gpu_memory_data: Dict[str, Dict[str, float]]
     ) -> Tuple[List[List], List[str], List[str]]:
         """
         Создаёт данные для таблицы GPU memory during inference (GB).
-
-        Args:
-            gpu_memory_data: {model_key: {method: gpu_memory_during_inference_gb}}
-
-        Returns:
-            (данные таблицы, список моделей, список методов)
+        Методы: сначала с BASELINE в названии.
         """
         models = sorted(set(gpu_memory_data.keys()))
-        methods = set()
-        for per_model in gpu_memory_data.values():
-            methods.update(per_model.keys())
-        methods = sorted(methods)
+        methods = _sort_methods_baseline_first(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
         table_data = [["Модель"] + methods]
         for model in models:
             row = [model]
@@ -385,31 +446,22 @@ class GoogleSheetsIntegration:
         """
         if not self.client:
             raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
-        table_data, models, methods = self.create_table_data(group=group, all_metrics=all_metrics)
+        table_data, models, methods, format_info = self.create_table_data(group=group, all_metrics=all_metrics)
         
         try:
-            # Открываем таблицу
             spreadsheet = self.client.open_by_key(spreadsheet_id)
-            
-            # Получаем или создаем лист
             try:
                 worksheet = spreadsheet.worksheet(worksheet_name)
             except gspread.exceptions.WorksheetNotFound:
                 worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
-            
-            # Очищаем существующие данные, если нужно
             if clear_existing:
                 worksheet.clear()
-            
-            # Загружаем данные
             worksheet.update(values=table_data, range_name="A1")
-            
-            # Форматируем заголовок
-            worksheet.format('A1:Z1', {
-                'textFormat': {'bold': True},
-                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            worksheet.format("A1:Z1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
-            
+            self._apply_cell_format(worksheet, format_info)
             print(f"✅ Данные успешно загружены в лист '{worksheet_name}'")
             print(f"   • Моделей: {len(models)}")
             print(f"   • Методов: {len(methods)}")
@@ -455,10 +507,10 @@ class GoogleSheetsIntegration:
         inference_time_data: Dict[str, Dict[str, float]],
         clear_existing: bool = True,
     ):
-        """Загружает таблицу среднего времени инференса (сек/ответ) на лист."""
+        """Загружает таблицу среднего времени инференса (сек/ответ) на лист с разницей к baseline и форматированием."""
         if not self.client:
             raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
-        table_data, models, methods = self.create_inference_time_table_data(inference_time_data)
+        table_data, models, methods, format_info = self.create_inference_time_table_data(inference_time_data)
         try:
             spreadsheet = self.client.open_by_key(spreadsheet_id)
             try:
@@ -472,6 +524,7 @@ class GoogleSheetsIntegration:
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
+            self._apply_cell_format(worksheet, format_info)
             print(f"✅ Среднее время инференса загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
@@ -514,7 +567,7 @@ class GoogleSheetsIntegration:
         """
         import csv
         
-        table_data, models, methods = self.create_table_data(group)
+        table_data, models, methods, _ = self.create_table_data(group)
         
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
