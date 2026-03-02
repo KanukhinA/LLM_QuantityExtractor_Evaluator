@@ -26,15 +26,18 @@ HF_HUB_DOWNLOAD_TIMEOUT = int(os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", "300")) 
 
 def _from_pretrained_local_first(loader, *args, **kwargs):
     """
-    Вызывает loader(*args, **kwargs) сначала с local_files_only=True (только локальный кэш).
-    Если модель не найдена локально — повторяет вызов без local_files_only (с доступом к HF).
-    Так инференс работает без интернета, если модель уже скачана.
+    Сначала пробует загрузить из локального кэша HF: по repo_id ищет снапшот и передаёт
+    путь в loader (обращения к серверу нет). Если кэша нет — вызывает loader с исходным именем.
     """
-    kwargs_no_local = {k: v for k, v in kwargs.items() if k != "local_files_only"}
-    try:
-        return loader(*args, local_files_only=True, **kwargs_no_local)
-    except Exception:
-        return loader(*args, **kwargs_no_local)
+    from utils import local_cache_path_for_model
+    model_id = args[0] if args else None
+    local_dir = local_cache_path_for_model(model_id)
+    if local_dir:
+        try:
+            return loader(local_dir, *args[1:], **kwargs)
+        except Exception:
+            pass
+    return loader(*args, **kwargs)
 
 
 def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None, max_length=None):

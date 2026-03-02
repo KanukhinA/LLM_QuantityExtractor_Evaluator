@@ -3,16 +3,38 @@
 """
 
 
+def local_cache_path_for_model(repo_id):
+    """
+    Если репозиторий уже в кэше HF, возвращает путь к снапшоту (директория).
+    Сначала ищет config.json, затем tokenizer.json (репо только с токенизатором). К сети не обращается.
+    """
+    import os
+    if not repo_id or not isinstance(repo_id, str) or "/" not in repo_id or os.path.isabs(repo_id):
+        return None
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        for filename in ("config.json", "tokenizer.json"):
+            path = try_to_load_from_cache(repo_id=repo_id, filename=filename)
+            if path and os.path.isfile(path):
+                return os.path.dirname(path)
+    except Exception:
+        pass
+    return None
+
+
 def from_pretrained_local_first(loader, *args, **kwargs):
     """
-    Вызов loader(*args, **kwargs): сначала с local_files_only=True (только локальный кэш HF).
-    Если не найдено локально — повтор с доступом к сети. Для использования в calc_max_new_tokens и check_max_position_embeddings.
+    Сначала пробует загрузить из локального кэша: по repo_id ищет снапшот и передаёт путь в loader.
+    Если кэша нет — вызов loader с исходным именем (загрузка с HF).
     """
-    kwargs_clean = {k: v for k, v in kwargs.items() if k != "local_files_only"}
-    try:
-        return loader(*args, local_files_only=True, **kwargs_clean)
-    except Exception:
-        return loader(*args, **kwargs_clean)
+    model_id = args[0] if args else None
+    local_dir = local_cache_path_for_model(model_id)
+    if local_dir:
+        try:
+            return loader(local_dir, *args[1:], **kwargs)
+        except Exception:
+            pass
+    return loader(*args, **kwargs)
 
 
 import io
