@@ -94,8 +94,6 @@ def _get_flash_attn_kwargs() -> dict:
 
 def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
     """Если у токенизатора есть chat_template (Mistral, Llama и др.), форматирует промпт как user message."""
-    if not hasattr(tokenizer, "apply_chat_template") or getattr(tokenizer, "chat_template", None) is None:
-        return prompt
     try:
         messages = [{"role": "user", "content": prompt}]
         return tokenizer.apply_chat_template(
@@ -103,6 +101,50 @@ def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
         )
     except Exception:
         return prompt
+
+
+def _patch_mistral_common_backend_tokenizer(tokenizer: Any, model_name: str) -> None:
+    """
+    Outlines/Transformers могут вызывать tokenizer.get_chat_template(), которого нет у MistralCommonBackend,
+    из-за чего падает генерация в режиме outlines. Патчим токенизатор, подгружая шаблон из tokenizer_config.json,
+    если он доступен локально, и добавляя get_chat_template().
+    """
+    cls_name = str(getattr(getattr(tokenizer, "__class__", None), "__name__", "") or "")
+    if cls_name != "MistralCommonBackend":
+        return
+    chat_template = None
+    try:
+        from utils import local_cache_path_for_model
+        import json as _json
+        snap = local_cache_path_for_model(model_name)
+        if snap:
+            cfg_path = os.path.join(snap, "tokenizer_config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = _json.load(f)
+                chat_template = data.get("chat_template")
+    except Exception:
+        chat_template = None
+
+    if chat_template:
+        try:
+            setattr(tokenizer, "chat_template", chat_template)
+        except Exception:
+            pass
+
+    def _get_chat_template(self, *args, **kwargs):
+        ct = chat_template
+        if not ct:
+            try:
+                ct = getattr(self, "chat_template", None)
+            except Exception:
+                ct = None
+        return ct or ""
+
+    try:
+        setattr(tokenizer, "get_chat_template", _get_chat_template.__get__(tokenizer, tokenizer.__class__))
+    except Exception:
+        pass
 
 
 def _generate_with_outlines(
@@ -382,6 +424,8 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     except Exception as e:
         print(f"   ❌ Ошибка загрузки токенизатора: {e}")
         raise
+
+    _patch_mistral_common_backend_tokenizer(tokenizer, model_name)
 
     if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None) is not None:
         tokenizer.pad_token = tokenizer.eos_token
