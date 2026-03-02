@@ -1379,28 +1379,51 @@ class ModelEvaluator:
                     prompt=full_prompt_example
                 )
                 
-                # Собираем статистику валидации
+                # Собираем статистику валидации (Pydantic), отдельно от валидности JSON.
+                # raw_output: валидируем raw_output (модель могла вернуть текст вокруг JSON)
+                # parsed: валидируем распарсенный JSON; если is_valid=False (JSON не распарсился) — это тоже invalid.
                 raw_validations = [r.get("raw_validation", {}) for r in results]
                 # Для parsed учитываем все ответы, но валидация вычисляется только для успешно распарсенных
                 parsed_validations = [r.get("parsed_validation", {}) for r in results if r.get("is_valid", False)]
-                
+
                 # Фильтруем пустые валидации (если они не были вычислены)
                 raw_validations = [v for v in raw_validations if v]
                 parsed_validations = [v for v in parsed_validations if v]
-                
+
                 # Подсчитываем количество успешно распарсенных ответов (is_valid = True)
                 total_parsed_count = sum(1 for r in results if r.get("is_valid", False))
-                
+
+                # Список ошибок Pydantic по текстам
+                for idx, r in enumerate(results):
+                    rv = r.get("raw_validation") or {}
+                    pv = r.get("parsed_validation") or {}
+                    rv_ok = rv.get("is_valid", True)
+                    pv_ok = pv.get("is_valid", True)
+                    if rv_ok and pv_ok:
+                        continue
+                    errors = []
+                    if not rv_ok:
+                        errors.extend(rv.get("errors", []))
+                    if not pv_ok:
+                        errors.extend(pv.get("errors", []))
+                    pydantic_errors.append({
+                        "text_index": idx,
+                        "text": r.get("text", ""),
+                        "response": r.get("json", "") or r.get("raw_output", "") or r.get("response", ""),
+                        "prompt": full_prompt_example,
+                        "errors": errors,
+                    })
+
                 if raw_validations or parsed_validations:
                     raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False)) if raw_validations else 0
                     parsed_valid_count = sum(1 for v in parsed_validations if v.get("is_valid", False)) if parsed_validations else 0
-                    
+
                     # Для parsed: invalid_count = невалидные среди распарсенных + не распарсенные ответы
                     parsed_invalid_count = (len(parsed_validations) - parsed_valid_count) if parsed_validations else 0
                     # Добавляем количество не распарсенных ответов
                     not_parsed_count = len(results) - total_parsed_count
                     parsed_invalid_count += not_parsed_count
-                    
+
                     validation_stats = {
                         "raw_output": {
                             "invalid_count": len(raw_validations) - raw_valid_count if raw_validations else 0,
@@ -1548,6 +1571,7 @@ class ModelEvaluator:
             "parsing_error_rate": parsing_error_rate,  # Процент ошибок парсинга (можно вычислить: invalid_json_count / total_samples)
             "parsing_errors_count": len(parsing_errors),  # Количество записей об ошибках (может отличаться от invalid_json_count)
             "validation_stats": validation_stats,  # Статистика валидации через Pydantic
+            "pydantic_errors": pydantic_errors,  # Список ошибок валидации Pydantic по текстам
             # Метрики качества (вторыми)
             "quality_metrics": quality_metrics,
             # Метрики raw output (третьими)
@@ -1810,29 +1834,51 @@ class ModelEvaluator:
                     else:
                         parsed_validations = []
                 
-                # Подсчитываем статистику
-                raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False))
-                parsed_valid_count = sum(1 for v in parsed_validations if v.get("is_valid", False))
-                
-                # Подсчитываем количество успешно распарсенных ответов (is_valid = True)
-                total_parsed_count = sum(1 for _, row in df_results.iterrows() if row.get("is_valid", False))
+                # Подсчитываем статистику (Pydantic), отдельно от валидности JSON.
+                raw_total_count = sum(1 for v in raw_validations if v)
+                raw_valid_count = sum(1 for v in raw_validations if v and v.get("is_valid", False))
+                raw_invalid_indices = [i for i, v in enumerate(raw_validations) if v and not v.get("is_valid", False)]
+
                 total_results_count = len(df_results)
-                
-                # Для parsed: invalid_count = невалидные среди распарсенных + не распарсенные ответы
-                parsed_invalid_count = (len(parsed_validations) - parsed_valid_count) if parsed_validations else 0
-                # Добавляем количество не распарсенных ответов
-                not_parsed_count = total_results_count - total_parsed_count
-                parsed_invalid_count += not_parsed_count
-                
+                parsed_total_count = total_results_count
+                parsed_valid_count = 0
+                parsed_invalid_indices = []
+                parsed_not_parsed_indices = []
+
+                for idx, row in df_results.iterrows():
+                    if not row.get("is_valid", False):
+                        parsed_invalid_indices.append(int(idx))
+                        parsed_not_parsed_indices.append(int(idx))
+                        continue
+                    pv = row.get("parsed_validation", {}) or {}
+                    if isinstance(pv, str) and pv:
+                        # На всякий случай: если не распарсили выше
+                        try:
+                            import json as _json
+                            pv = _json.loads(pv)
+                        except Exception:
+                            pv = {}
+                    if isinstance(pv, dict) and pv.get("is_valid", False):
+                        parsed_valid_count += 1
+                    else:
+                        parsed_invalid_indices.append(int(idx))
+
                 validation_stats = {
                     "raw_output": {
-                        "invalid_count": len(raw_validations) - raw_valid_count,
-                        "validation_rate": raw_valid_count / len(raw_validations) if raw_validations else 0.0
+                        "total_count": raw_total_count,
+                        "valid_count": raw_valid_count,
+                        "invalid_count": raw_total_count - raw_valid_count,
+                        "validation_rate": (raw_valid_count / raw_total_count) if raw_total_count > 0 else 0.0,
+                        "invalid_indices": raw_invalid_indices,
                     },
                     "parsed": {
-                        "invalid_count": parsed_invalid_count,
-                        "validation_rate": parsed_valid_count / total_results_count if total_results_count > 0 else 0.0
-                    }
+                        "total_count": parsed_total_count,
+                        "valid_count": parsed_valid_count,
+                        "invalid_count": len(parsed_invalid_indices),
+                        "validation_rate": (parsed_valid_count / parsed_total_count) if parsed_total_count > 0 else 0.0,
+                        "invalid_indices": parsed_invalid_indices,
+                        "not_parsed_indices": parsed_not_parsed_indices,
+                    },
                 }
                 
                 print(f"   ✅ Статистика валидации вычислена")
