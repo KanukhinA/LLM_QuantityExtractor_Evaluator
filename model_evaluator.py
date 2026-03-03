@@ -1345,7 +1345,8 @@ class ModelEvaluator:
         quality_metrics = None
         raw_output_metrics = None
         validation_stats = None
-        
+        pydantic_errors = []
+
         if self.ground_truths and len(self.ground_truths) == len(results):
             try:
                 print(f"🎯 ВЫЧИСЛЕНИЕ МЕТРИК КАЧЕСТВА...")
