@@ -556,6 +556,18 @@ def load_qwen_3_8b(model_name: Optional[str] = None, hyperparameters: Optional[d
     return load_standard_model(name, torch_dtype="auto", hyperparameters=hyperparameters)
 
 
+def load_qwen_3_5_4b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3.5-4B (мультимодальная, для текста используется тот же пайплайн; enable_thinking через hyperparameters)."""
+    name = model_name or "Qwen/Qwen3.5-4B"
+    return load_standard_model(name, dtype="bfloat16", hyperparameters=hyperparameters)
+
+
+def load_qwen_3_5_9b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
+    """Загрузка Qwen/Qwen3.5-9B (мультимодальная, для текста используется тот же пайплайн; enable_thinking через hyperparameters)."""
+    name = model_name or "Qwen/Qwen3.5-9B"
+    return load_standard_model(name, torch_dtype="auto", hyperparameters=hyperparameters)
+
+
 def load_codegemma_7b(model_name: Optional[str] = None, hyperparameters: Optional[dict] = None) -> Tuple[Any, Any]:
     """Загрузка google/codegemma-7b-it (при torch_dtype nf4/4bit — 4-bit)."""
     model_id = model_name or "google/codegemma-7b-it"
