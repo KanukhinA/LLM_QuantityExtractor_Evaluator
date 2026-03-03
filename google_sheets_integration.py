@@ -292,7 +292,7 @@ class GoogleSheetsIntegration:
             for col_idx, method in enumerate(methods):
                 method_data = all_metrics.get(model, {}).get(method, {})
                 f1_score = method_data.get(group) if group in method_data else None
-                if f1_score is not None:
+                if f1_score is not None and (not isinstance(f1_score, (int, float)) or abs(float(f1_score)) >= 1e-6):
                     if method == baseline_method or baseline_val is None:
                         row.append(f"{f1_score:.4f}")
                     else:
@@ -305,7 +305,7 @@ class GoogleSheetsIntegration:
                         elif diff < 0:
                             red_cells.append(cell_a1)
                 else:
-                    row.append("")
+                    row.append("-")
             table_data.append(row)
         
         for col_idx in range(len(methods)):
@@ -313,11 +313,29 @@ class GoogleSheetsIntegration:
             for row_idx, model in enumerate(models):
                 v = all_metrics.get(model, {}).get(methods[col_idx], {}).get(group)
                 col_values.append((row_idx, v))
-            valid = [(ri, v) for ri, v in col_values if v is not None]
+            valid = [(ri, v) for ri, v in col_values if v is not None and (not isinstance(v, (int, float)) or abs(float(v)) >= 1e-6)]
             if valid:
                 best_row_idx = max(valid, key=lambda x: x[1])[0]
                 bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
-        
+
+        avg_row = ["Average difference"]
+        for col_idx, method in enumerate(methods):
+            diffs = []
+            for model in models:
+                baseline_val = all_metrics.get(model, {}).get(baseline_method, {}).get(group) if baseline_method else None
+                f1_score = all_metrics.get(model, {}).get(method, {}).get(group)
+                if (baseline_val is not None and (isinstance(baseline_val, (int, float)) and abs(float(baseline_val)) >= 1e-6)
+                    and f1_score is not None and (isinstance(f1_score, (int, float)) and abs(float(f1_score)) >= 1e-6)
+                    and method != baseline_method):
+                    diffs.append(float(f1_score) - float(baseline_val))
+            if diffs:
+                avg_diff = sum(diffs) / len(diffs)
+                sign = "+" if avg_diff >= 0 else ""
+                avg_row.append(f"{sign}{avg_diff:.2f}")
+            else:
+                avg_row.append("-")
+        table_data.append(avg_row)
+
         format_info = {"green": green_cells, "red": red_cells, "bold": bold_cells}
         return table_data, models, methods, format_info
 
@@ -337,21 +355,51 @@ class GoogleSheetsIntegration:
 
     def create_validation_table_data(
         self, validation_data: Dict[str, Dict[str, str]]
-    ) -> Tuple[List[List], List[str], List[str]]:
+    ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы validation: ячейки в формате 0.99(0.88) = parsed(raw).
-        Методы: сначала с BASELINE в названии.
+        Методы: сначала с BASELINE в названии. Пустое значение -> "-".
+        Снизу строка Average difference. Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
         models = sorted(set(validation_data.keys()))
         methods = _sort_methods_baseline_first(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
         table_data = [["Модель"] + methods]
-        for model in models:
+        green_cells: List[str] = []
+        for row_idx, model in enumerate(models):
             row = [model]
-            for method in methods:
+            for col_idx, method in enumerate(methods):
                 val = validation_data.get(model, {}).get(method, "")
-                row.append(val if val else "")
+                row.append(val if val else "-")
+                if val:
+                    match = re.match(r"^(\d+\.?\d*)", str(val).replace(",", "."))
+                    if match:
+                        try:
+                            parsed_rate = float(match.group(1))
+                            if abs(parsed_rate - 1.0) < 1e-6:
+                                green_cells.append(_data_cell_a1(row_idx, col_idx))
+                        except ValueError:
+                            pass
             table_data.append(row)
-        return table_data, models, methods
+        avg_row = ["Average difference"]
+        for method in methods:
+            parsed_rates = []
+            for model in models:
+                val = validation_data.get(model, {}).get(method, "")
+                if not val:
+                    continue
+                match = re.match(r"^(\d+\.?\d*)", str(val).replace(",", "."))
+                if match:
+                    try:
+                        parsed_rates.append(float(match.group(1)))
+                    except ValueError:
+                        pass
+            if parsed_rates:
+                avg_row.append(f"{sum(parsed_rates) / len(parsed_rates):.2f}")
+            else:
+                avg_row.append("-")
+        table_data.append(avg_row)
+        format_info = {"green": green_cells, "red": [], "bold": []}
+        return table_data, models, methods, format_info
 
     def create_inference_time_table_data(
         self, inference_time_data: Dict[str, Dict[str, float]]
@@ -378,7 +426,7 @@ class GoogleSheetsIntegration:
             baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
             for col_idx, method in enumerate(methods):
                 sec = inference_time_data.get(model, {}).get(method)
-                if sec is not None:
+                if sec is not None and (not isinstance(sec, (int, float)) or abs(float(sec)) >= 1e-6):
                     if method == baseline_method or baseline_val is None:
                         row.append(f"{sec:.3f}")
                     else:
@@ -391,40 +439,103 @@ class GoogleSheetsIntegration:
                         elif diff > 0:
                             red_cells.append(cell_a1)
                 else:
-                    row.append("")
+                    row.append("-")
             table_data.append(row)
         
         for col_idx in range(len(methods)):
             col_values = [(row_idx, inference_time_data.get(models[row_idx], {}).get(methods[col_idx]))
                           for row_idx in range(len(models))]
-            valid = [(ri, v) for ri, v in col_values if v is not None]
+            valid = [(ri, v) for ri, v in col_values if v is not None and (not isinstance(v, (int, float)) or abs(float(v)) >= 1e-6)]
             if valid:
                 best_row_idx = min(valid, key=lambda x: x[1])[0]
                 bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
-        
+
+        avg_row = ["Average difference"]
+        for col_idx, method in enumerate(methods):
+            improvements = []
+            for model in models:
+                baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
+                sec = inference_time_data.get(model, {}).get(method)
+                if (baseline_val is not None and (isinstance(baseline_val, (int, float)) and abs(float(baseline_val)) >= 1e-6)
+                    and sec is not None and (isinstance(sec, (int, float)) and abs(float(sec)) >= 1e-6)
+                    and method != baseline_method):
+                    improvements.append(float(baseline_val) - float(sec))
+            if improvements:
+                avg_imp = sum(improvements) / len(improvements)
+                sign = "+" if avg_imp >= 0 else ""
+                avg_row.append(f"{sign}{avg_imp:.3f}")
+            else:
+                avg_row.append("-")
+        table_data.append(avg_row)
+
         format_info = {"green": green_cells, "red": red_cells, "bold": bold_cells}
         return table_data, models, methods, format_info
 
     def create_gpu_memory_table_data(
         self, gpu_memory_data: Dict[str, Dict[str, float]]
-    ) -> Tuple[List[List], List[str], List[str]]:
+    ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы GPU memory during inference (GB).
         Методы: сначала с BASELINE в названии.
+        Нет значения или 0.000 -> прочерк "-". Меньше baseline -> зелёный, больше -> красный.
+        Returns:
+            (данные таблицы, модели, методы, format_info: green/red)
         """
         models = sorted(set(gpu_memory_data.keys()))
         methods = _sort_methods_baseline_first(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
+        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         table_data = [["Модель"] + methods]
-        for model in models:
+        green_cells: List[str] = []
+        red_cells: List[str] = []
+
+        def _is_empty_val(v) -> bool:
+            if v is None:
+                return True
+            try:
+                return abs(float(v)) < 1e-6
+            except (TypeError, ValueError):
+                return True
+
+        for row_idx, model in enumerate(models):
             row = [model]
-            for method in methods:
-                gb = gpu_memory_data.get(model, {}).get(method)
-                if gb is not None:
-                    row.append(f"{gb:.2f}")
+            baseline_val = None
+            if baseline_method:
+                bv = gpu_memory_data.get(model, {}).get(baseline_method)
+                if not _is_empty_val(bv):
+                    baseline_val = float(bv)
+            for col_idx, method in enumerate(methods):
+                gb_raw = gpu_memory_data.get(model, {}).get(method)
+                if _is_empty_val(gb_raw):
+                    row.append("-")
                 else:
-                    row.append("")
+                    gb = float(gb_raw)
+                    row.append(f"{gb:.2f}")
+                    if method != baseline_method and baseline_val is not None:
+                        cell_a1 = _data_cell_a1(row_idx, col_idx)
+                        if gb < baseline_val:
+                            green_cells.append(cell_a1)
+                        elif gb > baseline_val:
+                            red_cells.append(cell_a1)
             table_data.append(row)
-        return table_data, models, methods
+
+        avg_row = ["Average difference"]
+        for col_idx, method in enumerate(methods):
+            improvements = []
+            for model in models:
+                bv = gpu_memory_data.get(model, {}).get(baseline_method) if baseline_method else None
+                gb_raw = gpu_memory_data.get(model, {}).get(method)
+                if not _is_empty_val(bv) and not _is_empty_val(gb_raw) and method != baseline_method:
+                    improvements.append(float(bv) - float(gb_raw))
+            if improvements:
+                avg_imp = sum(improvements) / len(improvements)
+                sign = "+" if avg_imp >= 0 else ""
+                avg_row.append(f"{sign}{avg_imp:.2f}")
+            else:
+                avg_row.append("-")
+        table_data.append(avg_row)
+
+        format_info = {"green": green_cells, "red": red_cells, "bold": []}
+        return table_data, models, methods, format_info
 
     def upload_to_sheet(
         self,
@@ -479,10 +590,11 @@ class GoogleSheetsIntegration:
     ):
         """
         Загружает таблицу validation (формат 0.99(0.88) = parsed(raw)) на лист.
+        Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
         if not self.client:
             raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
-        table_data, models, methods = self.create_validation_table_data(validation_data)
+        table_data, models, methods, format_info = self.create_validation_table_data(validation_data)
         try:
             spreadsheet = self.client.open_by_key(spreadsheet_id)
             try:
@@ -496,6 +608,7 @@ class GoogleSheetsIntegration:
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
+            self._apply_cell_format(worksheet, format_info)
             print(f"✅ Validation загружены в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
@@ -536,10 +649,10 @@ class GoogleSheetsIntegration:
         gpu_memory_data: Dict[str, Dict[str, float]],
         clear_existing: bool = True,
     ):
-        """Загружает таблицу GPU memory during inference (GB) на отдельный лист."""
+        """Загружает таблицу GPU memory during inference (GB) на отдельный лист с окрашиванием относительно baseline."""
         if not self.client:
             raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
-        table_data, models, methods = self.create_gpu_memory_table_data(gpu_memory_data)
+        table_data, models, methods, format_info = self.create_gpu_memory_table_data(gpu_memory_data)
         try:
             spreadsheet = self.client.open_by_key(spreadsheet_id)
             try:
@@ -553,6 +666,7 @@ class GoogleSheetsIntegration:
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
+            self._apply_cell_format(worksheet, format_info)
             print(f"✅ GPU memory during inference загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
