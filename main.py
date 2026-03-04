@@ -271,7 +271,7 @@ def main():
         print("  python main.py qwen-2.5-3b --no-gemini")
         print("  python main.py qwen-2.5-3b --structured-output --outlines")
         print("  python main.py qwen-2.5-3b --structured-output --pydantic-outlines")
-        print("  python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines")
+        print("  python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_CD --structured-output --outlines")
         print("\nДоступные модели (из models.yaml):")
         for key in MODEL_CONFIGS.keys():
             print(f"  - {key}")
@@ -307,7 +307,7 @@ def main():
                     prompt_template_name = sys.argv[i + 1]
                     i += 2
                 else:
-                    print("Ошибка: после --prompt укажите название промпта (например, DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES)")
+                    print("Ошибка: после --prompt укажите название промпта (например, DETAILED_INSTR_ZEROSHOT_CD)")
                     return
             elif arg == "--structured-output":
                 structured_output = True
@@ -352,7 +352,7 @@ def main():
             i += 1
     
     if use_guidance and prompt_template_name is None:
-        prompt_template_name = "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS"
+        prompt_template_name = "DETAILED_INSTR_ZEROSHOT_CD_RUS"
     
     # Проверяем, что указаны модели
     if not model_keys:

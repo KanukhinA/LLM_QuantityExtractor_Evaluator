@@ -49,7 +49,7 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
     if use_outlines or pydantic_outlines:
         print(f"📌 Outlines: Включен" + (" (схема из Pydantic)" if pydantic_outlines else " (outlines_schema.py)"))
     if use_guidance:
-        effective_prompt = prompt_template_name or "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS"
+        effective_prompt = prompt_template_name or "DETAILED_INSTR_ZEROSHOT_CD_RUS"
         print(f"📌 Guidance (llguidance): Включен, промпт: {effective_prompt}")
     if prompt_template_name:
         print(f"📌 Промпт: {prompt_template_name}")
@@ -102,7 +102,7 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
             if use_guidance:
                 config["hyperparameters"]["use_guidance"] = True
                 config["hyperparameters"]["prompt_template_name"] = (
-                    prompt_template_name or "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS"
+                    prompt_template_name or "DETAILED_INSTR_ZEROSHOT_CD_RUS"
                 )
             elif prompt_template_name is not None:
                 config["hyperparameters"]["prompt_template_name"] = prompt_template_name
@@ -260,7 +260,7 @@ if __name__ == "__main__":
         "--prompt",
         type=str,
         metavar="NAME",
-        help="Название промпта из prompt_config.py (например, DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES)"
+        help="Название промпта из prompt_config.py (например, DETAILED_INSTR_ZEROSHOT_CD)"
     )
     args = parser.parse_args()
 

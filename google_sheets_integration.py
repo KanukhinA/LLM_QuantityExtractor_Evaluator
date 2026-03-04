@@ -29,14 +29,13 @@ BASELINE_KEYWORD = "BASELINE"
 # Таблица алиасов методов: (полное_название, alias, описание).
 # Если метода нет в таблице, alias = акроним из первых букв частей (разделитель _), описание = полное название.
 METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
-    ("DETAILED_INSTR_ZEROSHOT_BASELINE", "DIZB", "Детальный zero-shot промпт (baseline)"),
-    ("DETAILED_INSTR_ONESHOT", "DIO", "Детальный one-shot промпт"),
-    ("MINIMAL_FIVESHOT_PROMPT", "MF5", "Минималистичный few-shot (5 примеров)"),
-    ("DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES", "DIZBO", "Zero-shot с outlines (латиница)"),
-    ("DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS", "DIZBOR", "Zero-shot с outlines, схема на кириллице"),
-    ("DETAILED_INSTR_ONESHOT_OUTLINES", "DIOO", "One-shot с outlines (латиница)"),
-    ("DETAILED_INSTR_ONESHOT_OUTLINES_RUS", "DIOOR", "One-shot с outlines, схема на кириллице"),
-    ("MINIMAL_FIVESHOT_APIE_PROMPT", "MF5A", "Few-shot с 5 примерами (APIE)"),
+    ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный zero-shot промпт (baseline)"),
+    ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный one-shot промпт"),
+    ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный few-shot (5 примеров)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD", "4.1.DIZC", "Zero-shot constrained decoding (латиница)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS", "4.2.DIZCR", "Zero-shot constrained decoding (кириллица)"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS", "4.3.DIOCR", "One-shot  constrained decoding (кириллица)"),
+    ("MINIMAL_INSTR_FIVESHOT_APIE", "7.MIFA", "Few-shot с 5 примерами (APIE)"),
 ]
 
 
@@ -64,6 +63,18 @@ def get_method_description(full_name: str) -> str:
     return _method_alias_and_description(full_name)[1]
 
 
+def _alias_order_number(alias: str) -> int:
+    """Из алиаса вида 'N.XXX' извлекает N; иначе возвращает большое число (в конец сортировки)."""
+    match = re.match(r"^(\d+)\.", alias)
+    return int(match.group(1)) if match else 9999
+
+
+def _method_sort_key(full_name: str) -> Tuple[int, str]:
+    """Ключ сортировки метода: сначала по номеру в алиасе из METHOD_ALIAS_TABLE, затем по имени."""
+    alias = get_method_alias(full_name)
+    return (_alias_order_number(alias), full_name)
+
+
 def _build_notes_rows(methods: List[str]) -> List[List[str]]:
     """Строки для блока примечаний под таблицей: заголовок и строки «ALIAS — определение»."""
     if not methods:
@@ -76,10 +87,17 @@ def _build_notes_rows(methods: List[str]) -> List[List[str]]:
     return rows
 
 
-def _sort_methods_baseline_first(methods) -> List[str]:
-    """Список методов: сначала содержащие BASELINE в названии, остальные по алфавиту."""
-    methods_list = sorted(set(methods))
-    return sorted(methods_list, key=lambda m: (0 if BASELINE_KEYWORD.upper() in m.upper() else 1, m))
+def _table_header(methods: List[str]) -> List[str]:
+    """Заголовок таблицы: Модель + алиасы методов."""
+    return ["Модель"] + [get_method_alias(m) for m in methods]
+
+AVG_ROW_LABEL = "Средняя разница"
+
+
+def _sort_methods_by_alias_number(methods) -> List[str]:
+    """Список методов: сортировка по номеру в сокращении (METHOD_ALIAS_TABLE), затем по имени."""
+    methods_list = sorted(set(methods), key=_method_sort_key)
+    return methods_list
 
 
 def _col_letter_1based(col_1based: int) -> str:
@@ -136,6 +154,11 @@ class GoogleSheetsIntegration:
             self.client = gspread.authorize(creds)
         except Exception as e:
             raise Exception(f"Ошибка инициализации Google Sheets клиента: {e}")
+
+    def _ensure_client(self) -> None:
+        """Проверяет, что клиент инициализирован; иначе выбрасывает исключение."""
+        if not self.client:
+            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
     
     def find_metrics_files(self) -> List[str]:
         """
@@ -325,10 +348,10 @@ class GoogleSheetsIntegration:
         methods_set = set()
         for model_data in all_metrics.values():
             methods_set.update(k for k in model_data.keys() if k != "_timestamp")
-        methods = _sort_methods_baseline_first(methods_set)
+        methods = _sort_methods_by_alias_number(methods_set)
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         
-        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
+        table_data = [_table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
@@ -367,7 +390,7 @@ class GoogleSheetsIntegration:
                 best_row_idx = max(valid, key=lambda x: x[1])[0]
                 bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
 
-        avg_row = ["Average difference"]
+        avg_row = [AVG_ROW_LABEL]
         for col_idx, method in enumerate(methods):
             diffs = []
             for model in models:
@@ -402,6 +425,50 @@ class GoogleSheetsIntegration:
         if bold:
             worksheet.format(bold, {"textFormat": {"bold": True}})
 
+    def _get_or_create_worksheet(self, spreadsheet, worksheet_name: str):
+        """Возвращает лист по имени; создаёт с rows=100, cols=20, если не найден."""
+        try:
+            return spreadsheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            return spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
+
+    def _upload_table_to_sheet(
+        self,
+        spreadsheet_id: str,
+        worksheet_name: str,
+        table_data: List[List],
+        models: List[str],
+        methods: List[str],
+        format_info: Dict[str, List[str]],
+        clear_existing: bool,
+        success_prefix: str,
+        extra_lines: Optional[List[str]] = None,
+    ) -> None:
+        """Общая загрузка таблицы на лист: данные, форматирование заголовка и ячеек, примечания, вывод в консоль."""
+        spreadsheet = self.client.open_by_key(spreadsheet_id)
+        worksheet = self._get_or_create_worksheet(spreadsheet, worksheet_name)
+        if clear_existing:
+            worksheet.clear()
+        worksheet.update(values=table_data, range_name="A1")
+        worksheet.format("A1:Z1", {
+            "textFormat": {"bold": True},
+            "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
+        })
+        num_cols = len(methods)
+        if num_cols > 0 and len(table_data) > 1:
+            metrics_range = f"B2:{_col_letter_1based(1 + num_cols)}{len(table_data)}"
+            worksheet.format(metrics_range, {"horizontalAlignment": "CENTER"})
+        self._apply_cell_format(worksheet, format_info)
+        notes = _build_notes_rows(methods)
+        if notes:
+            start_row = len(table_data) + 2
+            worksheet.update(values=notes, range_name=f"A{start_row}")
+        print(success_prefix)
+        print(f"   • Моделей: {len(models)}")
+        print(f"   • Методов: {len(methods)}")
+        for line in extra_lines or []:
+            print(line)
+
     def create_validation_table_data(
         self, validation_data: Dict[str, Dict[str, str]]
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
@@ -411,8 +478,8 @@ class GoogleSheetsIntegration:
         Снизу строка Average difference. Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
         models = sorted(set(validation_data.keys()))
-        methods = _sort_methods_baseline_first(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
-        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
+        methods = _sort_methods_by_alias_number(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
+        table_data = [_table_header(methods)]
         green_cells: List[str] = []
         for row_idx, model in enumerate(models):
             row = [model]
@@ -429,7 +496,7 @@ class GoogleSheetsIntegration:
                         except ValueError:
                             pass
             table_data.append(row)
-        avg_row = ["Average difference"]
+        avg_row = [AVG_ROW_LABEL]
         for method in methods:
             parsed_rates = []
             for model in models:
@@ -462,10 +529,10 @@ class GoogleSheetsIntegration:
             (данные таблицы, модели, методы, format_info)
         """
         models = sorted(set(inference_time_data.keys()))
-        methods = _sort_methods_baseline_first(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
+        methods = _sort_methods_by_alias_number(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         
-        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
+        table_data = [_table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
@@ -499,7 +566,7 @@ class GoogleSheetsIntegration:
                 best_row_idx = min(valid, key=lambda x: x[1])[0]
                 bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
 
-        avg_row = ["Average difference"]
+        avg_row = [AVG_ROW_LABEL]
         for col_idx, method in enumerate(methods):
             improvements = []
             for model in models:
@@ -525,15 +592,15 @@ class GoogleSheetsIntegration:
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы GPU memory during inference (GB).
-        Методы: сначала с BASELINE в названии.
-        Нет значения или 0.000 -> прочерк "-". Меньше baseline -> зелёный, больше -> красный.
+        Формат ячеек: значение (разница с baseline); разница = baseline - method (положительная = экономия).
+        Нет значения -> прочерк "-". Меньше baseline -> зелёный, больше -> красный (в т.ч. строка средней разницы).
         Returns:
             (данные таблицы, модели, методы, format_info: green/red)
         """
         models = sorted(set(gpu_memory_data.keys()))
-        methods = _sort_methods_baseline_first(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
+        methods = _sort_methods_by_alias_number(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
+        table_data = [_table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
 
@@ -541,10 +608,12 @@ class GoogleSheetsIntegration:
             if v is None:
                 return True
             try:
-                return abs(float(v)) < 1e-6
+                float(v)
+                return False
             except (TypeError, ValueError):
                 return True
 
+        num_model_rows = len(models)
         for row_idx, model in enumerate(models):
             row = [model]
             baseline_val = None
@@ -558,27 +627,36 @@ class GoogleSheetsIntegration:
                     row.append("-")
                 else:
                     gb = float(gb_raw)
-                    row.append(f"{gb:.2f}")
-                    if method != baseline_method and baseline_val is not None:
+                    if method == baseline_method or baseline_val is None:
+                        row.append(f"{gb:.2f}")
+                    else:
+                        diff = baseline_val - gb
+                        sign = "+" if diff >= 0 else ""
+                        row.append(f"{gb:.2f} ({sign}{diff:.2f})")
                         cell_a1 = _data_cell_a1(row_idx, col_idx)
-                        if gb < baseline_val:
+                        if diff > 0:
                             green_cells.append(cell_a1)
-                        elif gb > baseline_val:
+                        elif diff < 0:
                             red_cells.append(cell_a1)
             table_data.append(row)
 
-        avg_row = ["Average difference"]
+        avg_row = [AVG_ROW_LABEL]
         for col_idx, method in enumerate(methods):
-            improvements = []
+            diffs = []
             for model in models:
                 bv = gpu_memory_data.get(model, {}).get(baseline_method) if baseline_method else None
                 gb_raw = gpu_memory_data.get(model, {}).get(method)
                 if not _is_empty_val(bv) and not _is_empty_val(gb_raw) and method != baseline_method:
-                    improvements.append(float(bv) - float(gb_raw))
-            if improvements:
-                avg_imp = sum(improvements) / len(improvements)
-                sign = "+" if avg_imp >= 0 else ""
-                avg_row.append(f"{sign}{avg_imp:.2f}")
+                    diffs.append(float(bv) - float(gb_raw))
+            if diffs:
+                avg_diff = sum(diffs) / len(diffs)
+                sign = "+" if avg_diff >= 0 else ""
+                avg_row.append(f"{sign}{avg_diff:.2f}")
+                cell_avg = _data_cell_a1(num_model_rows, col_idx)
+                if avg_diff > 0:
+                    green_cells.append(cell_avg)
+                elif avg_diff < 0:
+                    red_cells.append(cell_avg)
             else:
                 avg_row.append("-")
         table_data.append(avg_row)
@@ -604,33 +682,15 @@ class GoogleSheetsIntegration:
             clear_existing: очищать ли существующие данные
             all_metrics: если передан, повторный сбор метрик не выполняется
         """
-        if not self.client:
-            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        self._ensure_client()
         table_data, models, methods, format_info = self.create_table_data(group=group, all_metrics=all_metrics)
-        
         try:
-            spreadsheet = self.client.open_by_key(spreadsheet_id)
-            try:
-                worksheet = spreadsheet.worksheet(worksheet_name)
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
-            if clear_existing:
-                worksheet.clear()
-            worksheet.update(values=table_data, range_name="A1")
-            worksheet.format("A1:Z1", {
-                "textFormat": {"bold": True},
-                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-            })
-            self._apply_cell_format(worksheet, format_info)
-            notes = _build_notes_rows(methods)
-            if notes:
-                start_row = len(table_data) + 2
-                worksheet.update(values=notes, range_name=f"A{start_row}")
-            print(f"✅ Данные успешно загружены в лист '{worksheet_name}'")
-            print(f"   • Моделей: {len(models)}")
-            print(f"   • Методов: {len(methods)}")
-            print(f"   • Группа метрик: {group}")
-            
+            self._upload_table_to_sheet(
+                spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
+                clear_existing,
+                success_prefix=f"✅ Данные успешно загружены в лист '{worksheet_name}'",
+                extra_lines=[f"   • Группа метрик: {group}"],
+            )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке данных в Google Таблицу: {e}")
 
@@ -645,28 +705,14 @@ class GoogleSheetsIntegration:
         Загружает таблицу validation (формат 0.99(0.88) = parsed(raw)) на лист.
         Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
-        if not self.client:
-            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        self._ensure_client()
         table_data, models, methods, format_info = self.create_validation_table_data(validation_data)
         try:
-            spreadsheet = self.client.open_by_key(spreadsheet_id)
-            try:
-                worksheet = spreadsheet.worksheet(worksheet_name)
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
-            if clear_existing:
-                worksheet.clear()
-            worksheet.update(values=table_data, range_name="A1")
-            worksheet.format("A1:Z1", {
-                "textFormat": {"bold": True},
-                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-            })
-            self._apply_cell_format(worksheet, format_info)
-            notes = _build_notes_rows(methods)
-            if notes:
-                start_row = len(table_data) + 2
-                worksheet.update(values=notes, range_name=f"A{start_row}")
-            print(f"✅ Validation загружены в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
+            self._upload_table_to_sheet(
+                spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
+                clear_existing,
+                success_prefix=f"✅ Validation загружены в лист '{worksheet_name}'",
+            )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
 
@@ -678,28 +724,14 @@ class GoogleSheetsIntegration:
         clear_existing: bool = True,
     ):
         """Загружает таблицу среднего времени инференса (сек/ответ) на лист с разницей к baseline и форматированием."""
-        if not self.client:
-            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        self._ensure_client()
         table_data, models, methods, format_info = self.create_inference_time_table_data(inference_time_data)
         try:
-            spreadsheet = self.client.open_by_key(spreadsheet_id)
-            try:
-                worksheet = spreadsheet.worksheet(worksheet_name)
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
-            if clear_existing:
-                worksheet.clear()
-            worksheet.update(values=table_data, range_name="A1")
-            worksheet.format("A1:Z1", {
-                "textFormat": {"bold": True},
-                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-            })
-            self._apply_cell_format(worksheet, format_info)
-            notes = _build_notes_rows(methods)
-            if notes:
-                start_row = len(table_data) + 2
-                worksheet.update(values=notes, range_name=f"A{start_row}")
-            print(f"✅ Среднее время инференса загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
+            self._upload_table_to_sheet(
+                spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
+                clear_existing,
+                success_prefix=f"✅ Среднее время инференса загружено в лист '{worksheet_name}'",
+            )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
 
@@ -711,28 +743,14 @@ class GoogleSheetsIntegration:
         clear_existing: bool = True,
     ):
         """Загружает таблицу GPU memory during inference (GB) на отдельный лист с окрашиванием относительно baseline."""
-        if not self.client:
-            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        self._ensure_client()
         table_data, models, methods, format_info = self.create_gpu_memory_table_data(gpu_memory_data)
         try:
-            spreadsheet = self.client.open_by_key(spreadsheet_id)
-            try:
-                worksheet = spreadsheet.worksheet(worksheet_name)
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
-            if clear_existing:
-                worksheet.clear()
-            worksheet.update(values=table_data, range_name="A1")
-            worksheet.format("A1:Z1", {
-                "textFormat": {"bold": True},
-                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-            })
-            self._apply_cell_format(worksheet, format_info)
-            notes = _build_notes_rows(methods)
-            if notes:
-                start_row = len(table_data) + 2
-                worksheet.update(values=notes, range_name=f"A{start_row}")
-            print(f"✅ GPU memory during inference загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
+            self._upload_table_to_sheet(
+                spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
+                clear_existing,
+                success_prefix=f"✅ GPU memory during inference загружено в лист '{worksheet_name}'",
+            )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
 

@@ -92,11 +92,12 @@ GOOGLE_SHEETS_SPREADSHEET_ID = ""  # опционально, для экспор
 - `PROMPT_TEMPLATE_NAME` - название переменной промпта из `prompt_config.py` для одноагентного подхода (по умолчанию `"DETAILED_INSTR_ZEROSHOT_BASELINE"`):
   - `"DETAILED_INSTR_ZEROSHOT_BASELINE"` - детальный zero-shot промпт без примера (baseline)
   - `"DETAILED_INSTR_ONESHOT"` - детальный промпт с примером текста и ответа (One-shot prompt)
-  - `"DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES"` - zero-shot с примером JSON на латинице (для режима outlines)
-  - `"DETAILED_INSTR_ONESHOT_OUTLINES"` - one-shot с примером JSON на латинице (для режима outlines)
-  - `"MINIMAL_FIVESHOT_PROMPT"` - минималистичный few-shot промпт с 5 примерами
-  - `"MINIMAL_FIVESHOT_APIE_PROMPT"` - few-shot промпт с 5 примерами (версия APIE)
-  - `"MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED"` - few-shot промпт для structured output
+  - `"DETAILED_INSTR_ZEROSHOT_CD"` - zero-shot с примером JSON на латинице (режим CD)
+  - `"DETAILED_INSTR_ONESHOT_CD"` - one-shot с примером JSON на латинице (режим CD)
+  - `"DETAILED_INSTR_ZEROSHOT_CD_RUS"` - zero-shot с примером JSON на кириллице (CD + RUS схема)
+  - `"DETAILED_INSTR_ONESHOT_CD_RUS"` - one-shot с примером JSON на кириллице (CD + RUS схема)
+  - `"MINIMAL_INSTR_FIVESHOT"` - минимальный инструктивный few-shot промпт с 5 примерами
+  - `"MINIMAL_INSTR_FIVESHOT_APIE"` - few-shot промпт с 5 примерами (версия APIE)
 
   **Настройка в `config.py`:**
   ```python
@@ -204,7 +205,7 @@ SmallLLMEvaluator/
 - **`--pydantic-outlines`** — схема из Pydantic `model_json_schema()`.
 - **`--guidance`** — constrained decoding через llguidance (по умолчанию схема RUS, промпт с кириллическим JSON).
 
-Для всех режимов используется одна схема `FertilizerExtractionOutput`; при латинской схеме результат конвертируется в кириллицу. Рекомендуемые промпты: `*_OUTLINES` или `--prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`.
+Для всех режимов используется одна схема `FertilizerExtractionOutput`; при латинской схеме результат конвертируется в кириллицу. Рекомендуемые промпты: `*_CD` или `--prompt DETAILED_INSTR_ZEROSHOT_CD`.
 
 ### 4.4. Сравнение режимов
 
@@ -304,7 +305,7 @@ python main.py qwen-2.5-3b --structured-output --pydantic-outlines
 python main.py qwen-2.5-3b --guidance
 
 # Указание промпта из консоли (переопределяет config.PROMPT_TEMPLATE_NAME)
-python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines
+python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_CD --structured-output --outlines
 
 # Мультиагентный режим с structured output
 python main.py gemma-3-4b-api --multi-agent simple_4agents --structured-output
@@ -336,7 +337,7 @@ python run_all_models.py --structured-output
 python run_all_models.py --local-only --structured-output --outlines
 
 # Указание промпта из консоли
-python run_all_models.py --local-only --prompt DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES --structured-output --outlines
+python run_all_models.py --local-only --prompt DETAILED_INSTR_ZEROSHOT_CD --structured-output --outlines
 
 # Комбинация параметров
 python run_all_models.py --local-only --multi-agent qa_workflow --structured-output
@@ -737,13 +738,12 @@ results/
 **Для одноагентного подхода:**
 - **`DETAILED_INSTR_ZEROSHOT_BASELINE`** - детальный zero-shot промпт без примера (baseline)
 - **`DETAILED_INSTR_ONESHOT`** - детальный промпт с примером текста и ответа (One-shot prompt)
-- **`DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES`** - zero-shot с примером JSON на латинице (для --outlines)
-- **`DETAILED_INSTR_ONESHOT_OUTLINES`** - one-shot с примером JSON на латинице (для --outlines)
-- **`DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS`** - zero-shot с примером JSON на кириллице (для --outlines RUS и --guidance по умолчанию)
-- **`DETAILED_INSTR_ONESHOT_OUTLINES_RUS`** - one-shot с примером JSON на кириллице
-- **`MINIMAL_FIVESHOT_PROMPT`** - минималистичный few-shot промпт с 5 примерами
-- **`MINIMAL_FIVESHOT_APIE_PROMPT`** - few-shot промпт с 5 примерами (версия APIE)
-- **`MINIMAL_FIVESHOT_APIE_PROMPT_STRUCTURED`** - few-shot промпт для structured output
+- **`DETAILED_INSTR_ZEROSHOT_CD`** - zero-shot с примером JSON на латинице (режим CD / --outlines)
+- **`DETAILED_INSTR_ONESHOT_CD`** - one-shot с примером JSON на латинице (режим CD)
+- **`DETAILED_INSTR_ZEROSHOT_CD_RUS`** - zero-shot с примером JSON на кириллице (--guidance по умолчанию)
+- **`DETAILED_INSTR_ONESHOT_CD_RUS`** - one-shot с примером JSON на кириллице
+- **`MINIMAL_INSTR_FIVESHOT`** - минимальный инструктивный few-shot промпт с 5 примерами
+- **`MINIMAL_INSTR_FIVESHOT_APIE`** - few-shot промпт с 5 примерами (версия APIE)
 
 **Для режима `simple_4agents`:**
 - **`NUMERIC_FRAGMENTS_EXTRACTION_PROMPT`** - промпт для агента извлечения числовых фрагментов
@@ -763,7 +763,7 @@ results/
 - **`QA_GRADE_PROMPT`** - промпт для извлечения марки удобрения
 - **`QA_QUANTITY_PROMPT`** - промпт для извлечения количеств (массы, объемы, количество упаковок)
 
-**Для structured output и outlines:** используется схема `FertilizerExtractionOutput` (раздел 4.3); рекомендуются промпты `*_OUTLINES`.
+**Для structured output и outlines:** используется схема `FertilizerExtractionOutput` (раздел 4.3); рекомендуются промпты `*_CD`.
 
 ### 8.2. Поток данных в мультиагентном подходе
 
@@ -878,7 +878,7 @@ models:
       max_new_tokens: 1024
       do_sample: false
       torch_dtype: "bfloat16"
-      # prompt_template_name: "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES" — переопределение промпта (опционально)
+      # prompt_template_name: "DETAILED_INSTR_ZEROSHOT_CD" — переопределение промпта (опционально)
       # torch_dtype: "nf4" — загрузка в 4-bit (любая поддерживаемая модель)
       # max_cpu_gb_4bit: 8 — лимит CPU RAM при 4-bit (опционально)
 ```

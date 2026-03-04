@@ -47,12 +47,12 @@ OUTPUT_DIR = "results"
 # Доступные варианты:
 # - "DETAILED_INSTR_ZEROSHOT_BASELINE" - детальный zero-shot промпт без примера (baseline)
 # - "DETAILED_INSTR_ONESHOT" - детальный промпт с примером текста и ответа (One-shot prompt)
-# - "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES" - zero-shot с примером JSON на латинице (для режима outlines)
-# - "DETAILED_INSTR_ONESHOT_OUTLINES" - one-shot с примером JSON на латинице (для режима outlines)
-# - "DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS" - zero-shot с примером JSON на кириллице (outlines + RUS схема)
-# - "DETAILED_INSTR_ONESHOT_OUTLINES_RUS" - one-shot с примером JSON на кириллице (outlines + RUS схема)
-# - "MINIMAL_FIVESHOT_PROMPT" - минималистичный few-shot промпт с 5 примерами
-# - "MINIMAL_FIVESHOT_APIE_PROMPT" - few-shot промпт с 5 примерами (версия APIE)
+# - "DETAILED_INSTR_ZEROSHOT_CD" - zero-shot с примером JSON на латинице (режим CD)
+# - "DETAILED_INSTR_ONESHOT_CD" - one-shot с примером JSON на латинице (режим CD)
+# - "DETAILED_INSTR_ZEROSHOT_CD_RUS" - zero-shot с примером JSON на кириллице (CD + RUS схема)
+# - "DETAILED_INSTR_ONESHOT_CD_RUS" - one-shot с примером JSON на кириллице (CD + RUS схема)
+# - "MINIMAL_INSTR_FIVESHOT" - минимальный инструктивный few-shot промпт с 5 примерами
+# - "MINIMAL_INSTR_FIVESHOT_APIE" - few-shot промпт с 5 примерами (версия APIE)
 PROMPT_TEMPLATE_NAME = "DETAILED_INSTR_ZEROSHOT_BASELINE"
 
 # ============================================================================

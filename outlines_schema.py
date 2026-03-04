@@ -69,7 +69,7 @@ OUTLINES_SCHEMA: Dict[str, Any] = {
     "required": ["mass_fractions", "other_params"],
 }
 
-# Схема с кириллическими ключами (для промптов DETAILED_INSTR_*_OUTLINES_RUS)
+# Схема с кириллическими ключами (для промптов DETAILED_INSTR_*_CD_RUS)
 OUTLINES_SCHEMA_RUS: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -136,7 +136,7 @@ OUTLINES_SCHEMA_RUS: Dict[str, Any] = {
 def get_outlines_schema_str(prompt_template_name: str = None) -> str:
     """
     Возвращает JSON-схему строкой с корректной кодировкой (ensure_ascii=False).
-    Для промптов с суффиксом _RUS (напр. DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS)
+    Для промптов с суффиксом _RUS (напр. DETAILED_INSTR_ZEROSHOT_CD_RUS)
     возвращает схему с кириллическими ключами.
     """
     if prompt_template_name and prompt_template_name.endswith("_RUS"):
