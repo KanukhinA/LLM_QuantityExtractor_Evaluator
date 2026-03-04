@@ -26,6 +26,55 @@ import re
 
 BASELINE_KEYWORD = "BASELINE"
 
+# Таблица алиасов методов: (полное_название, alias, описание).
+# Если метода нет в таблице, alias = акроним из первых букв частей (разделитель _), описание = полное название.
+METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
+    ("DETAILED_INSTR_ZEROSHOT_BASELINE", "DIZB", "Детальный zero-shot промпт (baseline)"),
+    ("DETAILED_INSTR_ONESHOT", "DIO", "Детальный one-shot промпт"),
+    ("MINIMAL_FIVESHOT_PROMPT", "MF5", "Минималистичный few-shot (5 примеров)"),
+    ("DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES", "DIZBO", "Zero-shot с outlines (латиница)"),
+    ("DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS", "DIZBOR", "Zero-shot с outlines, схема на кириллице"),
+    ("DETAILED_INSTR_ONESHOT_OUTLINES", "DIOO", "One-shot с outlines (латиница)"),
+    ("DETAILED_INSTR_ONESHOT_OUTLINES_RUS", "DIOOR", "One-shot с outlines, схема на кириллице"),
+    ("MINIMAL_FIVESHOT_APIE_PROMPT", "MF5A", "Few-shot с 5 примерами (APIE)"),
+]
+
+
+def _acronym(name: str) -> str:
+    """Акроним из первых букв частей названия (разделитель _)."""
+    parts = [p.strip() for p in name.split("_") if p.strip()]
+    return "".join(p[0].upper() for p in parts if p) if parts else name.upper()[:4]
+
+
+def _method_alias_and_description(full_name: str) -> Tuple[str, str]:
+    """Возвращает (alias, описание) для метода: из METHOD_ALIAS_TABLE или акроним и полное название."""
+    for f, alias, desc in METHOD_ALIAS_TABLE:
+        if f == full_name:
+            return (alias, desc)
+    return (_acronym(full_name), full_name)
+
+
+def get_method_alias(full_name: str) -> str:
+    """Алиас метода для заголовка таблицы (короткий)."""
+    return _method_alias_and_description(full_name)[0]
+
+
+def get_method_description(full_name: str) -> str:
+    """Описание метода для блока примечаний."""
+    return _method_alias_and_description(full_name)[1]
+
+
+def _build_notes_rows(methods: List[str]) -> List[List[str]]:
+    """Строки для блока примечаний под таблицей: заголовок и строки «ALIAS — определение»."""
+    if not methods:
+        return []
+    rows = [["Примечания"], []]
+    for m in methods:
+        alias = get_method_alias(m)
+        desc = get_method_description(m)
+        rows.append([f"{alias} — {desc}"])
+    return rows
+
 
 def _sort_methods_baseline_first(methods) -> List[str]:
     """Список методов: сначала содержащие BASELINE в названии, остальные по алфавиту."""
@@ -279,7 +328,7 @@ class GoogleSheetsIntegration:
         methods = _sort_methods_baseline_first(methods_set)
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         
-        table_data = [["Модель"] + methods]
+        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
@@ -363,7 +412,7 @@ class GoogleSheetsIntegration:
         """
         models = sorted(set(validation_data.keys()))
         methods = _sort_methods_baseline_first(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
-        table_data = [["Модель"] + methods]
+        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
         green_cells: List[str] = []
         for row_idx, model in enumerate(models):
             row = [model]
@@ -416,7 +465,7 @@ class GoogleSheetsIntegration:
         methods = _sort_methods_baseline_first(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         
-        table_data = [["Модель"] + methods]
+        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
@@ -484,7 +533,7 @@ class GoogleSheetsIntegration:
         models = sorted(set(gpu_memory_data.keys()))
         methods = _sort_methods_baseline_first(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        table_data = [["Модель"] + methods]
+        table_data = [["Модель"] + [get_method_alias(m) for m in methods]]
         green_cells: List[str] = []
         red_cells: List[str] = []
 
@@ -573,6 +622,10 @@ class GoogleSheetsIntegration:
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
             self._apply_cell_format(worksheet, format_info)
+            notes = _build_notes_rows(methods)
+            if notes:
+                start_row = len(table_data) + 2
+                worksheet.update(values=notes, range_name=f"A{start_row}")
             print(f"✅ Данные успешно загружены в лист '{worksheet_name}'")
             print(f"   • Моделей: {len(models)}")
             print(f"   • Методов: {len(methods)}")
@@ -609,6 +662,10 @@ class GoogleSheetsIntegration:
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
             self._apply_cell_format(worksheet, format_info)
+            notes = _build_notes_rows(methods)
+            if notes:
+                start_row = len(table_data) + 2
+                worksheet.update(values=notes, range_name=f"A{start_row}")
             print(f"✅ Validation загружены в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
@@ -638,6 +695,10 @@ class GoogleSheetsIntegration:
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
             self._apply_cell_format(worksheet, format_info)
+            notes = _build_notes_rows(methods)
+            if notes:
+                start_row = len(table_data) + 2
+                worksheet.update(values=notes, range_name=f"A{start_row}")
             print(f"✅ Среднее время инференса загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
@@ -667,6 +728,10 @@ class GoogleSheetsIntegration:
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
             self._apply_cell_format(worksheet, format_info)
+            notes = _build_notes_rows(methods)
+            if notes:
+                start_row = len(table_data) + 2
+                worksheet.update(values=notes, range_name=f"A{start_row}")
             print(f"✅ GPU memory during inference загружено в лист '{worksheet_name}' (моделей: {len(models)}, методов: {len(methods)})")
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
