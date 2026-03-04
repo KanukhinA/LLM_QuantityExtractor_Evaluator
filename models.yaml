@@ -61,22 +61,6 @@ models:
       torch_dtype: "auto"
       enable_thinking: false
 
-  qwen-3.5-4b:
-    name: "Qwen/Qwen3.5-4B"
-    hyperparameters:
-      max_new_tokens: 3904
-      do_sample: false
-      torch_dtype: "bfloat16"
-      enable_thinking: false
-
-  qwen-3.5-9b:
-    name: "Qwen/Qwen3.5-9B"
-    hyperparameters:
-      max_new_tokens: 3904
-      do_sample: false
-      torch_dtype: "auto"
-      enable_thinking: false
-
   # qwen-3-32b:
   #   name: "Qwen/Qwen3-32B"
   #   hyperparameters:
