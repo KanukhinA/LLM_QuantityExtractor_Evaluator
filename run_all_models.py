@@ -4,11 +4,12 @@
 import os
 import sys
 import argparse
+import logging
 from main import run_evaluation
 from gemini_analyzer import check_gemini_api
 from config import GEMINI_API_KEY, MODEL_CONFIGS, OUTPUT_DIR
 from utils import ConsoleLogCapture
-from model_evaluator import StopAllModelsInterrupt
+from model_evaluator import StopAllModelsInterrupt, _append_to_model_errors_log
 
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                    structured_output: bool = False, use_outlines: bool = False,
@@ -156,9 +157,18 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         except Exception as e:
             import traceback
             error_msg = str(e)
+            tb_str = traceback.format_exc()
             print(f"Критическая ошибка при оценке {model_key}: {error_msg}")
-            print(f"   Детали: {traceback.format_exc()[:500]}...")
+            print(f"   Детали: {tb_str[:500]}...")
             print(f"Модель {model_key} пропущена\n")
+            full_msg = f"{error_msg}\n\n{tb_str}"
+            _append_to_model_errors_log(
+                OUTPUT_DIR,
+                "Критическая ошибка при оценке модели (исключение в run_evaluation)",
+                model_key,
+                full_msg,
+            )
+            logging.error("Оценка модели %s: %s", model_key, error_msg)
             results_summary.append({
                 "model": model_key,
                 "status": "error",

@@ -1001,6 +1001,7 @@ python main.py your-model-key --structured-output
 - CUDA-совместимая GPU (рекомендуется 8GB+ VRAM)
 - Hugging Face Token (`HF_TOKEN`)
 - **Flash Attention 2 (опционально, по умолчанию включено):** для ускорения и экономии VRAM установите `pip install flash-attn --no-build-isolation`. Требуется CUDA и совместимый компилятор (обычно доступно в Linux/WSL; на Windows часто недоступно). Если пакет не установлен, локальные модели работают без Flash Attention 2 (выводится предупреждение). Отключить: `set USE_FLASH_ATTENTION_2=0` / `export USE_FLASH_ATTENTION_2=0`.
+- **Ошибка `CUDA error: an illegal memory access was encountered` (cudaErrorIllegalAddress):** GPU обратился по недопустимому адресу. Частые причины: несовместимость драйвера/CUDA с PyTorch или flash-attn; баг в ядре (например Flash Attention 2 при некоторых настройках). Что попробовать: обновить драйвер и CUDA; переустановить PyTorch под свою версию CUDA; временно отключить Flash Attention 2 (`USE_FLASH_ATTENTION_2=0`); перезапустить систему и запускать оценку без других нагрузок на GPU.
 - **4-bit (nf4):** при `torch_dtype: "nf4"` в hyperparameters нужны `bitsandbytes` и `accelerate`. Лимит CPU RAM при 4-bit: переменная окружения `MAX_CPU_GB_4BIT` или `GEMMA_27B_4BIT_MAX_CPU_GB` (по умолчанию 12 GB).
 
 ### 10.3. Требования для API моделей
