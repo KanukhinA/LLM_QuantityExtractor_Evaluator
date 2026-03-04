@@ -124,8 +124,8 @@ DETAILED_INSTR_ONESHOT = """
 {text}
 """
 
-# Версии для режима outlines: пример JSON с латинскими ключами (mass_fractions, other_params и т.д.)
-DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES = """
+# Версии для режима CD: пример JSON с латинскими ключами (mass_fractions, other_params и т.д.)
+DETAILED_INSTR_ZEROSHOT_CD = """
 Ты — эксперт по извлечению численных и количественных характеристик из текстов о химических веществах и удобрениях.  
 Твоя задача:  
 
@@ -181,7 +181,7 @@ DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES = """
 {text}
 """
 
-DETAILED_INSTR_ONESHOT_OUTLINES = """
+DETAILED_INSTR_ONESHOT_CD = """
 Ты — эксперт по извлечению численных и количественных характеристик из текстов о химических веществах и удобрениях.  
 Твоя задача:  
 
@@ -241,7 +241,7 @@ DETAILED_INSTR_ONESHOT_OUTLINES = """
 """
 
 # Версии для outlines с кириллическими ключами (массовая доля, вещество, прочее и т.д.)
-DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS = """
+DETAILED_INSTR_ZEROSHOT_CD_RUS = """
 Ты — эксперт по извлечению численных и количественных характеристик из текстов о химических веществах и удобрениях.  
 Твоя задача:  
 
@@ -297,7 +297,7 @@ DETAILED_INSTR_ZEROSHOT_BASELINE_OUTLINES_RUS = """
 {text}
 """
 
-DETAILED_INSTR_ONESHOT_OUTLINES_RUS = """
+DETAILED_INSTR_ONESHOT_CD_RUS = """
 Ты — эксперт по извлечению численных и количественных характеристик из текстов о химических веществах и удобрениях.  
 Твоя задача:  
 
@@ -867,7 +867,7 @@ JSON_FORMATION_PROMPT = """
   ]
 }}
 
-В начале обязательно выведи: ОТВЕТ:
+Выводи json результат **только после слова ОТВЕТ:**.
 
 Возьми данные для заполнения json отсюда:
 

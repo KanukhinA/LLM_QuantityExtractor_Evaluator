@@ -32,9 +32,9 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный zero-shot промпт (baseline)"),
     ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный one-shot промпт"),
     ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный few-shot (5 примеров)"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "4.1.DIZCO", "Zero-shot constrained decoding (латиница)"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "4.2.DIZCRO", "Zero-shot constrained decoding (кириллица)"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "4.3.DIOCRO", "One-shot  constrained decoding (кириллица)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "4.DIZCO", "Zero-shot constrained decoding (латиница)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "5.DIZCRO", "Zero-shot constrained decoding (кириллица)"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "6.DIOCRO", "One-shot constrained decoding (кириллица)"),
     ("MINIMAL_INSTR_FIVESHOT_APIE", "7.MIFA", "Few-shot с 5 примерами (APIE)"),
 ]
 
