@@ -830,14 +830,22 @@ class ModelEvaluator:
                         response_text = result.get("response", "")
                         json_part = result.get("json", "")
                         parsed_json = result.get("json_parsed", {})
-                        # Очищаем parsed_json от записей с None или [None, None]
-                        if parsed_json and isinstance(parsed_json, dict):
-                            parsed_json = self._clean_parsed_json(parsed_json)
-                            # Обновляем json_part после очистки
+                        # Та же постобработка, что и для одноагентного режима: латиница -> кириллица, очистка
+                        if parsed_json and isinstance(parsed_json, dict) and any(k in LATIN_TO_CYRILLIC_KEYS for k in parsed_json):
+                            parsed_json = latin_to_cyrillic_output(parsed_json)
                             try:
                                 json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
                             except Exception:
-                                pass  # Если не удалось сериализовать, оставляем исходный json_part
+                                pass
+                        elif not parsed_json and json_part and any(f'"{k}"' in json_part for k in LATIN_TO_CYRILLIC_KEYS):
+                            json_part = latin_keys_to_cyrillic_in_json_str(json_part)
+                            parsed_json = parse_json_safe(extract_json_from_response(json_part))
+                        if parsed_json and isinstance(parsed_json, dict):
+                            parsed_json = self._clean_parsed_json(parsed_json)
+                            try:
+                                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                            except Exception:
+                                pass
                         is_valid = result.get("is_valid", False)
                         error_msg = result.get("error")
                         
@@ -1055,14 +1063,22 @@ class ModelEvaluator:
                                         response_text = result.get("response", "")
                                         json_part = result.get("json", "")
                                         parsed_json = result.get("json_parsed", {})
-                                        # Очищаем parsed_json от записей с None или [None, None]
-                                        if parsed_json and isinstance(parsed_json, dict):
-                                            parsed_json = self._clean_parsed_json(parsed_json)
-                                            # Обновляем json_part после очистки
+                                        # Та же постобработка, что и для одноагентного режима: латиница -> кириллица, очистка
+                                        if parsed_json and isinstance(parsed_json, dict) and any(k in LATIN_TO_CYRILLIC_KEYS for k in parsed_json):
+                                            parsed_json = latin_to_cyrillic_output(parsed_json)
                                             try:
                                                 json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
                                             except Exception:
-                                                pass  # Если не удалось сериализовать, оставляем исходный json_part
+                                                pass
+                                        elif not parsed_json and json_part and any(f'"{k}"' in json_part for k in LATIN_TO_CYRILLIC_KEYS):
+                                            json_part = latin_keys_to_cyrillic_in_json_str(json_part)
+                                            parsed_json = parse_json_safe(extract_json_from_response(json_part))
+                                        if parsed_json and isinstance(parsed_json, dict):
+                                            parsed_json = self._clean_parsed_json(parsed_json)
+                                            try:
+                                                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                                            except Exception:
+                                                pass
                                         is_valid = result.get("is_valid", False)
                                         error_msg = result.get("error")
                                         
