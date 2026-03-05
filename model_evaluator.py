@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
 import os
 
+import inspect
 from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response
 from structured_schemas import latin_to_cyrillic_output, latin_keys_to_cyrillic_in_json_str, LATIN_TO_CYRILLIC_KEYS
 from metrics import calculate_quality_metrics, validate_with_pydantic, calculate_raw_output_metrics
@@ -23,6 +24,32 @@ import prompt_config
 from metrics_printer import MetricsPrinter
 from file_manager import FileManager
 import re
+
+
+class _MultiAgentGenerator:
+    """
+    Обёртка над generate_func с теми же гиперпараметрами, что и в стандартном режиме.
+    Для multi_agent по умолчанию отключает enable_thinking, чтобы избежать обрывков/режима thinking.
+    """
+    def __init__(self, model, tokenizer, generate_func: Callable, hyperparameters: Dict[str, Any]):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.generate_func = generate_func
+        self.hp = hyperparameters or {}
+        self._sig = inspect.signature(generate_func).parameters
+
+    def generate(self, prompt: str, max_new_tokens: int = 1792, **kwargs) -> str:
+        optional = {}
+        if "repetition_penalty" in self._sig:
+            optional["repetition_penalty"] = self.hp.get("repetition_penalty") or kwargs.get("repetition_penalty")
+        if "max_length" in self._sig:
+            optional["max_length"] = self.hp.get("max_length") or kwargs.get("max_length")
+        if "enable_thinking" in self._sig:
+            optional["enable_thinking"] = self.hp.get("enable_thinking", False)
+        optional = {k: v for k, v in optional.items() if v is not None or k == "enable_thinking"}
+        return self.generate_func(
+            self.model, self.tokenizer, prompt, max_new_tokens, **optional
+        )
 
 
 try:
@@ -767,17 +794,14 @@ class ModelEvaluator:
         print(f"Всего текстов: {len(self.texts)}")
         print(f"{'='*80}\n")
         
-        # Создаем обертку для генератора для мультиагентного подхода
+        # Создаем обертку для генератора для мультиагентного подхода (те же гиперпараметры, что в стандартном режиме)
         if use_multi_agent:
             if is_api_model:
-                # Для API моделей используем APIGenerator
                 from core.generators import APIGenerator
                 model_name = hyperparameters.get("model_name", "gemma-3-12b-it")
                 generator = APIGenerator(model, tokenizer, model_name=model_name)
             else:
-                # Для локальных моделей используем StandardGenerator
-                from core.generators import StandardGenerator
-                generator = StandardGenerator(model, tokenizer)
+                generator = _MultiAgentGenerator(model, tokenizer, generate_func, hyperparameters)
         
         interrupted = False
         last_processed_index = -1
@@ -817,7 +841,8 @@ class ModelEvaluator:
                             text=text,
                             generator=generator,
                             max_new_tokens=max_new_tokens,
-                            multi_agent_mode=multi_agent_mode
+                            multi_agent_mode=multi_agent_mode,
+                            hyperparameters=hyperparameters,
                         )
                         elapsed = time.time() - start_time
                         times.append(elapsed)
@@ -1052,7 +1077,8 @@ class ModelEvaluator:
                                             text=self.texts[i],
                                             generator=generator,
                                             max_new_tokens=max_new_tokens,
-                                            multi_agent_mode=multi_agent_mode
+                                            multi_agent_mode=multi_agent_mode,
+                                            hyperparameters=hyperparameters,
                                         )
                                         elapsed = time.time() - start_time
                                         times.append(elapsed)

@@ -283,11 +283,14 @@ def handle_agent_error(agent_num: int, error: Exception, elapsed: float,
     }
 
 
-def run_agent_generation(generator, prompt: str, agent_num: int, max_new_tokens: int = 1792) -> tuple:
-    """Выполняет генерацию ответа агента с обработкой прерываний"""
+def run_agent_generation(state: AgentState, prompt: str, agent_num: int) -> tuple:
+    """Выполняет генерацию ответа агента. max_new_tokens и доп. параметры берутся из state."""
+    generator = state.get("generator")
+    max_new_tokens = state.get("max_new_tokens", 1792)
+    generator_kwargs = state.get("generator_kwargs") or {}
     start_time = time.time()
     try:
-        response = generator.generate(prompt=prompt, max_new_tokens=max_new_tokens)
+        response = generator.generate(prompt=prompt, max_new_tokens=max_new_tokens, **generator_kwargs)
         elapsed = time.time() - start_time
         return response, elapsed, None
     except KeyboardInterrupt:
@@ -316,7 +319,7 @@ def extract_numeric_fragments(state: AgentState) -> AgentState:
     
     try:
         prompt = NUMERIC_FRAGMENTS_EXTRACTION_PROMPT.format(text=text)
-        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
         
         # Извлекаем фрагменты, убирая инструкции если есть
         numeric_fragments = extract_fragments_from_instructions(response)
@@ -386,7 +389,7 @@ def extract_mass_fractions(state: AgentState) -> AgentState:
             numeric_fragments=numeric_fragments
         )
         
-        response, elapsed, _ = run_agent_generation(generator, prompt, 2, 512)
+        response, elapsed, _ = run_agent_generation(state, prompt, 2)
         mass_fractions = response.strip() if response else ""
         
         # Выводим промпт и ответ всегда
@@ -440,7 +443,7 @@ def extract_other_parameters(state: AgentState) -> AgentState:
             numeric_fragments=numeric_fragments
         )
         
-        response, elapsed, _ = run_agent_generation(generator, prompt, 3, 512)
+        response, elapsed, _ = run_agent_generation(state, prompt, 3)
         other_parameters = response.strip() if response else ""
         
         # Выводим промпт и ответ всегда
@@ -493,7 +496,7 @@ def form_json(state: AgentState) -> AgentState:
             other_parameters=other_parameters
         )
         
-        response, elapsed, _ = run_agent_generation(generator, prompt, 4, 1024)
+        response, elapsed, _ = run_agent_generation(state, prompt, 4)
         
         # Извлекаем JSON из ответа
         json_part = extract_json_from_response(response)
@@ -608,7 +611,7 @@ def generate_initial_response(state: AgentState) -> AgentState:
         from utils import build_prompt3
         prompt = build_prompt3(text)
         
-        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
         
         # Извлекаем JSON из ответа, если есть
         json_part = extract_json_from_response(response)
@@ -664,7 +667,7 @@ def critique_response(state: AgentState) -> AgentState:
     
     try:
         critic_prompt = CRITIC_PROMPT.format(prompt=prompt, response=initial_response)
-        response, elapsed, _ = run_agent_generation(generator, critic_prompt, 2, 512)
+        response, elapsed, _ = run_agent_generation(state, critic_prompt, 2)
         
         # Извлекаем JSON из ответа критика
         critic_json = extract_json_from_response(response)
@@ -754,7 +757,7 @@ def correct_response(state: AgentState) -> AgentState:
             critic_analysis=critic_analysis
         )
         
-        response, elapsed, _ = run_agent_generation(generator, corrector_prompt, 3, 512)
+        response, elapsed, _ = run_agent_generation(state, corrector_prompt, 3)
         
         # Извлекаем JSON из исправленного ответа
         json_part = extract_json_from_response(response)
@@ -821,7 +824,7 @@ def extract_nutrients(state: AgentState) -> AgentState:
     
     try:
         prompt = QA_NUTRIENTS_PROMPT.format(text=text)
-        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
         
         # Извлекаем JSON из ответа
         json_str = extract_json_from_response(response)
@@ -890,7 +893,7 @@ def extract_all_nutrient_values(state: AgentState) -> AgentState:
         try:
             print(f"   [{i}/{len(nutrients)}] Обработка вещества: {substance}...", end=" ", flush=True)
             prompt = QA_NUTRIENT_PROMPT.format(text=text, substance=substance)
-            response, elapsed, _ = run_agent_generation(generator, prompt, 2, 256)
+            response, elapsed, _ = run_agent_generation(state, prompt, 2)
             total_elapsed += elapsed
             
             # Извлекаем JSON из ответа
@@ -951,7 +954,7 @@ def extract_standard(state: AgentState) -> AgentState:
     
     try:
         prompt = QA_STANDARD_PROMPT.format(text=text)
-        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 256)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
         
         # Извлекаем JSON из ответа
         json_str = extract_json_from_response(response)
@@ -1003,7 +1006,7 @@ def extract_grade(state: AgentState) -> AgentState:
     
     try:
         prompt = QA_GRADE_PROMPT.format(text=text)
-        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 256)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
         
         # Извлекаем JSON из ответа
         json_str = extract_json_from_response(response)
@@ -1055,7 +1058,7 @@ def extract_quantities(state: AgentState) -> AgentState:
     
     try:
         prompt = QA_QUANTITY_PROMPT.format(text=text)
-        response, elapsed, _ = run_agent_generation(generator, prompt, 1, 512)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
         
         # Извлекаем JSON из ответа
         json_str = extract_json_from_response(response)
@@ -1364,23 +1367,21 @@ def process_with_multi_agent(
     text: str,
     generator,
     max_new_tokens: int = 1792,
-    multi_agent_mode: str = "simple_4agents"
+    multi_agent_mode: str = "simple_4agents",
+    hyperparameters: dict = None,
 ) -> dict:
     """
-    Обрабатывает текст с использованием мультиагентного подхода
-    
-    Args:
-        text: входной текст для обработки
-        generator: генератор для использования
-        max_new_tokens: максимальное количество токенов
-        multi_agent_mode: режим мультиагентного подхода (по умолчанию "simple_4agents")
-        
-    Returns:
-        Словарь с результатами обработки
+    Обрабатывает текст с использованием мультиагентного подхода.
+    Гиперпараметры (max_new_tokens, repetition_penalty и т.д.) совпадают со стандартным режимом.
     """
     graph = create_multi_agent_graph(mode=multi_agent_mode)
-    
-    # Инициализируем базовое состояние
+    hp = hyperparameters or {}
+    generator_kwargs = {}
+    if hp.get("repetition_penalty") is not None:
+        generator_kwargs["repetition_penalty"] = hp["repetition_penalty"]
+    if hp.get("max_length") is not None:
+        generator_kwargs["max_length"] = hp["max_length"]
+
     initial_state: AgentState = {
         "text": text,
         "numeric_fragments": "",
@@ -1395,6 +1396,8 @@ def process_with_multi_agent(
         "error": None,
         "time": 0.0,
         "generator": generator,
+        "max_new_tokens": max_new_tokens,
+        "generator_kwargs": generator_kwargs,
         # Поля для critic_3agents
         "prompt": "",
         "initial_response": "",
