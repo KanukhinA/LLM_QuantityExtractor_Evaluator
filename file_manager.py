@@ -47,13 +47,18 @@ class FileManager:
         sanitized = re.sub(r'_+', '_', sanitized)
         # Удаляем подчеркивания в начале и конце
         sanitized = sanitized.strip('_')
-        
-        # Если после санитизации имя пустое, возвращаем "unknown"
-        if not sanitized:
-            return "unknown"
-        
-        return sanitized
-    
+        return sanitized if sanitized else "unknown"
+
+    @staticmethod
+    def multi_agent_folder_name(mode: str) -> str:
+        """
+        Имя папки для мультиагентного подхода: MA_ + название режима капсом (напр. MA_SIMPLE_4AGENTS).
+        """
+        if not mode or not str(mode).strip():
+            return "MA_UNKNOWN"
+        name = "MA_" + str(mode).strip().upper().replace(" ", "_")
+        return FileManager.sanitize_filename(name) or "MA_UNKNOWN"
+
     def ensure_directory(self, directory_path: str) -> None:
         """
         Создает директорию, если она не существует.
@@ -307,7 +312,7 @@ class FileManager:
         use_guidance = hyperparameters.get("use_guidance", False)
         
         if multi_agent_mode:
-            prompt_folder_name = FileManager.sanitize_filename(multi_agent_mode)
+            prompt_folder_name = FileManager.multi_agent_folder_name(multi_agent_mode)
         else:
             prompt_folder_name = FileManager.sanitize_filename(prompt_template_name)
         

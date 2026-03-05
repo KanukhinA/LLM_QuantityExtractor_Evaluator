@@ -168,7 +168,8 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
             prompt_template_name = result.get("prompt_template", "unknown")
             
             if multi_agent_mode:
-                prompt_folder_name = sanitize_filename(multi_agent_mode)
+                from file_manager import FileManager
+                prompt_folder_name = FileManager.multi_agent_folder_name(multi_agent_mode)
             else:
                 prompt_folder_name = sanitize_filename(prompt_template_name)
             
