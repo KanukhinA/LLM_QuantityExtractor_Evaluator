@@ -557,7 +557,7 @@ python google_sheets_integration.py --spreadsheet-id YOUR_SPREADSHEET_ID --group
 **Аргументы командной строки:**
 
 Для загрузки в Google Таблицу при запуске без аргументов используются:
-- **Credentials:** файл `google_sheets_credentials.json` в корне проекта (или `--credentials путь`)
+- **Credentials:** файл `google_sheets_credentials.json` в корне проекта
 - **ID таблицы:** `GOOGLE_SHEETS_SPREADSHEET_ID` в `config_secrets.py` или переменная окружения (или `--spreadsheet-id ID`)
 
 Опциональные:

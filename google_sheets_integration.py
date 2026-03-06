@@ -157,9 +157,19 @@ class GoogleSheetsIntegration:
             raise Exception(f"Ошибка инициализации Google Sheets клиента: {e}")
 
     def _ensure_client(self) -> None:
-        """Проверяет, что клиент инициализирован; иначе выбрасывает исключение."""
-        if not self.client:
-            raise Exception("Google Sheets клиент не инициализирован. Укажите credentials_path.")
+        """Проверяет, что клиент инициализирован; при возможности инициализирует лениво."""
+        if self.client:
+            return
+        if not GSPREAD_AVAILABLE:
+            raise Exception(
+                "Библиотеки Google Sheets не установлены. Установите: pip install gspread google-auth"
+            )
+        if not self.credentials_path:
+            raise Exception(
+                "Google Sheets клиент не инициализирован: не указан путь к credentials JSON. "
+                f"Положите {DEFAULT_CREDENTIALS_FILENAME} в корень проекта."
+            )
+        self._initialize_client()
     
     def find_metrics_files(self) -> List[str]:
         """
@@ -808,6 +818,15 @@ def _default_spreadsheet_id() -> Optional[str]:
     return os.environ.get("GOOGLE_SHEETS_SPREADSHEET_ID")
 
 
+def _default_credentials_path(script_dir: str) -> Optional[str]:
+    """Путь к JSON credentials в корне проекта."""
+    default_creds_path = os.path.join(script_dir, DEFAULT_CREDENTIALS_FILENAME)
+    if os.path.exists(default_creds_path):
+        return default_creds_path
+
+    return None
+
+
 def main():
     """
     Запуск без аргументов: обход results/, выбор последнего запуска по каждой паре
@@ -816,15 +835,11 @@ def main():
     import argparse
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_creds_path = os.path.join(script_dir, DEFAULT_CREDENTIALS_FILENAME)
-
     parser = argparse.ArgumentParser(
         description="Экспорт метрик в Google Таблицу. Без аргументов: обход results, последние запуски по каждой паре (модель, метод), загрузка в таблицу."
     )
     parser.add_argument("--results-dir", type=str, default=None,
                         help=f"Папка с результатами (по умолчанию: из config.OUTPUT_DIR или results)")
-    parser.add_argument("--credentials", type=str, default=None,
-                        help=f"Путь к JSON credentials (по умолчанию: {DEFAULT_CREDENTIALS_FILENAME} в корне проекта)")
     parser.add_argument("--spreadsheet-id", type=str, default=None,
                         help="ID Google Таблицы (из URL). Или GOOGLE_SHEETS_SPREADSHEET_ID в config/env.")
     parser.add_argument("--worksheet", type=str, default=None,
@@ -840,9 +855,7 @@ def main():
     args = parser.parse_args()
 
     results_dir = args.results_dir or _default_results_dir()
-    credentials_path = args.credentials
-    if credentials_path is None and os.path.exists(default_creds_path):
-        credentials_path = default_creds_path
+    credentials_path = _default_credentials_path(script_dir)
     spreadsheet_id = args.spreadsheet_id or _default_spreadsheet_id()
 
     integration = GoogleSheetsIntegration(
@@ -889,7 +902,10 @@ def main():
         return
 
     if not credentials_path:
-        print("⚠️ Не указан файл с credentials. Положите google_sheets_credentials.json в корень проекта или передайте --credentials.")
+        print(
+            "⚠️ Не указан файл с credentials. "
+            f"Положите {DEFAULT_CREDENTIALS_FILENAME} в корень проекта."
+        )
         _print_metrics()
         return
 
