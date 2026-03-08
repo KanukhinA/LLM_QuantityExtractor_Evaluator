@@ -40,10 +40,11 @@ def _from_pretrained_local_first(loader, *args, **kwargs):
     return loader(*args, **kwargs)
 
 
-def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None, max_length=None):
+def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty=None, max_length=None, use_cache=True):
     """
     Собирает GenerationConfig с явным max_new_tokens, eos_token_id и pad_token_id.
     max_length (из models.yaml) задаёт верхнюю границу общей длины последовательности (input + output).
+    use_cache передаётся в config, чтобы не смешивать generation_config с отдельными kwargs (deprecation в transformers).
     """
     from transformers import GenerationConfig
     eos = None
@@ -56,7 +57,7 @@ def _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty
     pad = getattr(tokenizer, "pad_token_id", None) if tokenizer else None
     if pad is None and eos is not None:
         pad = eos[0] if isinstance(eos, list) else eos
-    kwargs = {"do_sample": False, "eos_token_id": eos, "pad_token_id": pad}
+    kwargs = {"do_sample": False, "eos_token_id": eos, "pad_token_id": pad, "use_cache": use_cache}
     if max_new_tokens is not None:
         kwargs["max_new_tokens"] = int(max_new_tokens)
     if repetition_penalty is not None:
@@ -800,7 +801,7 @@ def generate_mistral(
             attention_mask = attention_mask.to(model.device)
 
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    gen_kw = {"input_ids": input_ids, "generation_config": gen_config, "use_cache": True}
+    gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
     if attention_mask is not None:
         gen_kw["attention_mask"] = attention_mask
     with torch.no_grad():
@@ -808,7 +809,10 @@ def generate_mistral(
             output_ids = model.generate(**gen_kw)
         except AttributeError as e:
             if "from_legacy_cache" in str(e):
-                gen_kw["use_cache"] = False
+                gen_config = _make_generation_config(
+                    model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length, use_cache=False
+                )
+                gen_kw["generation_config"] = gen_config
                 output_ids = model.generate(**gen_kw)
             else:
                 raise
@@ -867,7 +871,7 @@ def generate_standard(
     attention_mask = inputs.get("attention_mask")
 
     gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
-    gen_kw = {"input_ids": input_ids, "generation_config": gen_config, "use_cache": True}
+    gen_kw = {"input_ids": input_ids, "generation_config": gen_config}
     if attention_mask is not None:
         gen_kw["attention_mask"] = attention_mask
     with torch.no_grad():
@@ -875,7 +879,10 @@ def generate_standard(
             output_ids = model.generate(**gen_kw)
         except AttributeError as e:
             if "from_legacy_cache" in str(e):
-                gen_kw["use_cache"] = False
+                gen_config = _make_generation_config(
+                    model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length, use_cache=False
+                )
+                gen_kw["generation_config"] = gen_config
                 output_ids = model.generate(**gen_kw)
             else:
                 raise
