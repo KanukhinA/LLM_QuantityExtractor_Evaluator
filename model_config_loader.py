@@ -86,6 +86,8 @@ def load_model_configs():
                     generate_func_name = "generate_gemma"
                 elif "t5" in model_key or "t5gemma" in model_key:
                     generate_func_name = "generate_t5"
+                elif "mistralai" in (model_config.get("name") or "").lower() or "ministral" in (model_config.get("name") or "").lower():
+                    generate_func_name = "generate_mistral"
                 else:
                     generate_func_name = "generate_standard"
         

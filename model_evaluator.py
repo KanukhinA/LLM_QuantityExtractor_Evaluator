@@ -9,6 +9,7 @@ import pandas as pd
 import json
 import copy
 import glob
+import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
 import os
@@ -68,6 +69,25 @@ def _is_outlines_vocabulary_error(exc: BaseException) -> bool:
     if "found no transitions" in msg and "missing tokens" in msg:
         return True
     return False
+
+
+# Контекст текущей оценки: предупреждения во время evaluate_model пишутся в model_errors.log с указанием модели
+_eval_warning_context: Dict[str, Optional[str]] = {"model_name": None, "output_dir": None}
+_prev_showwarning = None
+
+
+def _eval_showwarning(message, category, filename, lineno, file=None, line=None):
+    """Перехват предупреждений во время оценки: запись в model_errors.log с именем модели."""
+    ctx = _eval_warning_context
+    if ctx.get("output_dir") and ctx.get("model_name"):
+        _append_to_model_errors_log(
+            ctx["output_dir"],
+            "WARNING (во время оценки)",
+            ctx["model_name"],
+            f"{category.__name__ if category else 'Warning'}: {message}",
+        )
+    if _prev_showwarning is not None:
+        _prev_showwarning(message, category, filename, lineno, file, line)
 
 
 def _append_to_model_errors_log(output_dir: str, title: str, model_name: str, message: str) -> None:
@@ -808,7 +828,14 @@ class ModelEvaluator:
         timeout_reason = None
         max_inference_time_seconds = MAX_INFERENCE_TIME_MINUTES * 60
         last_outlines_skip = False
-        
+
+        # Чтобы предупреждения (в т.ч. от mistral-common про tokenize=False) писались в model_errors.log с именем модели
+        global _prev_showwarning, _eval_warning_context
+        _eval_warning_context["model_name"] = model_name
+        _eval_warning_context["output_dir"] = self.output_dir
+        _prev_showwarning = warnings.showwarning
+        warnings.showwarning = _eval_showwarning
+
         try:
             for i, text in enumerate(self.texts):
                 # Проверяем среднее время инференса (сумма/количество) перед обработкой нового текста
@@ -1260,7 +1287,13 @@ class ModelEvaluator:
                     print("\n\n⚠️  Повторное прерывание. Завершение без сохранения...")
                     interrupted = True
                     break
-        
+        finally:
+            if _prev_showwarning is not None:
+                warnings.showwarning = _prev_showwarning
+                _prev_showwarning = None
+            _eval_warning_context["model_name"] = None
+            _eval_warning_context["output_dir"] = None
+
         # Вычисляем метрики
         total_time = time.time() - total_start_time
         print(f"\n{'='*80}")

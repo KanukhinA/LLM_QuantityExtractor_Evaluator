@@ -92,8 +92,18 @@ def _get_flash_attn_kwargs() -> dict:
         return {}
 
 
+def _is_mistral_common_backend(tokenizer: Any) -> bool:
+    """Проверяет, что токенизатор — MistralCommonBackend (для него tokenize=False небезопасен)."""
+    cls_name = str(getattr(getattr(tokenizer, "__class__", None), "__name__", "") or "")
+    return cls_name == "MistralCommonBackend"
+
+
 def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
-    """Если у токенизатора есть chat_template (Mistral, Llama и др.), форматирует промпт как user message."""
+    """Если у токенизатора есть chat_template (Llama и др.), форматирует промпт как user message.
+    Для MistralCommonBackend не вызываем apply_chat_template(tokenize=False) — он небезопасен;
+    для генерации Mistral используйте generate_mistral()."""
+    if _is_mistral_common_backend(tokenizer):
+        return prompt
     try:
         messages = [{"role": "user", "content": prompt}]
         return tokenizer.apply_chat_template(
@@ -761,6 +771,59 @@ def generate_gemma(
         return text.strip()
 
 
+def generate_mistral(
+    model: Any,
+    tokenizer: Any,
+    prompt: str,
+    max_new_tokens: int = 1792,
+    repetition_penalty: float = None,
+    max_length: int = None,
+    **kwargs: Any,
+) -> str:
+    """
+    Генерация для моделей Mistral 3 (MistralCommonBackend).
+    Всегда использует apply_chat_template(..., tokenize=True); без fallback на tokenize=False.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    out = tokenizer.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+    )
+    if isinstance(out, torch.Tensor):
+        input_ids = out.to(model.device)
+        attention_mask = None
+    else:
+        input_ids = out["input_ids"].to(model.device)
+        attention_mask = out.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(model.device)
+
+    gen_config = _make_generation_config(model, tokenizer, max_new_tokens, repetition_penalty, max_length=max_length)
+    gen_kw = {"input_ids": input_ids, "generation_config": gen_config, "use_cache": True}
+    if attention_mask is not None:
+        gen_kw["attention_mask"] = attention_mask
+    with torch.no_grad():
+        try:
+            output_ids = model.generate(**gen_kw)
+        except AttributeError as e:
+            if "from_legacy_cache" in str(e):
+                gen_kw["use_cache"] = False
+                output_ids = model.generate(**gen_kw)
+            else:
+                raise
+
+    input_length = input_ids.shape[1]
+    generated_ids = output_ids[0][input_length:]
+    text = _decode_and_clean(tokenizer, generated_ids)
+    if not text.strip():
+        full_text = _decode_and_clean(tokenizer, output_ids[0])
+        input_prefix = _decode_and_clean(tokenizer, input_ids[0])
+        if input_prefix and full_text.startswith(input_prefix):
+            text = full_text[len(input_prefix):].strip()
+        else:
+            text = full_text.strip()
+    return text.strip()
+
+
 def generate_standard(
     model,
     tokenizer,
@@ -780,6 +843,13 @@ def generate_standard(
 
     max_length: из models.yaml — верхняя граница общей длины (input + output).
     """
+    if _is_mistral_common_backend(tokenizer):
+        return generate_mistral(
+            model, tokenizer, prompt,
+            max_new_tokens=max_new_tokens,
+            repetition_penalty=repetition_penalty,
+            max_length=max_length,
+        )
     if use_guidance and response_schema is not None:
         from outlines_schema import get_outlines_schema_rus_str, get_outlines_schema_str
         schema_str = get_outlines_schema_rus_str() if prompt_template_name is None else get_outlines_schema_str(prompt_template_name)
@@ -811,14 +881,12 @@ def generate_standard(
     input_length = input_ids.shape[1]
     generated_ids = output_ids[0][input_length:]
     text = _decode_and_clean(tokenizer, generated_ids)
-
     if not text.strip():
         text = _decode_and_clean(tokenizer, output_ids[0])
         if text.startswith(formatted_prompt):
             text = text[len(formatted_prompt):].strip()
         elif text.startswith(prompt):
             text = text[len(prompt):].strip()
-
     return text.strip()
 
 

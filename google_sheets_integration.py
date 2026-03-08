@@ -381,12 +381,14 @@ class GoogleSheetsIntegration:
                     else:
                         diff = f1_score - baseline_val
                         sign = "+" if diff >= 0 else ""
-                        row.append(f"{f1_score:.4f} ({sign}{diff:.2f})")
-                        cell_a1 = _data_cell_a1(row_idx, col_idx)
-                        if diff > 0:
-                            green_cells.append(cell_a1)
-                        elif diff < 0:
-                            red_cells.append(cell_a1)
+                        cell_val = f"{f1_score:.4f} ({sign}{diff:.2f})"
+                        row.append(cell_val)
+                        if cell_val.strip() != "-":
+                            cell_a1 = _data_cell_a1(row_idx, col_idx)
+                            if diff > 0:
+                                green_cells.append(cell_a1)
+                            elif diff < 0:
+                                red_cells.append(cell_a1)
                 else:
                     row.append("-")
             table_data.append(row)
@@ -468,7 +470,10 @@ class GoogleSheetsIntegration:
         num_cols = len(methods)
         if num_cols > 0 and len(table_data) > 1:
             metrics_range = f"B2:{_col_letter_1based(1 + num_cols)}{len(table_data)}"
-            worksheet.format(metrics_range, {"horizontalAlignment": "CENTER"})
+            worksheet.format(metrics_range, {
+                "horizontalAlignment": "CENTER",
+                "backgroundColor": {"red": 1, "green": 1, "blue": 1}
+            })
         self._apply_cell_format(worksheet, format_info)
         notes = _build_notes_rows(methods)
         if notes:
@@ -496,8 +501,9 @@ class GoogleSheetsIntegration:
             row = [model]
             for col_idx, method in enumerate(methods):
                 val = validation_data.get(model, {}).get(method, "")
-                row.append(val if val else "-")
-                if val:
+                cell_val = val if val else "-"
+                row.append(cell_val)
+                if cell_val and cell_val.strip() != "-":
                     match = re.match(r"^(\d+\.?\d*)", str(val).replace(",", "."))
                     if match:
                         try:
@@ -559,12 +565,14 @@ class GoogleSheetsIntegration:
                     else:
                         diff = sec - baseline_val
                         sign = "+" if diff >= 0 else ""
-                        row.append(f"{sec:.3f} ({sign}{diff:.3f})")
-                        cell_a1 = _data_cell_a1(row_idx, col_idx)
-                        if diff < 0:
-                            green_cells.append(cell_a1)
-                        elif diff > 0:
-                            red_cells.append(cell_a1)
+                        cell_val = f"{sec:.3f} ({sign}{diff:.3f})"
+                        row.append(cell_val)
+                        if cell_val.strip() != "-":
+                            cell_a1 = _data_cell_a1(row_idx, col_idx)
+                            if diff < 0:
+                                green_cells.append(cell_a1)
+                            elif diff > 0:
+                                red_cells.append(cell_a1)
                 else:
                     row.append("-")
             table_data.append(row)
@@ -579,18 +587,18 @@ class GoogleSheetsIntegration:
 
         avg_row = [AVG_ROW_LABEL]
         for col_idx, method in enumerate(methods):
-            improvements = []
+            diffs = []
             for model in models:
                 baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
                 sec = inference_time_data.get(model, {}).get(method)
                 if (baseline_val is not None and (isinstance(baseline_val, (int, float)) and abs(float(baseline_val)) >= 1e-6)
                     and sec is not None and (isinstance(sec, (int, float)) and abs(float(sec)) >= 1e-6)
                     and method != baseline_method):
-                    improvements.append(float(baseline_val) - float(sec))
-            if improvements:
-                avg_imp = sum(improvements) / len(improvements)
-                sign = "+" if avg_imp >= 0 else ""
-                avg_row.append(f"{sign}{avg_imp:.3f}")
+                    diffs.append(float(sec) - float(baseline_val))
+            if diffs:
+                avg_diff = sum(diffs) / len(diffs)
+                sign = "+" if avg_diff >= 0 else ""
+                avg_row.append(f"{sign}{avg_diff:.3f}")
             else:
                 avg_row.append("-")
         table_data.append(avg_row)
@@ -643,12 +651,14 @@ class GoogleSheetsIntegration:
                     else:
                         diff = baseline_val - gb
                         sign = "+" if diff >= 0 else ""
-                        row.append(f"{gb:.2f} ({sign}{diff:.2f})")
-                        cell_a1 = _data_cell_a1(row_idx, col_idx)
-                        if diff > 0:
-                            green_cells.append(cell_a1)
-                        elif diff < 0:
-                            red_cells.append(cell_a1)
+                        cell_val = f"{gb:.2f} ({sign}{diff:.2f})"
+                        row.append(cell_val)
+                        if cell_val.strip() != "-":
+                            cell_a1 = _data_cell_a1(row_idx, col_idx)
+                            if diff > 0:
+                                green_cells.append(cell_a1)
+                            elif diff < 0:
+                                red_cells.append(cell_a1)
             table_data.append(row)
 
         avg_row = [AVG_ROW_LABEL]
@@ -662,12 +672,14 @@ class GoogleSheetsIntegration:
             if diffs:
                 avg_diff = sum(diffs) / len(diffs)
                 sign = "+" if avg_diff >= 0 else ""
-                avg_row.append(f"{sign}{avg_diff:.2f}")
-                cell_avg = _data_cell_a1(num_model_rows, col_idx)
-                if avg_diff > 0:
-                    green_cells.append(cell_avg)
-                elif avg_diff < 0:
-                    red_cells.append(cell_avg)
+                cell_val = f"{sign}{avg_diff:.2f}"
+                avg_row.append(cell_val)
+                if cell_val.strip() != "-":
+                    cell_avg = _data_cell_a1(num_model_rows, col_idx)
+                    if avg_diff > 0:
+                        green_cells.append(cell_avg)
+                    elif avg_diff < 0:
+                        red_cells.append(cell_avg)
             else:
                 avg_row.append("-")
         table_data.append(avg_row)
