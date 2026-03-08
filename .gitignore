@@ -1,6 +1,5 @@
 # Секретные ключи API
 config_secrets.py
-evaluation_summary.jsonl
 
 # Google API (Service Account JSON)
 google_sheets_credentials.json

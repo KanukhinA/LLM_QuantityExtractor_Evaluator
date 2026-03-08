@@ -52,53 +52,80 @@ from config import PROMPT_TEMPLATE_NAME, DATASET_FILENAME
 
 
 class _TeeWriter:
-    """Пишет в два потока: оригинальный и буфер (для сохранения лога консоли)."""
-    def __init__(self, stream, buffer):
+    """Пишет в оригинальный поток и в sink (буфер и/или файл)."""
+    def __init__(self, stream, sink):
         self._stream = stream
-        self._buffer = buffer
+        self._sink = sink
 
     def write(self, data):
         self._stream.write(data)
-        self._buffer.write(data)
+        self._sink.write(data)
 
     def flush(self):
         self._stream.flush()
-        self._buffer.flush()
+        self._sink.flush()
 
     def __getattr__(self, name):
         return getattr(self._stream, name)
 
 
+class _BufferAndFileSink:
+    """Пишет в буфер и в файл при каждом write; flush файла для записи на диск в реальном времени."""
+    def __init__(self, buffer: io.StringIO, file_handle):
+        self._buffer = buffer
+        self._file = file_handle
+
+    def write(self, data: str):
+        self._buffer.write(data)
+        try:
+            self._file.write(data)
+            self._file.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        self._buffer.flush()
+        try:
+            self._file.flush()
+        except Exception:
+            pass
+
+
 class ConsoleLogCapture:
     """
-    Контекстный менеджер: перехватывает stdout/stderr в буфер и при выходе
-    перезаписывает файл evaluation_summary.log содержимым буфера.
+    Контекстный менеджер: перехватывает stdout/stderr, дублирует вывод в консоль и
+    в файл evaluation_summary.log. Запись в файл идёт в реальном времени (при каждом write),
+    а не только при выходе из контекста.
     """
     def __init__(self, log_path: str):
         self.log_path = log_path
         self._buffer = None
+        self._log_file = None
         self._orig_stdout = None
         self._orig_stderr = None
 
     def __enter__(self):
         self._buffer = io.StringIO()
+        d = os.path.dirname(self.log_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        self._log_file = open(self.log_path, "w", encoding="utf-8")
+        sink = _BufferAndFileSink(self._buffer, self._log_file)
         self._orig_stdout = sys.stdout
         self._orig_stderr = sys.stderr
-        sys.stdout = _TeeWriter(sys.stdout, self._buffer)
-        sys.stderr = _TeeWriter(sys.stderr, self._buffer)
+        sys.stdout = _TeeWriter(sys.stdout, sink)
+        sys.stderr = _TeeWriter(sys.stderr, sink)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout = self._orig_stdout
         sys.stderr = self._orig_stderr
         try:
-            d = os.path.dirname(self.log_path)
-            if d:
-                os.makedirs(d, exist_ok=True)
-            with open(self.log_path, "w", encoding="utf-8") as f:
-                f.write(self._buffer.getvalue())
+            if self._log_file is not None:
+                self._log_file.close()
         except Exception:
             pass
+        self._log_file = None
         return None
 
 

@@ -762,11 +762,13 @@ def generate_gemma(
         text = _decode_and_clean(tokenizer, generated_ids)
 
         if not text.strip():
-            text = _decode_and_clean(tokenizer, output_ids[0])
-            if text.startswith(formatted_prompt):
-                text = text[len(formatted_prompt):].strip()
-            elif text.startswith(prompt):
-                text = text[len(prompt):].strip()
+            full_text = _decode_and_clean(tokenizer, output_ids[0])
+            if full_text.startswith(formatted_prompt):
+                text = full_text[len(formatted_prompt):].strip()
+            elif full_text.startswith(prompt):
+                text = full_text[len(prompt):].strip()
+            else:
+                text = ""
 
         return text.strip()
 
@@ -820,7 +822,7 @@ def generate_mistral(
         if input_prefix and full_text.startswith(input_prefix):
             text = full_text[len(input_prefix):].strip()
         else:
-            text = full_text.strip()
+            text = ""  # не удалось выделить ответ по префиксу — не возвращаем промпт как ответ
     return text.strip()
 
 
@@ -882,11 +884,13 @@ def generate_standard(
     generated_ids = output_ids[0][input_length:]
     text = _decode_and_clean(tokenizer, generated_ids)
     if not text.strip():
-        text = _decode_and_clean(tokenizer, output_ids[0])
-        if text.startswith(formatted_prompt):
-            text = text[len(formatted_prompt):].strip()
-        elif text.startswith(prompt):
-            text = text[len(prompt):].strip()
+        full_text = _decode_and_clean(tokenizer, output_ids[0])
+        if full_text.startswith(formatted_prompt):
+            text = full_text[len(formatted_prompt):].strip()
+        elif full_text.startswith(prompt):
+            text = full_text[len(prompt):].strip()
+        else:
+            text = ""  # не удалось выделить ответ — не возвращаем полную последовательность как ответ
     return text.strip()
 
 

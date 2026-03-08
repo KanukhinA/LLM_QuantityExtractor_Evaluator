@@ -693,11 +693,9 @@ python main.py qwen-3-32b-api --multi-agent simple_4agents
    - `прочее` - метрики качества для прочих параметров
    - `ошибки` - список ошибок с полями: `text_index`, `text`, `response`, `prompt`, `errors`
 
-4. **evaluation_summary.jsonl** - Общий файл со всеми прогонами (JSON Lines формат)
+4. **evaluation_summary.log** - Консольный вывод последнего запуска оценки (`main.py` или `run_all_models.py`): всё, что выводится в stdout/stderr, дублируется в этот файл в реальном времени. Файл перезаписывается при каждом новом запуске.
 
-5. **evaluation_summary.log** - Лог консольного вывода последнего запуска оценки (`main.py` или `run_all_models.py`); файл перезаписывается при каждом новом запуске
-
-6. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
+5. **gemini_analysis_model_name_timestamp.json** - Анализ ошибок от Gemini API (если включен)
 
 **Структура папок результатов:**
 

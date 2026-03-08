@@ -484,13 +484,7 @@ class FileManager:
         else:
             print(f"⚠️ Raw метрики не найдены в evaluation_result, файл raw_metrics не будет создан")
         
-        # 4. Обновляем summary файл
-        summary_path = self.build_path(output_dir, "evaluation_summary.jsonl")
-        self.append_text(json.dumps(evaluation_result, ensure_ascii=False) + '\n', summary_path)
-        saved_files["summary"] = summary_path
-        print(f"💾 Результат добавлен в общий файл: {summary_path}")
-        
-        # 5. Сохраняем ошибки качества
+        # 4. Сохраняем ошибки качества
         quality_metrics = evaluation_result.get("quality_metrics")
         if quality_metrics:
             errors_path = self.build_path(prompt_dir, f"quality_errors_{model_name_for_file}_{timestamp}.txt")
