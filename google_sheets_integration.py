@@ -32,11 +32,12 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный zero-shot промпт (baseline)"),
     ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный one-shot промпт"),
     ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный few-shot (5 примеров)"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "4.DIZCRO", "Zero-shot constrained decoding c outlines (кириллица)"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "5.DIOCRO", "One-shot constrained decoding c outlines (кириллица)"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "6.DIOCRG", "One-shot constrained decoding с guidance (кириллица)"),
-    ("MA_SIMPLE_4AGENTS", "7.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
-    ("MA_CRITIC_3AGENTS", "8.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "4.DIZCRO", "Zero-shot constrained decoding c outlines"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "5.DIOCRO", "One-shot constrained decoding c outlines"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "6.DIZCRG", "Zero-shot constrained decoding c guidance"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "7.DIOCRG", "One-shot constrained decoding с guidance"),
+    ("MA_SIMPLE_4AGENTS", "8.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
+    ("MA_CRITIC_3AGENTS", "9.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
     ("MINIMAL_INSTR_FIVESHOT_APIE", "10.MIFA", "Few-shot с 5 примерами (APIE)"),
 ]
 
@@ -81,7 +82,7 @@ def _build_notes_rows(methods: List[str]) -> List[List[str]]:
     """Строки для блока примечаний под таблицей: заголовок и строки «ALIAS — определение»."""
     if not methods:
         return []
-    rows = [["Примечания"], []]
+    rows = [["Примечания"]]
     for m in methods:
         alias = get_method_alias(m)
         desc = get_method_description(m)
@@ -382,7 +383,7 @@ class GoogleSheetsIntegration:
                     else:
                         diff = f1_score - baseline_val
                         sign = "+" if diff >= 0 else ""
-                        cell_val = f"{f1_score:.4f} ({sign}{diff:.2f})"
+                        cell_val = f"{f1_score:.4f}\n({sign}{diff:.2f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
                             cell_a1 = _data_cell_a1(row_idx, col_idx)
@@ -567,7 +568,7 @@ class GoogleSheetsIntegration:
                     else:
                         diff = sec - baseline_val
                         sign = "+" if diff >= 0 else ""
-                        cell_val = f"{sec:.3f} ({sign}{diff:.3f})"
+                        cell_val = f"{sec:.3f}\n({sign}{diff:.3f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
                             cell_a1 = _data_cell_a1(row_idx, col_idx)
@@ -653,7 +654,7 @@ class GoogleSheetsIntegration:
                     else:
                         diff = baseline_val - gb
                         sign = "+" if diff >= 0 else ""
-                        cell_val = f"{gb:.2f} ({sign}{diff:.2f})"
+                        cell_val = f"{gb:.2f}\n({sign}{diff:.2f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
                             cell_a1 = _data_cell_a1(row_idx, col_idx)
