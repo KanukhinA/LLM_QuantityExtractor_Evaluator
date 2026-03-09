@@ -97,7 +97,7 @@ GOOGLE_SHEETS_SPREADSHEET_ID = ""  # опционально, для экспор
   - `"DETAILED_INSTR_ZEROSHOT_CD_RUS"` - zero-shot с примером JSON на кириллице (CD + RUS схема)
   - `"DETAILED_INSTR_ONESHOT_CD_RUS"` - one-shot с примером JSON на кириллице (CD + RUS схема)
   - `"MINIMAL_INSTR_FIVESHOT"` - минимальный инструктивный few-shot промпт с 5 примерами
-  - `"MINIMAL_INSTR_FIVESHOT_APIE"` - few-shot промпт с 5 примерами (APIE): примеры подставляются из CSV, сгенерированного `few_shot_extractor.py` для данной модели. **Запуск оценки в режиме APIE возможен только при наличии файла `few_shot_examples_<model_key>_*.csv` в `OUTPUT_DIR`**; иначе оценка не стартует, в консоль выводится причина
+  - `"MINIMAL_INSTR_FIVESHOT_APIE"` - few-shot промпт с 5 примерами (APIE): примеры подставляются из XLSX (приоритет) или CSV в `OUTPUT_DIR` (`few_shot_examples_<model_key>_*.xlsx` или `*.csv`). Рекомендуется разметка через `label_few_shot_with_gemini.py` с сохранением в XLSX. **Запуск оценки возможен только при наличии такого файла**; иначе в консоль выводится причина и подсказка
 
   **Настройка в `config.py`:**
   ```python
@@ -382,7 +382,7 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 
 ### 5.4. Извлечение few-shot примеров
 
-Модуль `few_shot_extractor.py` реализует алгоритм **Dual-Level Introspective Uncertainty** для активного обучения и выбора наиболее информативных примеров для аннотации. Сгенерированный CSV используется промптом **MINIMAL_INSTR_FIVESHOT_APIE** (режим APIE): при оценке модели с этим промптом примеры подставляются из последнего по времени файла `few_shot_examples_<model_key>_*.csv` в `OUTPUT_DIR`. **Перед запуском оценки в режиме APIE необходимо сгенерировать примеры для этой модели**; при отсутствии файла оценка не запускается, в консоль выводится сообщение с указанием команды для генерации примеров.
+Модуль `few_shot_extractor.py` реализует алгоритм **Dual-Level Introspective Uncertainty** для активного обучения и выбора наиболее информативных примеров для аннотации. Сгенерированный CSV используется для разметки; промпт **MINIMAL_INSTR_FIVESHOT_APIE** (режим APIE) подставляет примеры из последнего по времени файла в `OUTPUT_DIR`: сначала ищется **XLSX** (`few_shot_examples_<model_key>_*.xlsx`), при отсутствии — **CSV** (`few_shot_examples_<model_key>_*.csv`). Рекомендуется размечать примеры через Gemini и сохранять в XLSX для ручной проверки (см. ниже). **Перед запуском оценки в режиме APIE необходим файл с примерами**; при отсутствии оценка не запускается.
 
 **Алгоритм:**
 1. Фильтрация неразмеченных текстов (удаление текстов, уже присутствующих в размеченном датасете)
@@ -478,6 +478,20 @@ CSV файл с колонками:
 - `total_uncertainty`: общая неопределенность (отсортировано по убыванию)
 
 Колонка `responses` в файл не записывается (остаётся только в памяти при работе скрипта).
+
+**Разметка примеров через Gemini API (XLSX):**
+
+Если примеры неразмечены или нужна разметка для ручной проверки, используйте скрипт `label_few_shot_with_gemini.py`. Он читает CSV (или XLSX) от few_shot_extractor, для каждого текста запрашивает у Gemini API извлечение JSON по той же задаче и сохраняет результат в **XLSX** (удобно просматривать и править вручную). Для работы нужен `GEMINI_API_KEY`.
+
+```bash
+# Разметить все примеры из CSV и сохранить в results/few_shot_examples_<model_key>_gemini_<timestamp>.xlsx
+python label_few_shot_with_gemini.py results/few_shot_examples_gemma-2-2b_20250108_120000.csv --model-key gemma-2-2b
+
+# Указать выходной файл и ограничить число примеров
+python label_few_shot_with_gemini.py results/few_shot_examples_gemma-2-2b_20250108_120000.csv --output results/my_examples.xlsx --model-key gemma-2-2b --max-examples 5
+```
+
+Аргументы: `input` — путь к CSV или XLSX с колонкой `text`; `--output` / `-o` — путь к выходному XLSX; `--model-key` — ключ модели для имени файла; `--max-examples` — максимум строк для разметки; `--gemini-model` — модель Gemini (по умолчанию `gemini-2.5-flash`). После сохранения XLSX режим APIE при оценке этой модели подхватит новый файл (приоритет у XLSX перед CSV).
 
 ### 5.5. Режим вывода (verbose)
 
@@ -743,7 +757,7 @@ results/
 - **`DETAILED_INSTR_ZEROSHOT_CD_RUS`** - zero-shot с примером JSON на кириллице (--guidance по умолчанию)
 - **`DETAILED_INSTR_ONESHOT_CD_RUS`** - one-shot с примером JSON на кириллице
 - **`MINIMAL_INSTR_FIVESHOT`** - минимальный инструктивный few-shot промпт с 5 примерами
-- **`MINIMAL_INSTR_FIVESHOT_APIE`** - few-shot промпт с 5 примерами (APIE): примеры подставляются из CSV `few_shot_examples_<model_key>_*.csv`, сгенерированного `few_shot_extractor.py` для данной модели. Оценка в этом режиме не запускается, если для модели нет такого файла (в консоль выводится причина и команда для генерации примеров)
+- **`MINIMAL_INSTR_FIVESHOT_APIE`** - few-shot промпт с 5 примерами (APIE): примеры подставляются из XLSX или CSV (`few_shot_examples_<model_key>_*.xlsx` или `*.csv`). Можно сгенерировать CSV через `few_shot_extractor.py`, затем разметить через `label_few_shot_with_gemini.py` и сохранить в XLSX для ручной проверки. Оценка не запускается при отсутствии файла с примерами
 
 **Для режима `simple_4agents`:**
 - **`NUMERIC_FRAGMENTS_EXTRACTION_PROMPT`** - промпт для агента извлечения числовых фрагментов

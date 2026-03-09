@@ -15,7 +15,7 @@ from typing import Dict, Any, List, Optional, Callable
 import os
 
 import inspect
-from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response, get_few_shot_csv_path
+from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response, get_few_shot_examples_path
 from structured_schemas import latin_to_cyrillic_output, latin_keys_to_cyrillic_in_json_str, LATIN_TO_CYRILLIC_KEYS
 from metrics import calculate_quality_metrics, validate_with_pydantic, calculate_raw_output_metrics
 from gpu_info import get_gpu_info, get_gpu_memory_usage
@@ -723,7 +723,7 @@ class ModelEvaluator:
                 "error": err,
             }
 
-        # Режим MINIMAL_INSTR_FIVESHOT_APIE (APIE) требует model_key и файл с примерами для данной модели
+        # Режим MINIMAL_INSTR_FIVESHOT_APIE (APIE) требует model_key и файл с примерами (XLSX или CSV) для данной модели
         if effective_prompt_name == "MINIMAL_INSTR_FIVESHOT_APIE":
             if not model_key or not model_key.strip():
                 err = (
@@ -731,14 +731,14 @@ class ModelEvaluator:
                     "Запуск оценки невозможен без передачи model_key в run_evaluation."
                 )
             else:
-                few_shot_csv = get_few_shot_csv_path(model_key, OUTPUT_DIR)
-                if not few_shot_csv:
+                few_shot_path = get_few_shot_examples_path(model_key, OUTPUT_DIR)
+                if not few_shot_path:
                     err = (
                         f"Режим MINIMAL_INSTR_FIVESHOT_APIE (APIE) требует файл с few-shot примерами для модели '{model_key}', "
-                        f"но в директории '{OUTPUT_DIR}' не найден файл вида few_shot_examples_{model_key}_*.csv. "
-                        "Запуск оценки невозможен. Сначала сгенерируйте примеры: "
-                        f"python few_shot_extractor.py {model_key} [--n-examples 10]"
-                    )
+                        f"но в директории '{OUTPUT_DIR}' не найден файл few_shot_examples_{model_key}_*.xlsx или few_shot_examples_{model_key}_*.csv. "
+                        "Сгенерируйте примеры: python few_shot_extractor.py {model_key} [--n-examples 10]. "
+                        "Для разметки через Gemini сохраните результат в XLSX: python label_few_shot_with_gemini.py <csv> --model-key {model_key}."
+                    ).format(model_key=model_key)
                 else:
                     err = None
             if err:

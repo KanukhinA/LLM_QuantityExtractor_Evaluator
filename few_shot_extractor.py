@@ -9,8 +9,38 @@ import json
 import os
 from collections import Counter
 from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
 from sentence_transformers import SentenceTransformer
 import warnings
+
+
+def detect_outliers_knn(
+    embeddings: np.ndarray,
+    k: int = 20,
+    percentile: float = 95
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Помечает выбросы относительно массива примеров по среднему расстоянию до k соседей (KNN, cosine).
+
+    Args:
+        embeddings: массив эмбеддингов, форма (n_samples, n_features)
+        k: количество соседей (без учёта самой точки)
+        percentile: порог по перцентилю: точки с mean_distance > threshold считаются выбросами
+
+    Returns:
+        is_outlier: булев массив (True = выброс)
+        scores: среднее расстояние до k соседей для каждой точки
+    """
+    n = len(embeddings)
+    if n < 2:
+        return np.zeros(n, dtype=bool), np.zeros(n, dtype=np.float64)
+    k_actual = min(k, n - 1)
+    nbrs = NearestNeighbors(n_neighbors=k_actual + 1, metric="cosine").fit(embeddings)
+    distances, _ = nbrs.kneighbors(embeddings)
+    mean_distances = distances[:, 1:].mean(axis=1)
+    threshold = np.percentile(mean_distances, percentile)
+    is_outlier = mean_distances > threshold
+    return is_outlier, mean_distances
 
 def levenshtein_distance(s1: str, s2: str) -> int:
     """
@@ -506,7 +536,10 @@ def extract_few_shot_examples(
     beta: float = 0.33,   # вес для Format Uncertainty (𝒰_f)
     gamma: float = 0.34,  # вес для Content Uncertainty (𝒰_c)
     verbose: bool = False,
-    model_name: str = None
+    model_name: str = None,
+    embedding_model_name: str = "intfloat/multilingual-e5-large",
+    outlier_k: int = 20,
+    outlier_percentile: Optional[float] = 95,
 ) -> pd.DataFrame:
     """
     Извлекает few-shot примеры из неразмеченного корпуса на основе алгоритма
@@ -536,9 +569,12 @@ def extract_few_shot_examples(
         beta: вес для Format Uncertainty (𝒰_f)
         gamma: вес для Content Uncertainty (𝒰_c)
         verbose: подробный вывод
+        embedding_model_name: модель для эмбеддингов при пометке выбросов
+        outlier_k: количество соседей KNN для детекции выбросов
+        outlier_percentile: перцентиль порога (None — не помечать выбросы)
     
     Returns:
-        DataFrame с топ-n_examples примерами, отсортированными по общей неопределенности
+        DataFrame с топ-n примерами по неопределенности и колонками is_outlier, outlier_score при включённой детекции
     """
     print(f"\n{'='*80}")
     print(f"ИЗВЛЕЧЕНИЕ FEW-SHOT ПРИМЕРОВ")
@@ -653,12 +689,28 @@ def extract_few_shot_examples(
     
     # 6. Сортируем по общей неопределенности (по убыванию)
     results_df = results_df.sort_values("total_uncertainty", ascending=False).reset_index(drop=True)
+
+    # 7. Пометка выбросов по эмбеддингам (KNN, cosine)
+    if outlier_percentile is not None and len(results_df) >= 2:
+        print(f"\n📐 Пометка выбросов (KNN, k={outlier_k}, percentile={outlier_percentile})...")
+        emb_model = SentenceTransformer(embedding_model_name)
+        result_texts = results_df["text"].astype(str).tolist()
+        embeddings = emb_model.encode(result_texts, normalize_embeddings=True, show_progress_bar=False)
+        is_outlier, outlier_scores = detect_outliers_knn(embeddings, k=outlier_k, percentile=outlier_percentile)
+        results_df["is_outlier"] = is_outlier
+        results_df["outlier_score"] = outlier_scores
+        n_outliers = is_outlier.sum()
+        print(f"   ✓ Выбросов: {n_outliers} из {len(results_df)}")
+    else:
+        results_df["is_outlier"] = False
+        results_df["outlier_score"] = 0.0
     
     print(f"\n✅ Извлечение завершено!")
     print(f"   Топ-{min(n_examples, len(results_df))} примеров с наивысшей неопределенностью:\n")
     for idx, row in results_df.head(n_examples).iterrows():
         print(f"{'='*80}")
-        print(f"Пример {idx+1} (Total Uncertainty: {row['total_uncertainty']:.3f})")
+        outlier_tag = " [ВЫБРОС]" if row.get("is_outlier", False) else ""
+        print(f"Пример {idx+1} (Total Uncertainty: {row['total_uncertainty']:.3f}){outlier_tag}")
         print(f"  Disagreement: {row['generation_disagreement']:.3f}, "
               f"Format: {row['format_uncertainty']:.3f}, "
               f"Content: {row['content_uncertainty']:.3f}")
@@ -796,6 +848,29 @@ if __name__ == "__main__":
         help="Подробный вывод"
     )
     parser.add_argument(
+        "--outlier-k",
+        type=int,
+        default=20,
+        help="Количество соседей для детекции выбросов KNN (по умолчанию: 20)"
+    )
+    parser.add_argument(
+        "--outlier-percentile",
+        type=float,
+        default=95,
+        help="Перцентиль порога: точки с mean_distance выше считаются выбросами (по умолчанию: 95). Используйте --no-outliers чтобы отключить"
+    )
+    parser.add_argument(
+        "--no-outliers",
+        action="store_true",
+        help="Не помечать выбросы (не вызывать KNN)"
+    )
+    parser.add_argument(
+        "--embedding-model",
+        type=str,
+        default="intfloat/multilingual-e5-large",
+        help="Модель эмбеддингов для детекции выбросов (по умолчанию: intfloat/multilingual-e5-large)"
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -885,7 +960,10 @@ if __name__ == "__main__":
             beta=args.beta,
             gamma=args.gamma,
             verbose=args.verbose,
-            model_name=model_config["name"]
+            model_name=model_config["name"],
+            embedding_model_name=args.embedding_model,
+            outlier_k=args.outlier_k,
+            outlier_percentile=None if args.no_outliers else args.outlier_percentile,
         )
         
         # Сохраняем результаты (без колонки "responses" для читаемости CSV)

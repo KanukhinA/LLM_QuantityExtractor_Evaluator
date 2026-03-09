@@ -279,40 +279,49 @@ def find_file_path(relative_path: str) -> str:
     )
 
 
-def get_few_shot_csv_path(model_key: str, output_dir: str = None) -> Optional[str]:
+def get_few_shot_examples_path(model_key: str, output_dir: str = None) -> Optional[str]:
     """
-    Возвращает путь к последнему по времени файлу few_shot_examples_{model_key}_*.csv в output_dir,
-    или None, если такого файла нет. Используется для проверки возможности запуска MINIMAL_INSTR_FIVESHOT_APIE.
+    Возвращает путь к последнему по времени файлу с примерами для модели:
+    сначала ищет few_shot_examples_{model_key}_*.xlsx (разметка Gemini или ручная),
+    затем few_shot_examples_{model_key}_*.csv. Используется для MINIMAL_INSTR_FIVESHOT_APIE.
     """
     if not model_key or not output_dir:
         return None
-    pattern = os.path.join(output_dir, f"few_shot_examples_{model_key}_*.csv")
-    files = glob.glob(pattern)
-    if not files:
-        return None
-    return max(files, key=os.path.getmtime)
+    for ext in ("xlsx", "csv"):
+        pattern = os.path.join(output_dir, f"few_shot_examples_{model_key}_*.{ext}")
+        files = glob.glob(pattern)
+        if files:
+            return max(files, key=os.path.getmtime)
+    return None
 
 
 def load_few_shot_examples_block(model_key: str, output_dir: str = None, max_examples: int = 5) -> str:
     """
     Собирает блок примеров "Текст примера N: ... Ответ примера N: ..." из последнего по времени
-    CSV few_shot_examples_{model_key}_*.csv в output_dir. Используется для MINIMAL_INSTR_FIVESHOT_APIE.
+    XLSX или CSV few_shot_examples_{model_key}_* в output_dir. Используется для MINIMAL_INSTR_FIVESHOT_APIE.
     """
-    latest = get_few_shot_csv_path(model_key, output_dir)
+    latest = get_few_shot_examples_path(model_key, output_dir)
     if not latest:
         return ""
     try:
-        with open(latest, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)[:max_examples]
+        import pandas as pd
+        if latest.lower().endswith(".xlsx"):
+            df = pd.read_excel(latest, engine="openpyxl")
+        else:
+            df = pd.read_csv(latest, encoding="utf-8")
+        if "text" not in df.columns or "json" not in df.columns:
+            return ""
+        df = df.head(max_examples)
     except Exception:
         return ""
     block = []
-    for i, row in enumerate(rows, 1):
-        text = (row.get("text") or "").strip()
-        json_val = (row.get("json") or "").strip()
-        block.append(f"Текст примера {i}: {text}")
-        block.append(f"Ответ примера {i}: {json_val}")
+    for i in range(len(df)):
+        row = df.iloc[i]
+        text = (row.get("text") or "").strip() if isinstance(row.get("text"), str) else str(row.get("text", ""))
+        json_val = (row.get("json") or "").strip() if isinstance(row.get("json"), str) else str(row.get("json", ""))
+        n = i + 1
+        block.append(f"Текст примера {n}: {text}")
+        block.append(f"Ответ примера {n}: {json_val}")
     return "\n\n".join(block)
 
 
