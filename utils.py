@@ -42,13 +42,15 @@ import json
 import re
 import ast
 import codecs
+import csv
+import glob
 import os
 import inspect
 import sys
 import warnings
 from typing import Dict, Any, Optional
 import prompt_config
-from config import PROMPT_TEMPLATE_NAME, DATASET_FILENAME
+from config import PROMPT_TEMPLATE_NAME, DATASET_FILENAME, OUTPUT_DIR
 
 
 class _TeeWriter:
@@ -277,17 +279,66 @@ def find_file_path(relative_path: str) -> str:
     )
 
 
-def build_prompt3(text: str, structured_output: bool = False, response_schema: Any = None, prompt_template_name: str = None) -> str:
+def get_few_shot_csv_path(model_key: str, output_dir: str = None) -> Optional[str]:
+    """
+    Возвращает путь к последнему по времени файлу few_shot_examples_{model_key}_*.csv в output_dir,
+    или None, если такого файла нет. Используется для проверки возможности запуска MINIMAL_INSTR_FIVESHOT_APIE.
+    """
+    if not model_key or not output_dir:
+        return None
+    pattern = os.path.join(output_dir, f"few_shot_examples_{model_key}_*.csv")
+    files = glob.glob(pattern)
+    if not files:
+        return None
+    return max(files, key=os.path.getmtime)
+
+
+def load_few_shot_examples_block(model_key: str, output_dir: str = None, max_examples: int = 5) -> str:
+    """
+    Собирает блок примеров "Текст примера N: ... Ответ примера N: ..." из последнего по времени
+    CSV few_shot_examples_{model_key}_*.csv в output_dir. Используется для MINIMAL_INSTR_FIVESHOT_APIE.
+    """
+    latest = get_few_shot_csv_path(model_key, output_dir)
+    if not latest:
+        return ""
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)[:max_examples]
+    except Exception:
+        return ""
+    block = []
+    for i, row in enumerate(rows, 1):
+        text = (row.get("text") or "").strip()
+        json_val = (row.get("json") or "").strip()
+        block.append(f"Текст примера {i}: {text}")
+        block.append(f"Ответ примера {i}: {json_val}")
+    return "\n\n".join(block)
+
+
+def build_prompt3(
+    text: str,
+    structured_output: bool = False,
+    response_schema: Any = None,
+    prompt_template_name: str = None,
+    model_key: Optional[str] = None,
+) -> str:
     """
     Генерация промпта для конкретного текста
 
     Использует промпт из prompt_config.py. Имя шаблона задаётся:
     - prompt_template_name (приоритет), иначе config.PROMPT_TEMPLATE_NAME.
+    Для MINIMAL_INSTR_FIVESHOT_APIE при указании model_key примеры подставляются из CSV,
+    сгенерированного few_shot_extractor для этой модели.
     При structured_output=True и наличии response_schema — добавляет JSON-схему в промпт.
     """
     name = prompt_template_name if prompt_template_name is not None else PROMPT_TEMPLATE_NAME
     prompt_template = getattr(prompt_config, name)
-    prompt = prompt_template.format(text=text)
+    if name == "MINIMAL_INSTR_FIVESHOT_APIE":
+        few_shot_examples = load_few_shot_examples_block(model_key or "", OUTPUT_DIR, max_examples=5)
+        prompt = prompt_template.format(few_shot_examples=few_shot_examples, text=text)
+    else:
+        prompt = prompt_template.format(text=text)
     if structured_output and response_schema is not None and hasattr(response_schema, "model_json_schema"):
         import json as _json
         schema_dict = response_schema.model_json_schema()

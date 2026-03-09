@@ -632,6 +632,24 @@ def extract_few_shot_examples(
     
     # 5. Создаем DataFrame с результатами
     results_df = pd.DataFrame(results)
+
+    # 5.1. Добавляем колонку "json" — лучший распарсенный JSON по каждому примеру (для использования в промптах)
+    def _best_json(row):
+        responses = row.get("responses", [])
+        for response in responses:
+            if response and response.strip():
+                json_part = extract_json_from_response(response)
+                parsed = parse_json_safe(json_part)
+                if parsed is not None and isinstance(parsed, dict):
+                    return json_part
+        for response in responses:
+            if response and response.strip():
+                out = extract_json_from_response(response)
+                if out:
+                    return out
+        return ""
+
+    results_df["json"] = results_df.apply(_best_json, axis=1)
     
     # 6. Сортируем по общей неопределенности (по убыванию)
     results_df = results_df.sort_values("total_uncertainty", ascending=False).reset_index(drop=True)
@@ -870,9 +888,11 @@ if __name__ == "__main__":
             model_name=model_config["name"]
         )
         
-        # Сохраняем результаты, если указан путь
+        # Сохраняем результаты (без колонки "responses" для читаемости CSV)
+        cols_to_save = [c for c in results_df.columns if c != "responses"]
+        save_df = results_df[cols_to_save]
         if args.output:
-            results_df.to_csv(args.output, index=False, encoding='utf-8')
+            save_df.to_csv(args.output, index=False, encoding='utf-8')
             print(f"\n✅ Результаты сохранены в: {args.output}")
         else:
             # Сохраняем в results/ по умолчанию
@@ -882,7 +902,7 @@ if __name__ == "__main__":
             os.makedirs(OUTPUT_DIR, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(OUTPUT_DIR, f"few_shot_examples_{args.model_key}_{timestamp}.csv")
-            results_df.to_csv(output_path, index=False, encoding='utf-8')
+            save_df.to_csv(output_path, index=False, encoding='utf-8')
             print(f"\n✅ Результаты сохранены в: {output_path}")
         
     except KeyboardInterrupt:

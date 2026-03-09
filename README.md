@@ -97,7 +97,7 @@ GOOGLE_SHEETS_SPREADSHEET_ID = ""  # опционально, для экспор
   - `"DETAILED_INSTR_ZEROSHOT_CD_RUS"` - zero-shot с примером JSON на кириллице (CD + RUS схема)
   - `"DETAILED_INSTR_ONESHOT_CD_RUS"` - one-shot с примером JSON на кириллице (CD + RUS схема)
   - `"MINIMAL_INSTR_FIVESHOT"` - минимальный инструктивный few-shot промпт с 5 примерами
-  - `"MINIMAL_INSTR_FIVESHOT_APIE"` - few-shot промпт с 5 примерами (версия APIE)
+  - `"MINIMAL_INSTR_FIVESHOT_APIE"` - few-shot промпт с 5 примерами (APIE): примеры подставляются из CSV, сгенерированного `few_shot_extractor.py` для данной модели. **Запуск оценки в режиме APIE возможен только при наличии файла `few_shot_examples_<model_key>_*.csv` в `OUTPUT_DIR`**; иначе оценка не стартует, в консоль выводится причина
 
   **Настройка в `config.py`:**
   ```python
@@ -382,7 +382,7 @@ python reevaluate.py results/results_model_name_timestamp.csv "model/name" --gem
 
 ### 5.4. Извлечение few-shot примеров
 
-Модуль `few_shot_extractor.py` реализует алгоритм **Dual-Level Introspective Uncertainty** для активного обучения и выбора наиболее информативных примеров для аннотации.
+Модуль `few_shot_extractor.py` реализует алгоритм **Dual-Level Introspective Uncertainty** для активного обучения и выбора наиболее информативных примеров для аннотации. Сгенерированный CSV используется промптом **MINIMAL_INSTR_FIVESHOT_APIE** (режим APIE): при оценке модели с этим промптом примеры подставляются из последнего по времени файла `few_shot_examples_<model_key>_*.csv` в `OUTPUT_DIR`. **Перед запуском оценки в режиме APIE необходимо сгенерировать примеры для этой модели**; при отсутствии файла оценка не запускается, в консоль выводится сообщение с указанием команды для генерации примеров.
 
 **Алгоритм:**
 1. Фильтрация неразмеченных текстов (удаление текстов, уже присутствующих в размеченном датасете)
@@ -449,7 +449,7 @@ python few_shot_extractor.py gemma-3-4b \
 - `--unlabeled-corpus` - путь к неразмеченному корпусу (переопределяет значение из config.py)
 - `--labeled-dataset` - путь к размеченному датасету (переопределяет значение из config.py)
 - `--verbose` - подробный вывод
-- `--output` - путь для сохранения результатов в CSV (если не указан, сохраняется в `results/few_shot_examples_<model_key>_<timestamp>.csv`)
+- `--output` - путь для сохранения результатов в CSV (если не указан, сохраняется в `results/few_shot_examples_<model_key>_<timestamp>.csv`). Файлы в `results/` автоматически подхватываются режимом **MINIMAL_INSTR_FIVESHOT_APIE** при оценке соответствующей модели.
 
 **Настройка путей в config.py:**
 
@@ -468,6 +468,7 @@ LABELED_DATASET_PATH = "data/labeled_dataset.xlsx"
 
 CSV файл с колонками:
 - `text`: исходный текст
+- `json`: лучший распарсенный JSON-ответ по примеру (используется в MINIMAL_INSTR_FIVESHOT_APIE как «Ответ примера N»)
 - `cluster`: номер кластера
 - `generation_disagreement`: метрика Generation Disagreement
 - `R_fail`: Parsing Failure Rate
@@ -475,7 +476,8 @@ CSV файл с колонками:
 - `format_uncertainty`: Format-Level Uncertainty
 - `content_uncertainty`: Content-Level Uncertainty
 - `total_uncertainty`: общая неопределенность (отсортировано по убыванию)
-- `responses`: список из k сгенерированных ответов (JSON строка)
+
+Колонка `responses` в файл не записывается (остаётся только в памяти при работе скрипта).
 
 ### 5.5. Режим вывода (verbose)
 
@@ -741,7 +743,7 @@ results/
 - **`DETAILED_INSTR_ZEROSHOT_CD_RUS`** - zero-shot с примером JSON на кириллице (--guidance по умолчанию)
 - **`DETAILED_INSTR_ONESHOT_CD_RUS`** - one-shot с примером JSON на кириллице
 - **`MINIMAL_INSTR_FIVESHOT`** - минимальный инструктивный few-shot промпт с 5 примерами
-- **`MINIMAL_INSTR_FIVESHOT_APIE`** - few-shot промпт с 5 примерами (версия APIE)
+- **`MINIMAL_INSTR_FIVESHOT_APIE`** - few-shot промпт с 5 примерами (APIE): примеры подставляются из CSV `few_shot_examples_<model_key>_*.csv`, сгенерированного `few_shot_extractor.py` для данной модели. Оценка в этом режиме не запускается, если для модели нет такого файла (в консоль выводится причина и команда для генерации примеров)
 
 **Для режима `simple_4agents`:**
 - **`NUMERIC_FRAGMENTS_EXTRACTION_PROMPT`** - промпт для агента извлечения числовых фрагментов
@@ -1070,4 +1072,4 @@ python reevaluate.py
 | `python run_all_models.py --prompt NAME [опции]` | Оценка с указанным промптом | — | — | — | — |
 | `python reevaluate.py <csv_file>` | Переоценка результатов | - | - | - | Отключен |
 | `python reevaluate.py <csv_file> [model_name] --gemini` | Переоценка с анализом Gemini | - | - | - | Включен |
-| `python few_shot_extractor.py <model_key> [опции]` | Извлечение few-shot примеров | - | - | Опционально (`--verbose`) | - |
+| `python few_shot_extractor.py <model_key> [опции]` | Извлечение few-shot примеров (для режима APIE — обязательно перед оценкой) | - | - | Опционально (`--verbose`) | - |
