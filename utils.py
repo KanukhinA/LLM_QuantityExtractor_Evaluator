@@ -218,6 +218,65 @@ def find_dataset_path(dataset_filename: str = None) -> str:
     return dataset_path
 
 
+def find_file_path(relative_path: str) -> str:
+    """
+    Ищет файл по относительному пути (например, data/udobrenia_unlabeled.xlsx)
+    в нескольких возможных базовых директориях.
+    Используется для UNLABELED_CORPUS_PATH в few_shot_extractor.
+
+    Args:
+        relative_path: относительный путь к файлу (например, "data/udobrenia_unlabeled.xlsx")
+
+    Returns:
+        Абсолютный путь к найденному файлу
+
+    Raises:
+        FileNotFoundError: если файл не найден ни по одному из путей
+    """
+    if not relative_path or not relative_path.strip():
+        raise FileNotFoundError("Путь к файлу не указан")
+    path = relative_path.strip()
+    if os.path.isabs(path):
+        if os.path.exists(path):
+            return path
+        raise FileNotFoundError(f"Файл не найден: {path}")
+
+    config_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(config_dir)
+    cwd = os.getcwd()
+    script_dir = cwd
+    try:
+        frame = inspect.currentframe()
+        while frame:
+            frame = frame.f_back
+            if frame and frame.f_globals.get("__file__"):
+                script_file = frame.f_globals["__file__"]
+                script_dir = os.path.dirname(os.path.abspath(script_file))
+                break
+    except Exception:
+        pass
+
+    possible_paths = [
+        os.path.join(cwd, path),
+        os.path.join(base_dir, path),
+        os.path.join(script_dir, path),
+        os.path.join(base_dir, "..", path),
+        os.path.join(script_dir, "..", path),
+        os.path.join(config_dir, "..", path),
+    ]
+
+    for p in possible_paths:
+        abs_path = os.path.abspath(p)
+        if os.path.exists(abs_path):
+            return abs_path
+
+    checked = "\n".join(f"   {i+1}. {os.path.abspath(p)}" for i, p in enumerate(possible_paths))
+    raise FileNotFoundError(
+        f"Файл не найден: {path}\nПроверенные пути:\n{checked}\n"
+        f"Текущая рабочая директория: {cwd}"
+    )
+
+
 def build_prompt3(text: str, structured_output: bool = False, response_schema: Any = None, prompt_template_name: str = None) -> str:
     """
     Генерация промпта для конкретного текста
