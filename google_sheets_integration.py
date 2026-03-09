@@ -494,10 +494,23 @@ class GoogleSheetsIntegration:
         """
         Создаёт данные для таблицы validation: ячейки в формате 0.99(0.88) = parsed(raw).
         Методы: сначала с BASELINE в названии. Пустое значение -> "-".
-        Снизу строка Average difference. Ячейки с parsed rate == 1.0 выделяются зелёным.
+        Строка «Средняя разница»: средняя разница parsed rate с baseline (method - baseline), как в остальных таблицах.
+        Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
+        def _parse_validation_rate(val: str) -> Optional[float]:
+            if not val or (isinstance(val, str) and val.strip() in ("", "-")):
+                return None
+            match = re.match(r"^(\d+\.?\d*)", str(val).replace(",", "."))
+            if not match:
+                return None
+            try:
+                return float(match.group(1))
+            except ValueError:
+                return None
+
         models = sorted(set(validation_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
+        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
         table_data = [_table_header(methods)]
         green_cells: List[str] = []
         for row_idx, model in enumerate(models):
@@ -507,30 +520,27 @@ class GoogleSheetsIntegration:
                 cell_val = val if val else "-"
                 row.append(cell_val)
                 if cell_val and cell_val.strip() != "-":
-                    match = re.match(r"^(\d+\.?\d*)", str(val).replace(",", "."))
-                    if match:
-                        try:
-                            parsed_rate = float(match.group(1))
-                            if abs(parsed_rate - 1.0) < 1e-6:
-                                green_cells.append(_data_cell_a1(row_idx, col_idx))
-                        except ValueError:
-                            pass
+                    parsed_rate = _parse_validation_rate(val)
+                    if parsed_rate is not None and abs(parsed_rate - 1.0) < 1e-6:
+                        green_cells.append(_data_cell_a1(row_idx, col_idx))
             table_data.append(row)
         avg_row = [AVG_ROW_LABEL]
         for method in methods:
-            parsed_rates = []
+            if method == baseline_method:
+                avg_row.append("-")
+                continue
+            diffs = []
             for model in models:
-                val = validation_data.get(model, {}).get(method, "")
-                if not val:
-                    continue
-                match = re.match(r"^(\d+\.?\d*)", str(val).replace(",", "."))
-                if match:
-                    try:
-                        parsed_rates.append(float(match.group(1)))
-                    except ValueError:
-                        pass
-            if parsed_rates:
-                avg_row.append(f"{sum(parsed_rates) / len(parsed_rates):.2f}")
+                baseline_val = validation_data.get(model, {}).get(baseline_method, "") if baseline_method else ""
+                method_val = validation_data.get(model, {}).get(method, "")
+                baseline_rate = _parse_validation_rate(baseline_val)
+                method_rate = _parse_validation_rate(method_val)
+                if baseline_rate is not None and method_rate is not None:
+                    diffs.append(method_rate - baseline_rate)
+            if diffs:
+                avg_diff = sum(diffs) / len(diffs)
+                sign = "+" if avg_diff >= 0 else ""
+                avg_row.append(f"{sign}{avg_diff:.2f}")
             else:
                 avg_row.append("-")
         table_data.append(avg_row)
@@ -614,8 +624,8 @@ class GoogleSheetsIntegration:
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы GPU memory during inference (GB).
-        Формат ячеек: значение (разница с baseline); разница = baseline - method (положительная = экономия).
-        Нет значения -> прочерк "-". Меньше baseline -> зелёный, больше -> красный (в т.ч. строка средней разницы).
+        Разница = method - baseline (как в F1/Time): положительная = больше памяти, отрицательная = меньше.
+        Нет значения -> "-". Меньше baseline -> зелёный, больше -> красный.
         Returns:
             (данные таблицы, модели, методы, format_info: green/red)
         """
@@ -652,15 +662,15 @@ class GoogleSheetsIntegration:
                     if method == baseline_method or baseline_val is None:
                         row.append(f"{gb:.2f}")
                     else:
-                        diff = baseline_val - gb
+                        diff = gb - baseline_val
                         sign = "+" if diff >= 0 else ""
                         cell_val = f"{gb:.2f}\n({sign}{diff:.2f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
                             cell_a1 = _data_cell_a1(row_idx, col_idx)
-                            if diff > 0:
+                            if diff < 0:
                                 green_cells.append(cell_a1)
-                            elif diff < 0:
+                            elif diff > 0:
                                 red_cells.append(cell_a1)
             table_data.append(row)
 
@@ -671,7 +681,7 @@ class GoogleSheetsIntegration:
                 bv = gpu_memory_data.get(model, {}).get(baseline_method) if baseline_method else None
                 gb_raw = gpu_memory_data.get(model, {}).get(method)
                 if not _is_empty_val(bv) and not _is_empty_val(gb_raw) and method != baseline_method:
-                    diffs.append(float(bv) - float(gb_raw))
+                    diffs.append(float(gb_raw) - float(bv))
             if diffs:
                 avg_diff = sum(diffs) / len(diffs)
                 sign = "+" if avg_diff >= 0 else ""
@@ -679,9 +689,9 @@ class GoogleSheetsIntegration:
                 avg_row.append(cell_val)
                 if cell_val.strip() != "-":
                     cell_avg = _data_cell_a1(num_model_rows, col_idx)
-                    if avg_diff > 0:
+                    if avg_diff < 0:
                         green_cells.append(cell_avg)
-                    elif avg_diff < 0:
+                    elif avg_diff > 0:
                         red_cells.append(cell_avg)
             else:
                 avg_row.append("-")
