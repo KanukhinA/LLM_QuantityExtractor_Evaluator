@@ -32,11 +32,12 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный zero-shot промпт (baseline)"),
     ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный one-shot промпт"),
     ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный few-shot (5 примеров)"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "4.DIZCO", "Zero-shot constrained decoding c outlines(латиница)"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "5.DIZCRO", "Zero-shot constrained decoding c outlines (кириллица)"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "6.DIOCRO", "One-shot constrained decoding c outlines (кириллица)"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "7.DIOCRG", "One-shot constrained decoding с guidance (кириллица)"),
-    ("MINIMAL_INSTR_FIVESHOT_APIE", "7.MIFA", "Few-shot с 5 примерами (APIE)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "4.DIZCRO", "Zero-shot constrained decoding c outlines (кириллица)"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "5.DIOCRO", "One-shot constrained decoding c outlines (кириллица)"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "6.DIOCRG", "One-shot constrained decoding с guidance (кириллица)"),
+    ("MA_SIMPLE_4AGENTS", "7.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
+    ("MA_CRITIC_3AGENTS", "8.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
+    ("MINIMAL_INSTR_FIVESHOT_APIE", "10.MIFA", "Few-shot с 5 примерами (APIE)"),
 ]
 
 
@@ -472,7 +473,8 @@ class GoogleSheetsIntegration:
             metrics_range = f"B2:{_col_letter_1based(1 + num_cols)}{len(table_data)}"
             worksheet.format(metrics_range, {
                 "horizontalAlignment": "CENTER",
-                "backgroundColor": {"red": 1, "green": 1, "blue": 1}
+                "backgroundColor": {"red": 1, "green": 1, "blue": 1},
+                "textFormat": {"bold": False},
             })
         self._apply_cell_format(worksheet, format_info)
         notes = _build_notes_rows(methods)

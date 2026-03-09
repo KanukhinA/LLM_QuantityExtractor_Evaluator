@@ -403,10 +403,30 @@ class ModelEvaluator:
         except Exception:
             pass
     
+    @staticmethod
+    def _drop_empty_and_zero_values(obj):
+        """
+        Рекурсивно удаляет из словарей ключи со значениями [], 0, 0.0, ''.
+        После такой очистки Pydantic не падает на полях типа \"значение\": [].
+        """
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                if v == [] or v == "" or v is None:
+                    continue
+                if v == 0 or (isinstance(v, float) and v == 0.0):
+                    continue
+                out[k] = ModelEvaluator._drop_empty_and_zero_values(v)
+            return out
+        if isinstance(obj, list):
+            return [ModelEvaluator._drop_empty_and_zero_values(item) for item in obj]
+        return obj
+
     def _clean_parsed_json(self, parsed_json):
         """
-        Удаляет из parsed_json записи с None или [None, None] значениями.
-        Такие записи бессмысленны и занижают F1-метрику.
+        Удаляет из parsed_json записи с None или [None, None] значениями,
+        а также рекурсивно удаляет атрибуты с пустыми/нулевыми значениями ([], 0, '').
+        Такие значения заставляют Pydantic падать (ожидается str/float, а не list).
         
         Args:
             parsed_json: распарсенный JSON словарь
@@ -489,7 +509,8 @@ class ModelEvaluator:
             if key not in ["массовая доля", "прочее"]:
                 cleaned[key] = parsed_json[key]
         
-        return cleaned
+        # Рекурсивно убираем атрибуты с [], 0, 0.0, '' — иначе Pydantic выдаёт ошибки типа float_type/string_type
+        return self._drop_empty_and_zero_values(cleaned)
     
     def _process_response(self, response_text, text, text_index, is_api_model, verbose, parsing_errors):
         """
@@ -564,11 +585,15 @@ class ModelEvaluator:
                 error_display = error_msg if verbose else error_msg[:200]
                 print(f"     Последняя ошибка: {error_display}")
         parsing_errors.append(f"Текст #{text_index}: не получен ответ. Ошибка: {error_msg if error_msg else 'Неизвестная ошибка'}")
+        empty_validation = {"is_valid": False, "errors": [], "validated_data": None}
         return {
             "text": text,
             "json": "",
             "json_parsed": {},
-            "is_valid": False
+            "is_valid": False,
+            "raw_output": "",
+            "raw_validation": empty_validation,
+            "parsed_validation": empty_validation,
         }
     
     def _print_progress(self, i, total_texts, results, times, total_start_time, verbose):
@@ -948,11 +973,15 @@ class ModelEvaluator:
                             "error": f"Критическая ошибка в мультиагентном подходе: {error_msg}. Traceback: {traceback_display}",
                             "response": ""
                         })
+                        empty_validation = {"is_valid": False, "errors": [], "validated_data": None}
                         results.append({
                             "text": text,
                             "json": "",
                             "json_parsed": {},
-                            "is_valid": False
+                            "is_valid": False,
+                            "raw_output": "",
+                            "raw_validation": empty_validation,
+                            "parsed_validation": empty_validation,
                         })
                 else:
                     # Одноагентный подход (оригинальный)
@@ -1164,11 +1193,15 @@ class ModelEvaluator:
                                         error_msg = str(e)
                                         import traceback
                                         parsing_errors.append(f"Текст #{i}: критическая ошибка в мультиагентном подходе. Ошибка: {error_msg}. Traceback: {traceback.format_exc()[:200]}")
+                                        empty_validation = {"is_valid": False, "errors": [], "validated_data": None}
                                         results.append({
                                             "text": self.texts[i],
                                             "json": "",
                                             "json_parsed": {},
-                                            "is_valid": False
+                                            "is_valid": False,
+                                            "raw_output": "",
+                                            "raw_validation": empty_validation,
+                                            "parsed_validation": empty_validation,
                                         })
                                 else:
                                     so = hyperparameters.get("structured_output", False)
