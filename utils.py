@@ -524,9 +524,11 @@ def extract_json_from_response(response_text: str) -> str:
                 extracted = json_part[start:].strip()
                 if extracted:
                     return extracted
-            return json_part
+            # Если после маркера пусто (например, модель вывела ```json ... ``` до «ОТВЕТ:») — ищем по всему тексту
+            if json_part.strip():
+                return json_part
     
-    # 2. Если нет маркера "Ответ:", ищем последний markdown блок ```json ... ```
+    # 2. Если нет маркера "Ответ:" или после него ничего нет, ищем последний markdown блок ```json ... ```
     json_blocks = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", response_text, flags=re.IGNORECASE | re.DOTALL))
     if json_blocks:
         # Берем последний блок
