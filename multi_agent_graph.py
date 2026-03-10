@@ -13,6 +13,7 @@ from prompt_config import (
     DETAILED_INSTR_ONESHOT,
     CRITIC_PROMPT,
     CORRECTOR_PROMPT,
+    VALIDATION_FIX_PROMPT,
     QA_NUTRIENTS_PROMPT,
     QA_NUTRIENT_PROMPT,
     QA_STANDARD_PROMPT,
@@ -20,6 +21,8 @@ from prompt_config import (
     QA_QUANTITY_PROMPT
 )
 from utils import extract_json_from_response, parse_json_safe, is_valid_json
+from metrics import validate_with_pydantic
+from structured_schemas import latin_to_cyrillic_output, LATIN_TO_CYRILLIC_KEYS
 
 
 def _clean_repetitive_arrays(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -172,6 +175,8 @@ class AgentState(TypedDict):
     standard: str  # Стандарт
     grade: str  # Марка
     quantities: list  # Список количеств
+    # Поля для validation_fix_2agents
+    validation_errors: str  # Ошибки валидации Pydantic (для повторной подачи LLM)
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -802,6 +807,145 @@ def correct_response(state: AgentState) -> AgentState:
         }
 
 
+# ========== ФУНКЦИИ ДЛЯ РЕЖИМА VALIDATION_FIX_2AGENTS ==========
+
+def generate_and_validate_agent(state: AgentState) -> AgentState:
+    """
+    Агент 1: Генерация ответа и валидация через Pydantic. При невалидном JSON
+    заполняет validation_errors для передачи агенту-исправителю.
+    """
+    print("   🤖 [Агент 1/2] Генерация и валидация...", end=" ", flush=True)
+    generator = state.get("generator")
+    text = state.get("text", "")
+    if not generator:
+        print("❌ Ошибка: Generator not provided")
+        return {**state, "success": False, "error": "Generator not provided", "time": 0.0}
+    try:
+        from utils import build_prompt3
+        prompt = build_prompt3(text)
+        response, elapsed, _ = run_agent_generation(state, prompt, 1)
+        json_part = extract_json_from_response(response)
+        if not json_part:
+            json_part = response
+        parsed_json = parse_json_safe(json_part)
+        if parsed_json and isinstance(parsed_json, dict) and any(k in LATIN_TO_CYRILLIC_KEYS for k in parsed_json):
+            parsed_json = latin_to_cyrillic_output(parsed_json)
+            try:
+                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        validation = validate_with_pydantic(parsed_json if isinstance(parsed_json, dict) else {}, stage="parsed")
+        is_valid = validation.get("is_valid", False)
+        if is_valid:
+            parsed = validation.get("validated_data") or parsed_json
+            print(f"✅ Валидный JSON ({elapsed:.2f}с)")
+            return {
+                **state,
+                "prompt": prompt,
+                "initial_response": response,
+                "json_result": json_part,
+                "json_parsed": parsed if isinstance(parsed, dict) else (parsed_json or {}),
+                "is_valid": True,
+                "success": True,
+                "time": elapsed,
+            }
+        errors_str = "\n".join(validation.get("errors", []))
+        print(f"⚠️ Невалидный JSON, передача исправителю ({elapsed:.2f}с)")
+        return {
+            **state,
+            "prompt": prompt,
+            "initial_response": response,
+            "json_result": json_part,
+            "json_parsed": parsed_json if isinstance(parsed_json, dict) else {},
+            "is_valid": False,
+            "success": False,
+            "validation_errors": errors_str,
+            "time": elapsed,
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_info = handle_agent_error(1, e, elapsed, context_data={"Исходный текст": text[:200]})
+        return {**state, **error_info}
+
+
+def fix_validation_agent(state: AgentState) -> AgentState:
+    """
+    Агент 2: Исправление JSON по ошибкам валидации Pydantic (повторная подача в LLM).
+    """
+    print("   🤖 [Агент 2/2] Исправление по ошибкам валидации...", end=" ", flush=True)
+    generator = state.get("generator")
+    text = state.get("text", "")
+    invalid_json = state.get("json_result", "")
+    validation_errors = state.get("validation_errors", "")
+    if not generator or not validation_errors:
+        print("❌ Нет генератора или ошибок валидации")
+        return {**state, "success": False, "error": "Missing generator or validation_errors", "time": state.get("time", 0.0)}
+    try:
+        original_prompt = state.get("prompt", "")
+        fix_prompt = VALIDATION_FIX_PROMPT.format(
+            original_prompt=original_prompt,
+            text=text,
+            invalid_json=invalid_json,
+            validation_errors=validation_errors,
+        )
+        response, elapsed, _ = run_agent_generation(state, fix_prompt, 2)
+        json_part = extract_json_from_response(response)
+        if not json_part:
+            json_part = response
+        parsed_json = parse_json_safe(json_part)
+        if parsed_json and isinstance(parsed_json, dict) and any(k in LATIN_TO_CYRILLIC_KEYS for k in parsed_json):
+            parsed_json = latin_to_cyrillic_output(parsed_json)
+            try:
+                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        if parsed_json and isinstance(parsed_json, dict):
+            parsed_json = _clean_none_values(parsed_json)
+            try:
+                json_part = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        validation = validate_with_pydantic(parsed_json if isinstance(parsed_json, dict) else {}, stage="parsed")
+        is_valid = validation.get("is_valid", False)
+        validated_data = validation.get("validated_data")
+        total_time = state.get("time", 0.0) + elapsed
+        if is_valid:
+            print(f"✅ Исправлено ({elapsed:.2f}с)")
+        else:
+            print(f"⚠️ Всё ещё невалидно ({elapsed:.2f}с)")
+        print_agent_response(2, response, fix_prompt)
+        return {
+            **state,
+            "corrected_response": response,
+            "json_result": json_part,
+            "json_parsed": validated_data if validated_data else (parsed_json or {}),
+            "is_valid": is_valid,
+            "success": is_valid,
+            "time": total_time,
+        }
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        elapsed = 0.0
+        error_info = handle_agent_error(2, e, elapsed, context_data={
+            "Текст": text[:200],
+            "Невалидный JSON": invalid_json[:300],
+            "Ошибки": validation_errors[:300],
+        })
+        return {**state, **error_info}
+
+
+def _validation_fix_route(state: AgentState) -> str:
+    """Маршрутизация после generate_and_validate: при невалидном JSON идём к исправителю."""
+    if state.get("is_valid", False):
+        return "end"
+    if state.get("validation_errors"):
+        return "fix_validation"
+    return "end"
+
+
 # ========== ФУНКЦИИ АГЕНТОВ ДЛЯ QA WORKFLOW ==========
 
 def extract_nutrients(state: AgentState) -> AgentState:
@@ -1331,6 +1475,24 @@ def create_critic_3agents_graph():
     return workflow.compile()
 
 
+def create_validation_fix_2agents_graph():
+    """
+    Граф: генерация ответа -> валидация -> при ошибках валидации повторная подача
+    ошибок в LLM (агент-исправитель), иначе конец.
+    """
+    workflow = StateGraph(AgentState)
+    workflow.add_node("generate_and_validate", generate_and_validate_agent)
+    workflow.add_node("fix_validation", fix_validation_agent)
+    workflow.set_entry_point("generate_and_validate")
+    workflow.add_conditional_edges(
+        "generate_and_validate",
+        _validation_fix_route,
+        {"fix_validation": "fix_validation", "end": END}
+    )
+    workflow.add_edge("fix_validation", END)
+    return workflow.compile()
+
+
 def create_multi_agent_graph(mode: str = "simple_4agents"):
     """
     Создает граф LangGraph для мультиагентной обработки
@@ -1408,7 +1570,8 @@ def process_with_multi_agent(
         "nutrient_values": {},
         "standard": None,
         "grade": None,
-        "quantities": []
+        "quantities": [],
+        "validation_errors": ""
     }
     
     try:

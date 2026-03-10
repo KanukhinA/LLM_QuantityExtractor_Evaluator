@@ -183,6 +183,7 @@ SmallLLMEvaluator/
 - **`simple_4agents`** — 4 агента: числовые фрагменты → массовые доли и прочие параметры → формирование JSON.
 - **`critic_3agents`** — 3 агента: генератор → критик (анализ ответа) → исправитель.
 - **`qa_workflow`** — 6 агентов: питательные вещества → массовые доли по каждому → стандарт → марка → количества → сборка JSON.
+- **`validation_fix_2agents`** — 2 агента: генерация ответа (как в одноагентном) → валидация Pydantic; при невалидном JSON ошибки валидации подаются в LLM для исправления (исходный промпт и текст передаются исправителю).
 
 Потоки данных по режимам и список промптов по каждому режиму — в разделе 8.
 
@@ -215,6 +216,7 @@ SmallLLMEvaluator/
 | simple_4agents | 4 | Больше | Специализированные промпты по агентам |
 | critic_3agents | 3 | Больше | Генератор → критик → исправитель |
 | qa_workflow | 4+ | Больше | Зависит от числа веществ |
+| validation_fix_2agents | 1 или 2 | Как одноагентный / +1 при ошибке | Генерация → валидация → при ошибке повторная подача ошибок в LLM |
 | Structured output | как выше | — | Добавляет схему в промпт / в API |
 | Outlines / Guidance | как одноагентный | — | Constrained decoding, только локальные |
 
@@ -255,7 +257,7 @@ python main.py gemma-3-4b gemma-3-12b-api --structured-output
 - Для каждой модели выводится отдельная сводка результатов
 - В конце выводится итоговая сводка по всем моделям
 
-**Мультиагентный режим:** `python main.py <model_key> --multi-agent <mode>`. Режимы: `simple_4agents`, `critic_3agents`, `qa_workflow` (описание — раздел 4.1).
+**Мультиагентный режим:** `python main.py <model_key> --multi-agent <mode>`. Режимы: `simple_4agents`, `critic_3agents`, `qa_workflow`, `validation_fix_2agents` (описание — раздел 4.1).
 
 **Основные флаги:** `--multi-agent <mode>`, `--structured-output`, `--outlines`, `--pydantic-outlines`, `--guidance`, `--prompt NAME`, `--no-gemini` (отключить анализ ошибок через Gemini API). Подробности режимов — раздел 4.
 
@@ -279,6 +281,7 @@ python main.py gemma-3-4b gemma-3-12b-api --structured-output
 python main.py qwen-2.5-3b --multi-agent simple_4agents
 python main.py qwen-2.5-3b --multi-agent critic_3agents
 python main.py qwen-2.5-3b --multi-agent qa_workflow
+python main.py qwen-2.5-3b --multi-agent validation_fix_2agents
 
 # Qwen3 32B (локальная версия, требует ~64GB+ VRAM)
 python main.py qwen-3-32b
@@ -346,7 +349,7 @@ python run_all_models.py --local-only --multi-agent qa_workflow --structured-out
 **Доступные параметры:**
 - `--local-only` - запустить оценку только для локальных моделей (исключить API модели)
 - `--prompt NAME` - название промпта из prompt_config.py (переопределяет config.PROMPT_TEMPLATE_NAME)
-- `--multi-agent MODE` - режим мультиагентного подхода (simple_4agents, critic_3agents, qa_workflow)
+- `--multi-agent MODE` - режим мультиагентного подхода (simple_4agents, critic_3agents, qa_workflow, validation_fix_2agents)
 - `--structured-output` - использовать structured output через Pydantic
 - `--outlines` - использовать outlines со схемой из outlines_schema.py (только для локальных моделей; взаимоисключающий с --pydantic-outlines)
 - `--pydantic-outlines` - использовать outlines со схемой из Pydantic model_json_schema() (взаимоисключающий с --outlines)
@@ -728,7 +731,7 @@ results/
 
 **Название папки промпта (`prompt_folder_name`):**
 - Для одноагентного режима: название промпта из `hyperparameters.prompt_template_name` или `config.PROMPT_TEMPLATE_NAME`
-- Для мультиагентного режима: название режима (например, `simple_4agents`, `qa_workflow`)
+- Для мультиагентного режима: название режима (например, `simple_4agents`, `qa_workflow`, `validation_fix_2agents`)
 - Если используется `structured_output`:
   - С суффиксом `_structured` (если `structured_output=True`, без outlines/guidance)
   - С суффиксом `_outlines` (если `use_outlines=True`)
@@ -776,6 +779,10 @@ results/
 - **`QA_STANDARD_PROMPT`** - промпт для извлечения стандарта (ГОСТ, ТУ и т.д.)
 - **`QA_GRADE_PROMPT`** - промпт для извлечения марки удобрения
 - **`QA_QUANTITY_PROMPT`** - промпт для извлечения количеств (массы, объемы, количество упаковок)
+
+**Для режима `validation_fix_2agents`:**
+- Для агента 1 используется тот же промпт, что и в одноагентном режиме (`build_prompt3`, т.е. из `config.PROMPT_TEMPLATE_NAME` или `--prompt`).
+- **`VALIDATION_FIX_PROMPT`** - промпт для агента-исправителя: в него подставляются исходный промпт, исходный текст, невалидный JSON и ошибки валидации Pydantic; инструкция по схеме не дублируется, исправитель опирается на исходный промпт.
 
 **Для structured output и outlines:** используется схема `FertilizerExtractionOutput` (раздел 4.3); рекомендуются промпты `*_CD`.
 
@@ -849,6 +856,22 @@ results/
 [Агент 6: Сборка финального JSON]
     ↓
 Финальный JSON
+```
+
+#### 8.2.4. Режим `validation_fix_2agents`:
+
+```
+Исходный текст + промпт (как в одноагентном)
+    ↓
+[Агент 1: Генерация ответа и валидация Pydantic]
+    ↓
+    ├─ Валидный JSON → конец
+    │
+    └─ Невалидный JSON → ошибки валидации
+            ↓
+       [Агент 2: Исправитель — исходный промпт + текст + невалидный JSON + ошибки валидации]
+            ↓
+       Исправленный JSON (повторная валидация)
 ```
 
 ### 8.3. Формат данных

@@ -27,18 +27,22 @@ import re
 BASELINE_KEYWORD = "BASELINE"
 
 # Таблица алиасов методов: (полное_название, alias, описание).
+# Нумерация: 1–3 базовые, 4 minimal outlines, 5–10 CD-методы подряд, затем мультиагент и прочие.
 # Если метода нет в таблице, alias = акроним из первых букв частей (разделитель _), описание = полное название.
 METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный zero-shot промпт (baseline)"),
     ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный one-shot промпт"),
     ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный few-shot (5 примеров)"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "4.DIZCRO", "Zero-shot constrained decoding c outlines"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "5.DIOCRO", "One-shot constrained decoding c outlines"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "6.DIZCRG", "Zero-shot constrained decoding c guidance"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "7.DIOCRG", "One-shot constrained decoding с guidance"),
-    ("MA_SIMPLE_4AGENTS", "8.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
-    ("MA_CRITIC_3AGENTS", "9.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
-    ("MINIMAL_INSTR_FIVESHOT_APIE", "10.MIFA", "Few-shot с 5 примерами (APIE)"),
+    ("MINIMAL_INSTR_FIVESHOT_OUTLINES", "4.MIFO", "Минимальный few-shot (5 примеров) с constrained decoding (outlines)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "5.DIZCRO", "Zero-shot CD с кириллической схемой (outlines)"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "6.DIOCRO", "One-shot CD с кириллической схемой (outlines)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_GUIDANCE", "7.DIZCRG", "Zero-shot CD с кириллической схемой (guidance)"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "8.DIOCRG", "One-shot CD с кириллической схемой (guidance)"),
+    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_OUTLINES", "9.MIFCRO", "Минимальный few-shot CD с кириллической схемой (outlines)"),
+    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "10.MIFCRG", "Минимальный few-shot CD с кириллической схемой (guidance)"),
+    ("MA_SIMPLE_4AGENTS", "11.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
+    ("MA_CRITIC_3AGENTS", "12.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
+    ("MINIMAL_INSTR_FIVESHOT_APIE", "13.MIFA", "Few-shot с 5 примерами (APIE)"),
 ]
 
 
@@ -480,8 +484,14 @@ class GoogleSheetsIntegration:
         self._apply_cell_format(worksheet, format_info)
         notes = _build_notes_rows(methods)
         if notes:
-            start_row = len(table_data) + 2
+            start_row = len(table_data) + 1
             worksheet.update(values=notes, range_name=f"A{start_row}")
+            num_table_cols = 1 + len(methods)
+            last_col_letter = _col_letter_1based(num_table_cols)
+            for i in range(len(notes)):
+                row = start_row + i
+                merge_range = f"A{row}:{last_col_letter}{row}"
+                worksheet.merge_cells(merge_range)
         print(success_prefix)
         print(f"   • Моделей: {len(models)}")
         print(f"   • Методов: {len(methods)}")

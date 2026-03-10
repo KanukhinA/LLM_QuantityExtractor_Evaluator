@@ -14,6 +14,7 @@ from prompt_config import (
     DETAILED_INSTR_ONESHOT,
     CRITIC_PROMPT,
     CORRECTOR_PROMPT,
+    VALIDATION_FIX_PROMPT,
     QA_NUTRIENTS_PROMPT,
     QA_NUTRIENT_PROMPT,
     QA_STANDARD_PROMPT,
@@ -168,6 +169,36 @@ def _get_qa_workflow_prompts(example_text: str) -> Dict[str, Any]:
     }
 
 
+def _get_validation_fix_2agents_prompts(example_text: str) -> Dict[str, Any]:
+    """Генерирует примеры промптов для validation_fix_2agents."""
+    example_prompt = DETAILED_INSTR_ONESHOT.format(text=example_text)
+    example_invalid = '{"массовая доля": [{"вещество": "P2O5"}]}'
+    example_errors = "Field required: ('массовая доля', 0, 'массовая доля')"
+    return {
+        "full_prompt_example": f"""МУЛЬТИАГЕНТНЫЙ РЕЖИМ: validation_fix_2agents
+
+{'='*80}
+ПРОМПТ 1: ГЕНЕРАЦИЯ ОТВЕТА (как в одноагентном режиме)
+{'='*80}
+{example_prompt}
+
+{'='*80}
+ПРОМПТ 2: ИСПРАВЛЕНИЕ ПО ОШИБКАМ ВАЛИДАЦИИ (если JSON не прошёл Pydantic)
+{'='*80}
+{VALIDATION_FIX_PROMPT.format(original_prompt=example_prompt, text=example_text[:200], invalid_json=example_invalid, validation_errors=example_errors)}
+""",
+        "prompt_info": {
+            "mode": "validation_fix_2agents",
+            "prompts_used": ["DETAILED_INSTR (генерация)", "VALIDATION_FIX_PROMPT (исправление по ошибкам валидации)"],
+            "example_generator_prompt": example_prompt,
+            "example_fix_prompt": VALIDATION_FIX_PROMPT.format(
+                original_prompt=example_prompt, text=example_text[:200], invalid_json=example_invalid, validation_errors=example_errors
+            ),
+        },
+        "description": "генерация ответа -> валидация Pydantic -> при ошибках валидации повторная подача ошибок в LLM (исправитель)"
+    }
+
+
 # Регистр всех доступных workflow режимов
 WORKFLOW_CONFIGS: Dict[str, Dict[str, Any]] = {
     "simple_4agents": {
@@ -187,6 +218,12 @@ WORKFLOW_CONFIGS: Dict[str, Dict[str, Any]] = {
         "get_prompts_func": _get_qa_workflow_prompts,
         "description": "6 агентов: извлечение питательных веществ → массовые доли для каждого вещества → стандарт → марка → количества → сборка JSON",
         "graph_creator": "create_qa_workflow_graph"  # Имя функции в multi_agent_graph.py
+    },
+    "validation_fix_2agents": {
+        "name": "validation_fix_2agents",
+        "get_prompts_func": _get_validation_fix_2agents_prompts,
+        "description": "2 агента: генерация ответа -> валидация Pydantic -> при невалидном JSON ошибки валидации подаются в LLM для исправления",
+        "graph_creator": "create_validation_fix_2agents_graph"
     }
 }
 
