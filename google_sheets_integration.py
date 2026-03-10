@@ -20,9 +20,13 @@
 import os
 import json
 import glob
+import time
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 import re
+
+# Пауза (сек) между загрузками листов, чтобы не превысить лимит Write requests per minute (Sheets API)
+SHEETS_UPLOAD_DELAY_SEC = 1.5
 
 BASELINE_KEYWORD = "BASELINE"
 
@@ -121,6 +125,45 @@ def _data_cell_a1(row_idx: int, col_idx: int) -> str:
     """A1-нотация ячейки: row_idx 0 = первая строка данных (вторая строка листа), col_idx 0 = первый столбец метрик (B)."""
     col_1based = col_idx + 2
     return f"{_col_letter_1based(col_1based)}{row_idx + 2}"
+
+
+def _a1_range_to_grid_range(sheet_id: int, a1_range: str) -> dict:
+    """Преобразует диапазон в A1-нотации (например 'A12:J12') в grid range для Sheets API (0-based индексы)."""
+    part = a1_range.replace("$", "")
+    if ":" in part:
+        left, right = part.split(":", 1)
+    else:
+        left = right = part
+    # Столбец: буквы -> 0-based индекс (A=0, ..., Z=25, AA=26, ...)
+    def _col_letter_to_index(letters: str) -> int:
+        letters = letters.upper().strip()
+        idx = 0
+        for c in letters:
+            idx = idx * 26 + (ord(c) - ord("A") + 1)
+        return idx - 1
+    # Строка: цифры в конце
+    def _row_from_cell(cell: str) -> int:
+        i = 0
+        while i < len(cell) and cell[i].isalpha():
+            i += 1
+        return int(cell[i:]) if cell[i:] else 1
+    def _col_from_cell(cell: str) -> int:
+        i = 0
+        while i < len(cell) and cell[i].isalpha():
+            i += 1
+        return _col_letter_to_index(cell[:i])
+    start_row = _row_from_cell(left)
+    start_col = _col_from_cell(left)
+    end_row = _row_from_cell(right)
+    end_col = _col_from_cell(right)
+    return {
+        "sheetId": sheet_id,
+        "startRowIndex": start_row - 1,
+        "endRowIndex": end_row,
+        "startColumnIndex": start_col,
+        "endColumnIndex": end_col + 1,
+    }
+
 
 try:
     import gspread
@@ -488,10 +531,14 @@ class GoogleSheetsIntegration:
             worksheet.update(values=notes, range_name=f"A{start_row}")
             num_table_cols = 1 + len(methods)
             last_col_letter = _col_letter_1based(num_table_cols)
+            merge_requests = []
             for i in range(len(notes)):
                 row = start_row + i
                 merge_range = f"A{row}:{last_col_letter}{row}"
-                worksheet.merge_cells(merge_range)
+                grid = _a1_range_to_grid_range(worksheet.id, merge_range)
+                merge_requests.append({"mergeCells": {"range": grid, "mergeType": "MERGE_ALL"}})
+            if merge_requests:
+                self.client.batch_update(spreadsheet_id, {"requests": merge_requests})
         print(success_prefix)
         print(f"   • Моделей: {len(models)}")
         print(f"   • Методов: {len(methods)}")
@@ -964,24 +1011,28 @@ def main():
             group="массовая доля",
             all_metrics=all_metrics,
         )
+        time.sleep(SHEETS_UPLOAD_DELAY_SEC)
         integration.upload_to_sheet(
             spreadsheet_id=spreadsheet_id,
             worksheet_name=DEFAULT_WORKSHEET_OTHER,
             group="прочее",
             all_metrics=all_metrics,
         )
+        time.sleep(SHEETS_UPLOAD_DELAY_SEC)
         if validation_data:
             integration.upload_validation_to_sheet(
                 spreadsheet_id=spreadsheet_id,
                 worksheet_name=DEFAULT_WORKSHEET_VALIDATION,
                 validation_data=validation_data,
             )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
         if inference_time_data:
             integration.upload_inference_time_to_sheet(
                 spreadsheet_id=spreadsheet_id,
                 worksheet_name=DEFAULT_WORKSHEET_INFERENCE,
                 inference_time_data=inference_time_data,
             )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
         if gpu_memory_data:
             integration.upload_gpu_memory_to_sheet(
                 spreadsheet_id=spreadsheet_id,
