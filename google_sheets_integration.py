@@ -538,7 +538,7 @@ class GoogleSheetsIntegration:
                 grid = _a1_range_to_grid_range(worksheet.id, merge_range)
                 merge_requests.append({"mergeCells": {"range": grid, "mergeType": "MERGE_ALL"}})
             if merge_requests:
-                self.client.batch_update(spreadsheet_id, {"requests": merge_requests})
+                spreadsheet.batch_update({"requests": merge_requests})
         print(success_prefix)
         print(f"   • Моделей: {len(models)}")
         print(f"   • Методов: {len(methods)}")
