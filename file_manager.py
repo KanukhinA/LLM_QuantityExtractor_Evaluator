@@ -9,8 +9,8 @@ import re
 from typing import List, Optional, Dict, Any
 import pandas as pd
 
-# Максимальная длина поля "prompt" в блоке "ошибки" (для сокращения размера JSON). "text" не обрезается.
-PROMPT_IN_ERRORS_MAX_LEN = 500
+# В блоке "ошибки" выводим промпт целиком; только вхождение текста в промпте обрезаем до этой длины.
+TEXT_IN_PROMPT_MAX_LEN = 500
 
 
 class FileManager:
@@ -437,22 +437,23 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
-        # Подставляем промпт/initial_response/validation_errors по каждому примеру из pydantic_errors
-        # (в all_errors из quality_metrics приходит один и тот же full_prompt_example для всех)
+        # Подставляем промпт/response/initial_response/validation_errors по каждому примеру из pydantic_errors
         for pe in evaluation_result.get("pydantic_errors", []):
             idx = pe.get("text_index", 0)
             if idx in errors_by_text:
                 if pe.get("prompt") is not None:
                     errors_by_text[idx]["prompt"] = pe.get("prompt", "")
+                if pe.get("response") is not None:
+                    errors_by_text[idx]["response"] = pe.get("response", "")
                 if pe.get("initial_response") is not None:
                     errors_by_text[idx]["initial_response"] = pe.get("initial_response", "")
                 if pe.get("validation_errors"):
                     errors_by_text[idx]["validation_errors"] = pe.get("validation_errors", "")
-        
         for v in errors_by_text.values():
             p = v.get("prompt") or ""
-            if len(p) > PROMPT_IN_ERRORS_MAX_LEN:
-                v["prompt"] = p[:PROMPT_IN_ERRORS_MAX_LEN]
+            text = v.get("text") or ""
+            if text and len(text) > TEXT_IN_PROMPT_MAX_LEN and text in p:
+                v["prompt"] = p.replace(text, text[:TEXT_IN_PROMPT_MAX_LEN] + "...", 1)
         errors_list = [v for v in errors_by_text.values() if v.get("errors")]
         errors_list.sort(key=lambda v: v.get("text_index", 999999))
 
@@ -702,10 +703,22 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
+        for pe in evaluation_result.get("pydantic_errors", []):
+            idx = pe.get("text_index", 0)
+            if idx in errors_by_text:
+                if pe.get("prompt") is not None:
+                    errors_by_text[idx]["prompt"] = pe.get("prompt", "")
+                if pe.get("response") is not None:
+                    errors_by_text[idx]["response"] = pe.get("response", "")
+                if pe.get("initial_response") is not None:
+                    errors_by_text[idx]["initial_response"] = pe.get("initial_response", "")
+                if pe.get("validation_errors"):
+                    errors_by_text[idx]["validation_errors"] = pe.get("validation_errors", "")
         for v in errors_by_text.values():
             p = v.get("prompt") or ""
-            if len(p) > PROMPT_IN_ERRORS_MAX_LEN:
-                v["prompt"] = p[:PROMPT_IN_ERRORS_MAX_LEN]
+            text = v.get("text") or ""
+            if text and len(text) > TEXT_IN_PROMPT_MAX_LEN and text in p:
+                v["prompt"] = p.replace(text, text[:TEXT_IN_PROMPT_MAX_LEN] + "...", 1)
         errors_list = [v for v in errors_by_text.values() if v.get("errors")]
         errors_list.sort(key=lambda v: v.get("text_index", 999999))
 

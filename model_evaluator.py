@@ -914,9 +914,6 @@ class ModelEvaluator:
                 if use_multi_agent:
                     # Мультиагентный подход
                     try:
-                        # Выводим сообщение только при verbose режиме
-                        if verbose:
-                            print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - Мультиагентная обработка текста:")
                         start_time = time.time()
                         hp = {**hyperparameters, "model_key": model_key or "", "prompt_template_name": hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME}
                         result = process_with_multi_agent(
@@ -928,7 +925,10 @@ class ModelEvaluator:
                         )
                         elapsed = time.time() - start_time
                         times.append(elapsed)
-                        
+                        if verbose:
+                            only_agent_1 = (multi_agent_mode == "validation_fix_2agents" and result.get("is_valid") and not result.get("validation_errors"))
+                            msg = "Обработка текста" if only_agent_1 else "Мультиагентная обработка текста"
+                            print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - {msg}:")
                         # Измеряем память во время инференса (только для локальных моделей с весами)
                         if not is_api_model and not is_ollama:
                             memory_sample = get_gpu_memory_usage()
@@ -1053,6 +1053,7 @@ class ModelEvaluator:
                             text, i, len(self.texts), error_msg,
                             is_api_model or is_ollama, verbose, parsing_errors
                         )
+                        result["prompt"] = prompt
                         results.append(result)
                         self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
                         last_processed_index = i
@@ -1079,6 +1080,7 @@ class ModelEvaluator:
                             text, i, len(self.texts), error_msg,
                             is_api_model or is_ollama, verbose, parsing_errors
                         )
+                        result["prompt"] = prompt
                         results.append(result)
                         continue
                     
@@ -1086,6 +1088,7 @@ class ModelEvaluator:
                     result = self._process_response(
                         response_text, text, i, is_api_model or is_ollama, verbose, parsing_errors
                     )
+                    result["prompt"] = prompt
                     results.append(result)
             
             # Выводим прогресс после каждого запроса
@@ -1161,9 +1164,6 @@ class ModelEvaluator:
                                 
                                 if use_multi_agent:
                                     try:
-                                        # Выводим сообщение только при verbose режиме
-                                        if verbose:
-                                            print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - Мультиагентная обработка текста:")
                                         start_time = time.time()
                                         hp = {**hyperparameters, "model_key": model_key or "", "prompt_template_name": hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME}
                                         result = process_with_multi_agent(
@@ -1175,7 +1175,10 @@ class ModelEvaluator:
                                         )
                                         elapsed = time.time() - start_time
                                         times.append(elapsed)
-                                        
+                                        if verbose:
+                                            only_agent_1 = (multi_agent_mode == "validation_fix_2agents" and result.get("is_valid") and not result.get("validation_errors"))
+                                            msg = "Обработка текста" if only_agent_1 else "Мультиагентная обработка текста"
+                                            print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - {msg}:")
                                         memory_sample = get_gpu_memory_usage()
                                         memory_samples.append(memory_sample["allocated"])
                                         
@@ -1279,6 +1282,7 @@ class ModelEvaluator:
                                             self.texts[i], i, len(self.texts), error_msg,
                                             is_api_model or is_ollama, verbose, parsing_errors
                                         )
+                                        result["prompt"] = prompt
                                         results.append(result)
                                         self._print_progress(i, len(self.texts), results, times, total_start_time, verbose)
                                         continue
@@ -1303,6 +1307,7 @@ class ModelEvaluator:
                                             self.texts[i], i, len(self.texts), error_msg,
                                             is_api_model or is_ollama, verbose, parsing_errors
                                         )
+                                        result["prompt"] = prompt
                                         results.append(result)
                                         continue
                                     
@@ -1310,6 +1315,7 @@ class ModelEvaluator:
                                     result = self._process_response(
                                         response_text, self.texts[i], i, is_api_model or is_ollama, verbose, parsing_errors
                                     )
+                                    result["prompt"] = prompt
                                     results.append(result)
                                 
                                 # Выводим прогресс
@@ -1565,6 +1571,17 @@ class ModelEvaluator:
                 # Подсчитываем количество успешно распарсенных ответов (is_valid = True)
                 total_parsed_count = sum(1 for r in results if r.get("is_valid", False))
 
+                # Конкретный промпт по примеру: один или сконкатенированный при реальном мультиагентном использовании
+                concrete_prompts = []
+                for r in results:
+                    p1 = r.get("prompt", "")
+                    p2 = r.get("fix_prompt", "")
+                    if p2:
+                        concrete_prompts.append(
+                            "МУЛЬТИАГЕНТНЫЙ РЕЖИМ (использован для этого примера)\n\n" + p1 + "\n\n---\n\n" + p2
+                        )
+                    else:
+                        concrete_prompts.append(p1 or full_prompt_example)
                 # Список ошибок Pydantic по текстам
                 for idx, r in enumerate(results):
                     rv = r.get("raw_validation") or {}
@@ -1578,11 +1595,12 @@ class ModelEvaluator:
                         errors.extend(rv.get("errors", []))
                     if not pv_ok:
                         errors.extend(pv.get("errors", []))
+                    prompt_for_entry = concrete_prompts[idx] if idx < len(concrete_prompts) else (r.get("prompt") or full_prompt_example)
                     entry = {
                         "text_index": idx,
                         "text": r.get("text", ""),
                         "response": r.get("json", "") or r.get("raw_output", "") or r.get("response", ""),
-                        "prompt": r.get("prompt") or full_prompt_example,
+                        "prompt": prompt_for_entry,
                         "errors": errors,
                     }
                     if r.get("initial_response") is not None:
@@ -1619,6 +1637,13 @@ class ModelEvaluator:
                     print(f"   ⚠️ Ошибка: calculate_quality_metrics вернула не словарь, а {type(quality_metrics)}")
                     quality_metrics = None
                 else:
+                    # Подставляем конкретный промпт по примеру в ошибки quality_metrics (единое поле prompt)
+                    for group in ("массовая доля", "прочее"):
+                        if group in quality_metrics and "все_ошибки" in quality_metrics[group]:
+                            for err in quality_metrics[group]["все_ошибки"]:
+                                ti = err.get("text_index")
+                                if ti is not None and ti < len(concrete_prompts):
+                                    err["prompt"] = concrete_prompts[ti]
                     # Выводим метрики качества через MetricsPrinter (cleaned output)
                     MetricsPrinter.print_quality_metrics(quality_metrics)
                 

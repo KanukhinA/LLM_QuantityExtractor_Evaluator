@@ -928,6 +928,7 @@ def fix_validation_agent(state: AgentState) -> AgentState:
             "is_valid": is_valid,
             "success": is_valid,
             "time": total_time,
+            "fix_prompt": fix_prompt,
         }
     except KeyboardInterrupt:
         raise
@@ -1605,6 +1606,7 @@ def process_with_multi_agent(
                 "mass_fractions": "",
                 "other_parameters": "",
                 "prompt": final_state.get("prompt", ""),
+                "fix_prompt": "",
                 "initial_response": final_state.get("initial_response", ""),
                 "validation_errors": final_state.get("validation_errors", ""),
             }
@@ -1635,6 +1637,7 @@ def process_with_multi_agent(
                 "mass_fractions": "",
                 "other_parameters": "",
                 "prompt": final_state.get("prompt", ""),
+                "fix_prompt": "",
                 "initial_response": final_state.get("initial_response", ""),
                 "validation_errors": final_state.get("validation_errors", ""),
             }
@@ -1655,6 +1658,7 @@ def process_with_multi_agent(
             "mass_fractions": final_state.get("mass_fractions", ""),
             "other_parameters": final_state.get("other_parameters", ""),
             "prompt": final_state.get("prompt", ""),
+            "fix_prompt": final_state.get("fix_prompt", ""),
             "initial_response": final_state.get("initial_response", ""),
             "validation_errors": final_state.get("validation_errors", ""),
         }
@@ -1669,6 +1673,7 @@ def process_with_multi_agent(
             "error": str(e),
             "time": 0.0,
             "prompt": "",
+            "fix_prompt": "",
             "initial_response": "",
             "validation_errors": "",
         }

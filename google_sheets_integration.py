@@ -87,11 +87,13 @@ def _method_sort_key(full_name: str) -> Tuple[int, str]:
     return (_alias_order_number(alias), full_name)
 
 
-def _build_notes_rows(methods: List[str]) -> List[List[str]]:
-    """Строки для блока примечаний под таблицей: заголовок и строки «ALIAS — определение»."""
-    if not methods:
+def _build_notes_rows(methods: List[str], description_line: Optional[str] = None) -> List[List[str]]:
+    """Строки для блока примечаний под таблицей: заголовок, опционально вспомогательное описание, затем «ALIAS — определение»."""
+    if not methods and not description_line:
         return []
     rows = [["Примечания"]]
+    if description_line:
+        rows.append([description_line])
     for m in methods:
         alias = get_method_alias(m)
         desc = get_method_description(m)
@@ -122,10 +124,11 @@ def _col_letter_1based(col_1based: int) -> str:
     return s
 
 
-def _data_cell_a1(row_idx: int, col_idx: int) -> str:
-    """A1-нотация ячейки: row_idx 0 = первая строка данных (вторая строка листа), col_idx 0 = первый столбец метрик (B)."""
+def _data_cell_a1(row_idx: int, col_idx: int, first_data_row: int = 2) -> str:
+    """A1-нотация ячейки: row_idx 0 = первая строка данных, col_idx 0 = первый столбец метрик (B).
+    first_data_row: номер строки листа для первой строки данных (2 без шапки-описания, 3 с шапкой)."""
     col_1based = col_idx + 2
-    return f"{_col_letter_1based(col_1based)}{row_idx + 2}"
+    return f"{_col_letter_1based(col_1based)}{first_data_row + row_idx}"
 
 
 def _a1_range_to_grid_range(sheet_id: int, a1_range: str) -> dict:
@@ -411,12 +414,12 @@ class GoogleSheetsIntegration:
             methods_set.update(k for k in model_data.keys() if k != "_timestamp")
         methods = _sort_methods_by_alias_number(methods_set)
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        
-        table_data = [_table_header(methods)]
+        title_row = [f"F1 ({group})"]
+        table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
-        
+        _first_row = 3
         for row_idx, model in enumerate(models):
             row = [model]
             baseline_val = None
@@ -434,7 +437,7 @@ class GoogleSheetsIntegration:
                         cell_val = f"{f1_score:.4f}\n({sign}{diff:.2f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
-                            cell_a1 = _data_cell_a1(row_idx, col_idx)
+                            cell_a1 = _data_cell_a1(row_idx, col_idx, _first_row)
                             if diff > 0:
                                 green_cells.append(cell_a1)
                             elif diff < 0:
@@ -451,7 +454,7 @@ class GoogleSheetsIntegration:
             valid = [(ri, v) for ri, v in col_values if v is not None and (not isinstance(v, (int, float)) or abs(float(v)) >= 1e-6)]
             if valid:
                 best_row_idx = max(valid, key=lambda x: x[1])[0]
-                bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
+                bold_cells.append(_data_cell_a1(best_row_idx, col_idx, _first_row))
 
         avg_row = [AVG_ROW_LABEL]
         for col_idx, method in enumerate(methods):
@@ -506,6 +509,7 @@ class GoogleSheetsIntegration:
         clear_existing: bool,
         success_prefix: str,
         extra_lines: Optional[List[str]] = None,
+        table_description: Optional[str] = None,
     ) -> None:
         """Общая загрузка таблицы на лист: данные, форматирование заголовка и ячеек, примечания, вывод в консоль."""
         spreadsheet = self.client.open_by_key(spreadsheet_id)
@@ -513,20 +517,46 @@ class GoogleSheetsIntegration:
         if clear_existing:
             worksheet.clear()
         worksheet.update(values=table_data, range_name="A1")
-        worksheet.format("A1:Z1", {
-            "textFormat": {"bold": True},
-            "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-        })
         num_cols = len(methods)
-        if num_cols > 0 and len(table_data) > 1:
-            metrics_range = f"B2:{_col_letter_1based(1 + num_cols)}{len(table_data)}"
-            worksheet.format(metrics_range, {
-                "horizontalAlignment": "CENTER",
-                "backgroundColor": {"red": 1, "green": 1, "blue": 1},
-                "textFormat": {"bold": False},
+        last_col_letter = _col_letter_1based(1 + num_cols) if num_cols > 0 else "A"
+        has_title_row = len(table_data) > 0 and len(table_data[0]) == 1
+        merge_requests = []
+        if has_title_row and num_cols > 0:
+            merge_requests.append({"mergeCells": {"range": _a1_range_to_grid_range(worksheet.id, f"A1:{last_col_letter}1"), "mergeType": "MERGE_ALL"}})
+        if merge_requests:
+            spreadsheet.batch_update({"requests": merge_requests})
+        if has_title_row:
+            worksheet.format("A1", {
+                "wrapStrategy": "WRAP",
+                "verticalAlignment": "TOP",
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 1},
             })
+            worksheet.format(f"A2:{last_col_letter}2", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
+            })
+            if num_cols > 0 and len(table_data) > 2:
+                metrics_range = f"B3:{last_col_letter}{len(table_data)}"
+                worksheet.format(metrics_range, {
+                    "horizontalAlignment": "CENTER",
+                    "backgroundColor": {"red": 1, "green": 1, "blue": 1},
+                    "textFormat": {"bold": False},
+                })
+        else:
+            worksheet.format("A1:Z1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
+            })
+            if num_cols > 0 and len(table_data) > 1:
+                metrics_range = f"B2:{last_col_letter}{len(table_data)}"
+                worksheet.format(metrics_range, {
+                    "horizontalAlignment": "CENTER",
+                    "backgroundColor": {"red": 1, "green": 1, "blue": 1},
+                    "textFormat": {"bold": False},
+                })
         self._apply_cell_format(worksheet, format_info)
-        notes = _build_notes_rows(methods)
+        notes = _build_notes_rows(methods, description_line=table_description)
         if notes:
             start_row = len(table_data) + 1
             worksheet.update(values=notes, range_name=f"A{start_row}")
@@ -569,8 +599,10 @@ class GoogleSheetsIntegration:
         models = sorted(set(validation_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        table_data = [_table_header(methods)]
+        title_row = ["Доля валидных ответов (parsed(raw))"]
+        table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
+        _first_row = 3
         for row_idx, model in enumerate(models):
             row = [model]
             for col_idx, method in enumerate(methods):
@@ -580,7 +612,7 @@ class GoogleSheetsIntegration:
                 if cell_val and cell_val.strip() != "-":
                     parsed_rate = _parse_validation_rate(val)
                     if parsed_rate is not None and abs(parsed_rate - 1.0) < 1e-6:
-                        green_cells.append(_data_cell_a1(row_idx, col_idx))
+                        green_cells.append(_data_cell_a1(row_idx, col_idx, _first_row))
             table_data.append(row)
         avg_row = [AVG_ROW_LABEL]
         for method in methods:
@@ -619,12 +651,12 @@ class GoogleSheetsIntegration:
         models = sorted(set(inference_time_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        
-        table_data = [_table_header(methods)]
+        title_row = ["Среднее время ответа (с)"]
+        table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
-        
+        _first_row = 3
         for row_idx, model in enumerate(models):
             row = [model]
             baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
@@ -639,7 +671,7 @@ class GoogleSheetsIntegration:
                         cell_val = f"{sec:.3f}\n({sign}{diff:.3f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
-                            cell_a1 = _data_cell_a1(row_idx, col_idx)
+                            cell_a1 = _data_cell_a1(row_idx, col_idx, _first_row)
                             if diff < 0:
                                 green_cells.append(cell_a1)
                             elif diff > 0:
@@ -654,7 +686,7 @@ class GoogleSheetsIntegration:
             valid = [(ri, v) for ri, v in col_values if v is not None and (not isinstance(v, (int, float)) or abs(float(v)) >= 1e-6)]
             if valid:
                 best_row_idx = min(valid, key=lambda x: x[1])[0]
-                bold_cells.append(_data_cell_a1(best_row_idx, col_idx))
+                bold_cells.append(_data_cell_a1(best_row_idx, col_idx, _first_row))
 
         avg_row = [AVG_ROW_LABEL]
         for col_idx, method in enumerate(methods):
@@ -690,9 +722,11 @@ class GoogleSheetsIntegration:
         models = sorted(set(gpu_memory_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        table_data = [_table_header(methods)]
+        title_row = ["VRAM при инференсе (ГБ)"]
+        table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
+        _first_row = 3
 
         def _is_empty_val(v) -> bool:
             if v is None:
@@ -725,7 +759,7 @@ class GoogleSheetsIntegration:
                         cell_val = f"{gb:.2f}\n({sign}{diff:.2f})"
                         row.append(cell_val)
                         if cell_val.strip() != "-":
-                            cell_a1 = _data_cell_a1(row_idx, col_idx)
+                            cell_a1 = _data_cell_a1(row_idx, col_idx, _first_row)
                             if diff < 0:
                                 green_cells.append(cell_a1)
                             elif diff > 0:
@@ -746,7 +780,7 @@ class GoogleSheetsIntegration:
                 cell_val = f"{sign}{avg_diff:.2f}"
                 avg_row.append(cell_val)
                 if cell_val.strip() != "-":
-                    cell_avg = _data_cell_a1(num_model_rows, col_idx)
+                    cell_avg = _data_cell_a1(num_model_rows, col_idx, _first_row)
                     if avg_diff < 0:
                         green_cells.append(cell_avg)
                     elif avg_diff > 0:
@@ -784,6 +818,7 @@ class GoogleSheetsIntegration:
                 clear_existing,
                 success_prefix=f"✅ Данные успешно загружены в лист '{worksheet_name}'",
                 extra_lines=[f"   • Группа метрик: {group}"],
+                table_description=f"Метрика: F1 ({group}). В скобках: разница с baseline (положительная — лучше).",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке данных в Google Таблицу: {e}")
@@ -806,6 +841,7 @@ class GoogleSheetsIntegration:
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
                 success_prefix=f"✅ Validation загружены в лист '{worksheet_name}'",
+                table_description="Метрика: доля валидных ответов в формате parsed(raw). В скобках разница не выводится; зелёным выделены ячейки с parsed = 1.0.",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
@@ -825,6 +861,7 @@ class GoogleSheetsIntegration:
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
                 success_prefix=f"✅ Среднее время инференса загружено в лист '{worksheet_name}'",
+                table_description="Метрика: среднее время ответа (с). В скобках: разница с baseline (отрицательная — быстрее).",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
@@ -844,6 +881,7 @@ class GoogleSheetsIntegration:
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
                 success_prefix=f"✅ GPU memory during inference загружено в лист '{worksheet_name}'",
+                table_description="Метрика: объём VRAM во время инференса (ГБ). В скобках: разница с baseline (отрицательная — меньше памяти).",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
