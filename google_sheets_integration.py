@@ -39,13 +39,13 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "4.DIZCRO", "Детальный zero-shot промпт с constrained decoding (outlines) со схемой на русском языке"),
     ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "5.DIOCRO", "Детальный one-shot промпт с constrained decoding (outlines) со схемой на русском языке"),
     ("MINIMAL_INSTR_FIVESHOT_CD_RUS_OUTLINES", "6.MIFCRO", "Минимальный few-shot промпт с constrained decoding (outlines) со схемой на русском языке"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "5.DIZCOP", "Детальный zero-shot промпт с constrained decoding (outlines) с подачей Pydantic-схемы с ключами на английском в промпте"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "7.DIZCOP", "Детальный zero-shot промпт с constrained decoding (outlines) с подачей Pydantic-схемы с ключами на английском в промпте"),
     ("DETAILED_INSTR_ZEROSHOT_CD_RUS_GUIDANCE", "8.DIZCRG", "Детальный zero-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
     ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "9.DIOCRG", "Детальный one-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
-    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "11.MIFCRG", "Минимальный few-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
-    ("MA_SIMPLE_4AGENTS", "12.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
-    ("MA_CRITIC_3AGENTS", "13.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
-    ("MINIMAL_INSTR_FIVESHOT_APIE", "14.MIFA", "Минимальный few-shot промпт с 5 примерами определёнными при помощи техникиAPIE"),
+    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "10.MIFCRG", "Минимальный few-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
+    ("MA_SIMPLE_4AGENTS", "11.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
+    ("MA_CRITIC_3AGENTS", "12.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
+    ("MINIMAL_INSTR_FIVESHOT_APIE", "13.MIFA", "Минимальный few-shot промпт с 5 примерами определёнными при помощи техникиAPIE"),
 ]
 
 
@@ -86,16 +86,15 @@ def _method_sort_key(full_name: str) -> Tuple[int, str]:
 
 
 def _build_notes_rows(methods: List[str], description_line: Optional[str] = None) -> List[List[str]]:
-    """Строки для блока примечаний под таблицей: заголовок, опционально вспомогательное описание, затем «ALIAS — определение»."""
+    """Строки для блока примечаний: заголовок, опционально описание метрики, затем одна строка «alias — описание» через «; »."""
     if not methods and not description_line:
         return []
     rows = [["Примечания"]]
     if description_line:
         rows.append([description_line])
-    for m in methods:
-        alias = get_method_alias(m)
-        desc = get_method_description(m)
-        rows.append([f"{alias} — {desc}"])
+    if methods:
+        parts = [f"{get_method_alias(m)} — {get_method_description(m)}" for m in methods]
+        rows.append(["; ".join(parts)])
     return rows
 
 
@@ -480,15 +479,16 @@ class GoogleSheetsIntegration:
         """Применяет к ячейкам зелёный/красный фон и жирный шрифт по спискам A1."""
         if not format_info:
             return
+        table_font = {"fontFamily": "Times New Roman"}
         green = format_info.get("green") or []
         red = format_info.get("red") or []
         bold = format_info.get("bold") or []
         if green:
-            worksheet.format(green, {"backgroundColor": {"red": 0.7, "green": 1.0, "blue": 0.7}})
+            worksheet.format(green, {"backgroundColor": {"red": 0.7, "green": 1.0, "blue": 0.7}, "textFormat": table_font})
         if red:
-            worksheet.format(red, {"backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7}})
+            worksheet.format(red, {"backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7}, "textFormat": table_font})
         if bold:
-            worksheet.format(bold, {"textFormat": {"bold": True}})
+            worksheet.format(bold, {"textFormat": {"bold": True, **table_font}})
 
     def _get_or_create_worksheet(self, spreadsheet, worksheet_name: str):
         """Возвращает лист по имени; создаёт с rows=100, cols=20, если не найден."""
@@ -529,36 +529,37 @@ class GoogleSheetsIntegration:
             merge_requests.append({"mergeCells": {"range": _a1_range_to_grid_range(worksheet.id, f"A1:{last_col_letter}1"), "mergeType": "MERGE_ALL"}})
         if merge_requests:
             spreadsheet.batch_update({"requests": merge_requests})
+        table_font = {"fontFamily": "Times New Roman"}
         if has_title_row:
             worksheet.format("A1", {
                 "wrapStrategy": "WRAP",
                 "horizontalAlignment": "CENTER",
                 "verticalAlignment": "MIDDLE",
-                "textFormat": {"bold": True},
+                "textFormat": {"bold": True, **table_font},
                 "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 1},
             })
             worksheet.format(f"A2:{last_col_letter}2", {
-                "textFormat": {"bold": True},
+                "textFormat": {"bold": True, **table_font},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
             })
             if num_cols > 0 and len(table_data) > 2:
-                metrics_range = f"B3:{last_col_letter}{len(table_data)}"
+                metrics_range = f"A3:{last_col_letter}{len(table_data)}"
                 worksheet.format(metrics_range, {
                     "horizontalAlignment": "CENTER",
                     "backgroundColor": {"red": 1, "green": 1, "blue": 1},
-                    "textFormat": {"bold": False},
+                    "textFormat": {"bold": False, **table_font},
                 })
         else:
             worksheet.format("A1:Z1", {
-                "textFormat": {"bold": True},
+                "textFormat": {"bold": True, **table_font},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
             })
             if num_cols > 0 and len(table_data) > 1:
-                metrics_range = f"B2:{last_col_letter}{len(table_data)}"
+                metrics_range = f"A2:{last_col_letter}{len(table_data)}"
                 worksheet.format(metrics_range, {
                     "horizontalAlignment": "CENTER",
                     "backgroundColor": {"red": 1, "green": 1, "blue": 1},
-                    "textFormat": {"bold": False},
+                    "textFormat": {"bold": False, **table_font},
                 })
         self._apply_cell_format(worksheet, format_info)
         notes = _build_notes_rows(methods, description_line=table_description)
@@ -575,6 +576,11 @@ class GoogleSheetsIntegration:
                 merge_requests.append({"mergeCells": {"range": grid, "mergeType": "MERGE_ALL"}})
             if merge_requests:
                 spreadsheet.batch_update({"requests": merge_requests})
+            notes_range = f"A{start_row}:{last_col_letter}{start_row + len(notes) - 1}"
+            worksheet.format(notes_range, {
+                "textFormat": {"fontFamily": "Times New Roman", "fontSize": 9},
+                "wrapStrategy": "WRAP",
+            })
         print(success_prefix)
         print(f"   • Моделей: {len(models)}")
         print(f"   • Методов: {len(methods)}")
