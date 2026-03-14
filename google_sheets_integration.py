@@ -45,7 +45,7 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "10.MIFCRG", "Минимальный few-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
     ("MA_SIMPLE_4AGENTS", "11.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
     ("MA_CRITIC_3AGENTS", "12.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
-    ("MINIMAL_INSTR_FIVESHOT_APIE", "13.MIFA", "Минимальный few-shot промпт с 5 примерами определёнными при помощи техникиAPIE"),
+    ("MINIMAL_INSTR_FIVESHOT_APIE", "13.MIFA", "Минимальный few-shot промпт с 5 примерами определёнными при помощи техники APIE"),
 ]
 
 
@@ -619,7 +619,10 @@ class GoogleSheetsIntegration:
             row = [model]
             for col_idx, method in enumerate(methods):
                 val = validation_data.get(model, {}).get(method, "")
-                cell_val = val if val else "-"
+                if val and "(" in str(val):
+                    cell_val = str(val).replace("(", "\n(", 1)
+                else:
+                    cell_val = val if val else "-"
                 row.append(cell_val)
                 if cell_val and cell_val.strip() != "-":
                     parsed_rate = _parse_validation_rate(val)
