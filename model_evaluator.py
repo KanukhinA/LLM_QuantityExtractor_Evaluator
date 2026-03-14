@@ -918,12 +918,13 @@ class ModelEvaluator:
                         if verbose:
                             print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - Мультиагентная обработка текста:")
                         start_time = time.time()
+                        hp = {**hyperparameters, "model_key": model_key or "", "prompt_template_name": hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME}
                         result = process_with_multi_agent(
                             text=text,
                             generator=generator,
                             max_new_tokens=max_new_tokens,
                             multi_agent_mode=multi_agent_mode,
-                            hyperparameters=hyperparameters,
+                            hyperparameters=hp,
                         )
                         elapsed = time.time() - start_time
                         times.append(elapsed)
@@ -988,7 +989,10 @@ class ModelEvaluator:
                             "is_valid": is_valid,
                             "raw_output": raw_output_for_result,
                             "raw_validation": raw_validation_for_result,
-                            "parsed_validation": parsed_validation_for_result
+                            "parsed_validation": parsed_validation_for_result,
+                            "prompt": result.get("prompt", ""),
+                            "initial_response": result.get("initial_response", ""),
+                            "validation_errors": result.get("validation_errors", ""),
                         })
                     except Exception as e:
                         error_msg = str(e)
@@ -1011,6 +1015,9 @@ class ModelEvaluator:
                             "raw_output": "",
                             "raw_validation": empty_validation,
                             "parsed_validation": empty_validation,
+                            "prompt": "",
+                            "initial_response": "",
+                            "validation_errors": "",
                         })
                 else:
                     # Одноагентный подход (оригинальный)
@@ -1158,12 +1165,13 @@ class ModelEvaluator:
                                         if verbose:
                                             print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - Мультиагентная обработка текста:")
                                         start_time = time.time()
+                                        hp = {**hyperparameters, "model_key": model_key or "", "prompt_template_name": hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME}
                                         result = process_with_multi_agent(
                                             text=self.texts[i],
                                             generator=generator,
                                             max_new_tokens=max_new_tokens,
                                             multi_agent_mode=multi_agent_mode,
-                                            hyperparameters=hyperparameters,
+                                            hyperparameters=hp,
                                         )
                                         elapsed = time.time() - start_time
                                         times.append(elapsed)
@@ -1216,7 +1224,10 @@ class ModelEvaluator:
                                             "is_valid": is_valid,
                                             "raw_output": raw_output_for_result,
                                             "raw_validation": raw_validation_for_result,
-                                            "parsed_validation": parsed_validation_for_result
+                                            "parsed_validation": parsed_validation_for_result,
+                                            "prompt": result.get("prompt", ""),
+                                            "initial_response": result.get("initial_response", ""),
+                                            "validation_errors": result.get("validation_errors", ""),
                                         })
                                     except Exception as e:
                                         error_msg = str(e)
@@ -1231,6 +1242,9 @@ class ModelEvaluator:
                                             "raw_output": "",
                                             "raw_validation": empty_validation,
                                             "parsed_validation": empty_validation,
+                                            "prompt": "",
+                                            "initial_response": "",
+                                            "validation_errors": "",
                                         })
                                 else:
                                     so = hyperparameters.get("structured_output", False)
@@ -1564,13 +1578,18 @@ class ModelEvaluator:
                         errors.extend(rv.get("errors", []))
                     if not pv_ok:
                         errors.extend(pv.get("errors", []))
-                    pydantic_errors.append({
+                    entry = {
                         "text_index": idx,
                         "text": r.get("text", ""),
                         "response": r.get("json", "") or r.get("raw_output", "") or r.get("response", ""),
-                        "prompt": full_prompt_example,
+                        "prompt": r.get("prompt") or full_prompt_example,
                         "errors": errors,
-                    })
+                    }
+                    if r.get("initial_response") is not None:
+                        entry["initial_response"] = r.get("initial_response", "")
+                    if r.get("validation_errors"):
+                        entry["validation_errors"] = r.get("validation_errors", "")
+                    pydantic_errors.append(entry)
 
                 if raw_validations or parsed_validations:
                     raw_valid_count = sum(1 for v in raw_validations if v.get("is_valid", False)) if raw_validations else 0

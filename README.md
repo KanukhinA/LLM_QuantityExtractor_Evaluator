@@ -731,7 +731,7 @@ results/
 
 **Название папки промпта (`prompt_folder_name`):**
 - Для одноагентного режима: название промпта из `hyperparameters.prompt_template_name` или `config.PROMPT_TEMPLATE_NAME`
-- Для мультиагентного режима: название режима (например, `simple_4agents`, `qa_workflow`, `validation_fix_2agents`)
+- Для мультиагентного режима: префикс `MA_` + название режима (капсом). Для режимов с выбором базового промпта (`validation_fix_2agents`, `critic_3agents`) к имени папки добавляется название промпта (например, `MA_VALIDATION_FIX_2AGENTS_DETAILED_INSTR_ZEROSHOT_BASELINE`)
 - Если используется `structured_output`:
   - С суффиксом `_structured` (если `structured_output=True`, без outlines/guidance)
   - С суффиксом `_outlines` (если `use_outlines=True`)
@@ -741,8 +741,9 @@ results/
 - `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT/` - обычный режим
 - `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT_structured/` - с structured output
 - `results/qwen-2.5-3b/DETAILED_INSTR_ZEROSHOT_outlines/` - с structured output и outlines
-- `results/qwen-2.5-3b/simple_4agents/` - мультиагентный режим
-- `results/qwen-2.5-3b/simple_4agents_structured/` - мультиагентный режим с structured output
+- `results/qwen-2.5-3b/MA_SIMPLE_4AGENTS/` - мультиагентный режим
+- `results/qwen-2.5-3b/MA_VALIDATION_FIX_2AGENTS_DETAILED_INSTR_ZEROSHOT_BASELINE/` - validation_fix_2agents с промптом DETAILED_INSTR_ZEROSHOT_BASELINE
+- `results/qwen-2.5-3b/MA_SIMPLE_4AGENTS_structured/` - мультиагентный режим с structured output
 
 **Примечание:** Название промпта добавляется в имя файла (например, `metrics_model_name_DETAILED_INSTR_ZEROSHOT_timestamp.json`), а также сохраняется в отдельном поле `prompt_designation` в JSON файле для удобного поиска и фильтрации результатов.
 

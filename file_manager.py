@@ -49,15 +49,25 @@ class FileManager:
         sanitized = sanitized.strip('_')
         return sanitized if sanitized else "unknown"
 
+    # Режимы multi-agent, в которых для первого ответа модели можно выбрать промпт (--prompt / config).
+    # Для них имя папки дополняется названием промпта, чтобы разделять результаты по промпту.
+    MULTI_AGENT_MODES_WITH_PROMPT_CHOICE = ("validation_fix_2agents", "critic_3agents")
+
     @staticmethod
-    def multi_agent_folder_name(mode: str) -> str:
+    def multi_agent_folder_name(mode: str, prompt_template_name: str = None) -> str:
         """
-        Имя папки для мультиагентного подхода: MA_ + название режима капсом (напр. MA_SIMPLE_4AGENTS).
+        Имя папки для мультиагентного подхода: MA_ + название режима (капсом).
+        Для режимов с выбором промпта (validation_fix_2agents, critic_3agents) добавляется _PROMPT_NAME.
         """
         if not mode or not str(mode).strip():
             return "MA_UNKNOWN"
         name = "MA_" + str(mode).strip().upper().replace(" ", "_")
-        return FileManager.sanitize_filename(name) or "MA_UNKNOWN"
+        base = FileManager.sanitize_filename(name) or "MA_UNKNOWN"
+        if prompt_template_name and mode in FileManager.MULTI_AGENT_MODES_WITH_PROMPT_CHOICE:
+            suffix = FileManager.sanitize_filename(prompt_template_name)
+            if suffix:
+                base = f"{base}_{suffix}"
+        return base
 
     def ensure_directory(self, directory_path: str) -> None:
         """
@@ -312,7 +322,8 @@ class FileManager:
         use_guidance = hyperparameters.get("use_guidance", False)
         
         if multi_agent_mode:
-            prompt_folder_name = FileManager.multi_agent_folder_name(multi_agent_mode)
+            effective_prompt = hyperparameters.get("prompt_template_name") or evaluation_result.get("prompt_template") or ""
+            prompt_folder_name = FileManager.multi_agent_folder_name(multi_agent_mode, effective_prompt)
         else:
             prompt_folder_name = FileManager.sanitize_filename(prompt_template_name)
         

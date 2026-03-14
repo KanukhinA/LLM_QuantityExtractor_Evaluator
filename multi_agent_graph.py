@@ -177,6 +177,8 @@ class AgentState(TypedDict):
     quantities: list  # Список количеств
     # Поля для validation_fix_2agents
     validation_errors: str  # Ошибки валидации Pydantic (для повторной подачи LLM)
+    prompt_template_name: str  # Название базового промпта (из --prompt или config) для генерации
+    model_key: str  # Ключ модели (для few-shot и т.д.)
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -822,7 +824,9 @@ def generate_and_validate_agent(state: AgentState) -> AgentState:
         return {**state, "success": False, "error": "Generator not provided", "time": 0.0}
     try:
         from utils import build_prompt3
-        prompt = build_prompt3(text)
+        pt_name = state.get("prompt_template_name") or None
+        model_key = state.get("model_key") or None
+        prompt = build_prompt3(text, prompt_template_name=pt_name, model_key=model_key)
         response, elapsed, _ = run_agent_generation(state, prompt, 1)
         json_part = extract_json_from_response(response)
         if not json_part:
@@ -1571,7 +1575,9 @@ def process_with_multi_agent(
         "standard": None,
         "grade": None,
         "quantities": [],
-        "validation_errors": ""
+        "validation_errors": "",
+        "prompt_template_name": hp.get("prompt_template_name") or "",
+        "model_key": hp.get("model_key") or ""
     }
     
     try:
@@ -1597,7 +1603,10 @@ def process_with_multi_agent(
                 "time": total_elapsed,
                 "numeric_fragments": "",
                 "mass_fractions": "",
-                "other_parameters": ""
+                "other_parameters": "",
+                "prompt": final_state.get("prompt", ""),
+                "initial_response": final_state.get("initial_response", ""),
+                "validation_errors": final_state.get("validation_errors", ""),
             }
         
         # Проверяем, был ли пропущен агент 4 из-за пустых ответов агентов 2 и 3
@@ -1624,7 +1633,10 @@ def process_with_multi_agent(
                 "time": total_elapsed,
                 "numeric_fragments": final_state.get("numeric_fragments", ""),
                 "mass_fractions": "",
-                "other_parameters": ""
+                "other_parameters": "",
+                "prompt": final_state.get("prompt", ""),
+                "initial_response": final_state.get("initial_response", ""),
+                "validation_errors": final_state.get("validation_errors", ""),
             }
         
         # Выводим итоговую информацию
@@ -1641,7 +1653,10 @@ def process_with_multi_agent(
             "time": final_state.get("time", 0.0),
             "numeric_fragments": final_state.get("numeric_fragments", ""),
             "mass_fractions": final_state.get("mass_fractions", ""),
-            "other_parameters": final_state.get("other_parameters", "")
+            "other_parameters": final_state.get("other_parameters", ""),
+            "prompt": final_state.get("prompt", ""),
+            "initial_response": final_state.get("initial_response", ""),
+            "validation_errors": final_state.get("validation_errors", ""),
         }
     except Exception as e:
         return {
@@ -1652,6 +1667,9 @@ def process_with_multi_agent(
             "is_valid": False,
             "success": False,
             "error": str(e),
-            "time": 0.0
+            "time": 0.0,
+            "prompt": "",
+            "initial_response": "",
+            "validation_errors": "",
         }
 
