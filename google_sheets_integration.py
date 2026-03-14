@@ -31,23 +31,23 @@ SHEETS_UPLOAD_DELAY_SEC = 1.5
 BASELINE_KEYWORD = "BASELINE"
 
 # Таблица алиасов методов: (полное_название, alias, описание).
-# Нумерация: 1–3 базовые, 4 minimal outlines, 5–10 CD-методы подряд, затем мультиагент и прочие.
+# Нумерация: 1–3 базовые, 4 минимальный с ограниченным декодированием, 5–11 методы с ограниченным декодированием, затем мультиагент.
 # Если метода нет в таблице, alias = акроним из первых букв частей (разделитель _), описание = полное название.
 METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
-    ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный zero-shot промпт (baseline)"),
-    ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный one-shot промпт"),
-    ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный few-shot (5 примеров)"),
-    ("MINIMAL_INSTR_FIVESHOT_OUTLINES", "4.MIFO", "Минимальный few-shot (5 примеров) с constrained decoding"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "5.DIZCOP", "Zero-shot с constrained decoding (outlines) с подачей Pydantic-схемы с ключами на английском в промпте"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "6.DIZCRO", "Zero-shot constrained decoding (outlines) со схемой на русском языке"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "7.DIOCRO", "One-shot с constrained decoding (outlines) со схемой на русском языке"),
-    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_GUIDANCE", "8.DIZCRG", "Zero-shot constrained decoding (guidance) со схемой на русском языке"),
-    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "9.DIOCRG", "One-shot constrained decoding (guidance) со схемой на русском языке"),
-    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_OUTLINES", "10.MIFCRO", "Минимальный few-shot constrained decoding (outlines) со схемой на русском языке"),
-    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "11.MIFCRG", "Минимальный few-shot constrained decoding (guidance) со схемой на русском языке"),
-    ("MA_SIMPLE_4AGENTS", "12.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
-    ("MA_CRITIC_3AGENTS", "13.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
-    ("MINIMAL_INSTR_FIVESHOT_APIE", "14.MIFA", "Few-shot с 5 примерами (APIE)"),
+    ("DETAILED_INSTR_ZEROSHOT_BASELINE", "1.DIZB", "Детальный промпт без примеров (базовый вариант)"),
+    ("DETAILED_INSTR_ONESHOT", "2.DIO", "Детальный промпт с одним примером"),
+    ("MINIMAL_INSTR_FIVESHOT", "3.MIF", "Минимальный инструктивный промпт с пятью примерами"),
+    ("MINIMAL_INSTR_FIVESHOT_OUTLINES", "4.MIFO", "Минимальный промпт с пятью примерами и структурной генерацией по схеме"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_OUTLINES", "5.DIZCOP", "Промпт без примеров с ограниченным декодированием по схеме (ключи на английском)"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_OUTLINES", "6.DIZCRO", "Промпт без примеров с ограниченным декодированием по схеме на русском языке"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_OUTLINES", "7.DIOCRO", "Промпт с одним примером и ограниченным декодированием по схеме на русском языке"),
+    ("DETAILED_INSTR_ZEROSHOT_CD_RUS_GUIDANCE", "8.DIZCRG", "Промпт без примеров с управлением выводом по схеме на русском языке"),
+    ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "9.DIOCRG", "Промпт с одним примером и управлением выводом по схеме на русском языке"),
+    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_OUTLINES", "10.MIFCRO", "Минимальный промпт с пятью примерами и ограниченным декодированием по схеме на русском языке"),
+    ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "11.MIFCRG", "Минимальный промпт с пятью примерами и управлением выводом по схеме на русском языке"),
+    ("MA_SIMPLE_4AGENTS", "12.MS4", "Многоагентный режим «Разделение обязанностей» (4 агента)"),
+    ("MA_CRITIC_3AGENTS", "13.MC3", "Многоагентный режим с критиком (3 агента: генератор, критик, исправитель)"),
+    ("MINIMAL_INSTR_FIVESHOT_APIE", "14.MIFA", "Промпт с пятью примерами в формате APIE"),
 ]
 
 
@@ -414,7 +414,7 @@ class GoogleSheetsIntegration:
             methods_set.update(k for k in model_data.keys() if k != "_timestamp")
         methods = _sort_methods_by_alias_number(methods_set)
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        title_row = [f"F1 ({group})"]
+        title_row = [f"Качество извлечения: F1-мера по группе «{group}»"]
         table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
@@ -528,7 +528,8 @@ class GoogleSheetsIntegration:
         if has_title_row:
             worksheet.format("A1", {
                 "wrapStrategy": "WRAP",
-                "verticalAlignment": "TOP",
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 1},
             })
@@ -599,7 +600,7 @@ class GoogleSheetsIntegration:
         models = sorted(set(validation_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        title_row = ["Доля валидных ответов (parsed(raw))"]
+        title_row = ["Доля ответов, прошедших парсинг и валидацию (формат: после парсинга / исходный вывод)"]
         table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         _first_row = 3
@@ -651,7 +652,7 @@ class GoogleSheetsIntegration:
         models = sorted(set(inference_time_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        title_row = ["Среднее время ответа (с)"]
+        title_row = ["Среднее время одного ответа модели (с)"]
         table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
@@ -722,7 +723,7 @@ class GoogleSheetsIntegration:
         models = sorted(set(gpu_memory_data.keys()))
         methods = _sort_methods_by_alias_number(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
         baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
-        title_row = ["VRAM при инференсе (ГБ)"]
+        title_row = ["Потребление видеопамяти в процессе инференса (ГБ)"]
         table_data = [title_row, _table_header(methods)]
         green_cells: List[str] = []
         red_cells: List[str] = []
@@ -818,7 +819,7 @@ class GoogleSheetsIntegration:
                 clear_existing,
                 success_prefix=f"✅ Данные успешно загружены в лист '{worksheet_name}'",
                 extra_lines=[f"   • Группа метрик: {group}"],
-                table_description=f"Метрика: F1 ({group}). В скобках: разница с baseline (положительная — лучше).",
+                table_description=f"Показатель F1 ({group}). В скобках приведено отклонение от базового метода; положительное значение соответствует улучшению результата.",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке данных в Google Таблицу: {e}")
@@ -841,7 +842,7 @@ class GoogleSheetsIntegration:
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
                 success_prefix=f"✅ Validation загружены в лист '{worksheet_name}'",
-                table_description="Метрика: доля валидных ответов в формате parsed(raw). В скобках разница не выводится; зелёным выделены ячейки с parsed = 1.0.",
+                table_description="Доля валидных ответов в формате «после парсинга (исходный вывод)». Отклонение в скобках не указывается; ячейки с долей 1,0 выделены зелёным.",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
@@ -861,7 +862,7 @@ class GoogleSheetsIntegration:
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
                 success_prefix=f"✅ Среднее время инференса загружено в лист '{worksheet_name}'",
-                table_description="Метрика: среднее время ответа (с). В скобках: разница с baseline (отрицательная — быстрее).",
+                table_description="Среднее время ответа (с). В скобках приведено отклонение от базового метода; отрицательное значение соответствует ускорению.",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
@@ -881,7 +882,7 @@ class GoogleSheetsIntegration:
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
                 success_prefix=f"✅ GPU memory during inference загружено в лист '{worksheet_name}'",
-                table_description="Метрика: объём VRAM во время инференса (ГБ). В скобках: разница с baseline (отрицательная — меньше памяти).",
+                table_description="Объём видеопамяти в ходе инференса (ГБ). В скобках приведено отклонение от базового метода; отрицательное значение соответствует снижению потребления памяти.",
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
@@ -914,7 +915,7 @@ DEFAULT_CREDENTIALS_FILENAME = "google_sheets_credentials.json"
 # Листы по умолчанию при полном экспорте
 DEFAULT_WORKSHEET_MASS = "F1 Scores"
 DEFAULT_WORKSHEET_OTHER = "F1 Scores (прочее)"
-DEFAULT_WORKSHEET_VALIDATION = "Validation (parsed(raw))"
+DEFAULT_WORKSHEET_VALIDATION = "Валидация (после парсинга)"
 DEFAULT_WORKSHEET_INFERENCE = "Avg inference time (s)"
 DEFAULT_WORKSHEET_GPU_MEMORY = "GPU memory during inference (GB)"
 
@@ -1000,7 +1001,7 @@ def main():
             for method, groups in sorted(methods.items()):
                 print(f"    {method}: {groups}")
         if validation_data:
-            print("\n📊 Validation (parsed(raw)):")
+            print("\nВалидация (после парсинга):")
             for model_key, methods in sorted(validation_data.items()):
                 print(f"\n  {model_key}:")
                 for method, val in sorted(methods.items()):
@@ -1080,7 +1081,7 @@ def main():
             )
         extra = []
         if validation_data:
-            extra.append("«Validation (parsed(raw))»")
+            extra.append("«Валидация (после парсинга)»")
         if inference_time_data:
             extra.append("«Avg inference time (s)»")
         if gpu_memory_data:
