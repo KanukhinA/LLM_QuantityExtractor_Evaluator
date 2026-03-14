@@ -9,6 +9,9 @@ import re
 from typing import List, Optional, Dict, Any
 import pandas as pd
 
+# Максимальная длина поля "prompt" в блоке "ошибки" (для сокращения размера JSON). "text" не обрезается.
+PROMPT_IN_ERRORS_MAX_LEN = 500
+
 
 class FileManager:
     """
@@ -322,7 +325,8 @@ class FileManager:
         use_guidance = hyperparameters.get("use_guidance", False)
         
         if multi_agent_mode:
-            effective_prompt = hyperparameters.get("prompt_template_name") or evaluation_result.get("prompt_template") or ""
+            # Имя промпта: из hyperparameters (--prompt) или дефолт из effective_prompt_template_name (config)
+            effective_prompt = hyperparameters.get("prompt_template_name") or evaluation_result.get("effective_prompt_template_name") or ""
             prompt_folder_name = FileManager.multi_agent_folder_name(multi_agent_mode, effective_prompt)
         else:
             prompt_folder_name = FileManager.sanitize_filename(prompt_template_name)
@@ -433,6 +437,22 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
+        # Подставляем промпт/initial_response/validation_errors по каждому примеру из pydantic_errors
+        # (в all_errors из quality_metrics приходит один и тот же full_prompt_example для всех)
+        for pe in evaluation_result.get("pydantic_errors", []):
+            idx = pe.get("text_index", 0)
+            if idx in errors_by_text:
+                if pe.get("prompt") is not None:
+                    errors_by_text[idx]["prompt"] = pe.get("prompt", "")
+                if pe.get("initial_response") is not None:
+                    errors_by_text[idx]["initial_response"] = pe.get("initial_response", "")
+                if pe.get("validation_errors"):
+                    errors_by_text[idx]["validation_errors"] = pe.get("validation_errors", "")
+        
+        for v in errors_by_text.values():
+            p = v.get("prompt") or ""
+            if len(p) > PROMPT_IN_ERRORS_MAX_LEN:
+                v["prompt"] = p[:PROMPT_IN_ERRORS_MAX_LEN]
         errors_list = [v for v in errors_by_text.values() if v.get("errors")]
         errors_list.sort(key=lambda v: v.get("text_index", 999999))
 
@@ -441,6 +461,7 @@ class FileManager:
             "raw_output_metrics",  # Сохраняется отдельно в raw_metrics.json
             "parsing_errors",  # Входит в объединённое поле "ошибки"
             "ошибки",
+            "effective_prompt_template_name",  # Служебное, для путей; в JSON не выводим
         }
         for key in evaluation_result:
             if key not in evaluation_result_for_json and key not in excluded_keys:
@@ -681,10 +702,14 @@ class FileManager:
                     }
                 errors_by_text[text_idx]["errors"].append(error)
         
+        for v in errors_by_text.values():
+            p = v.get("prompt") or ""
+            if len(p) > PROMPT_IN_ERRORS_MAX_LEN:
+                v["prompt"] = p[:PROMPT_IN_ERRORS_MAX_LEN]
         errors_list = [v for v in errors_by_text.values() if v.get("errors")]
         errors_list.sort(key=lambda v: v.get("text_index", 999999))
 
-        excluded_keys = {"raw_output_metrics", "parsing_errors", "ошибки"}
+        excluded_keys = {"raw_output_metrics", "parsing_errors", "ошибки", "effective_prompt_template_name"}
         for key in evaluation_result:
             if key not in evaluation_result_for_json and key not in excluded_keys:
                 evaluation_result_for_json[key] = evaluation_result[key]

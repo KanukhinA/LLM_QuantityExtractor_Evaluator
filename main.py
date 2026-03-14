@@ -170,7 +170,7 @@ def run_evaluation(model_config: dict, model_key: str = None, use_gemini: bool =
             
             if multi_agent_mode:
                 from file_manager import FileManager
-                effective_prompt = hyperparameters.get("prompt_template_name") or ""
+                effective_prompt = hyperparameters.get("prompt_template_name") or result.get("effective_prompt_template_name") or ""
                 prompt_folder_name = FileManager.multi_agent_folder_name(multi_agent_mode, effective_prompt)
             else:
                 prompt_folder_name = sanitize_filename(prompt_template_name)

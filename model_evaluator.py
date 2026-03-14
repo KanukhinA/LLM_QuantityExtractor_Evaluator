@@ -1763,6 +1763,7 @@ class ModelEvaluator:
             "ollama_metrics": ollama_metrics_list if is_ollama else None,
             "average_response_time_seconds": avg_speed,
             "hyperparameters": hyperparameters_to_save,
+            "effective_prompt_template_name": hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME,
             "prompt_template": (hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME) if not use_multi_agent else multi_agent_mode,
             "prompt_full_text": full_prompt_example,
             "prompt_info": prompt_info,
