@@ -991,6 +991,7 @@ class ModelEvaluator:
                             "raw_validation": raw_validation_for_result,
                             "parsed_validation": parsed_validation_for_result,
                             "prompt": result.get("prompt", ""),
+                            "fix_prompt": result.get("fix_prompt", ""),
                             "initial_response": result.get("initial_response", ""),
                             "validation_errors": result.get("validation_errors", ""),
                         })
@@ -1229,6 +1230,7 @@ class ModelEvaluator:
                                             "raw_validation": raw_validation_for_result,
                                             "parsed_validation": parsed_validation_for_result,
                                             "prompt": result.get("prompt", ""),
+                                            "fix_prompt": result.get("fix_prompt", ""),
                                             "initial_response": result.get("initial_response", ""),
                                             "validation_errors": result.get("validation_errors", ""),
                                         })

@@ -5,7 +5,7 @@ Pydantic схемы для structured output
 """
 import re
 from typing import List, Optional, Union, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 LATIN_TO_CYRILLIC_KEYS = {
@@ -66,6 +66,30 @@ class MassDolyaItem(BaseModel):
     )
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("mass_fraction", mode="before")
+    @classmethod
+    def _coerce_mass_fraction(cls, v):
+        """
+        Допускаем 0 и приводим строковые значения вида '0', '0.0', '0,0', '0%' к числу.
+        В таможенных декларациях массовая доля 0 может встречаться.
+        """
+        def _one(x):
+            if x is None:
+                return None
+            if isinstance(x, (int, float)):
+                return float(x)
+            if isinstance(x, str):
+                s = x.strip()
+                if s.endswith("%"):
+                    s = s[:-1].strip()
+                s = s.replace(",", ".")
+                return float(s)
+            return x
+
+        if isinstance(v, list):
+            return [_one(x) for x in v]
+        return _one(v)
 
 
 class ProcheeItem(BaseModel):
