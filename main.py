@@ -11,6 +11,11 @@ from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
 from config import GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY, MODEL_CONFIGS
 from utils import find_dataset_path
 
+# Безопасный вывод в консоль: устраняет суррогаты/невалидный Unicode.
+def _safe_console_text(x) -> str:
+    s = x if isinstance(x, str) else str(x)
+    return s.encode("utf-8", "backslashreplace").decode("utf-8")
+
 # Настройка логирования
 log_file = os.path.join(OUTPUT_DIR, "model_errors.log")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -366,8 +371,10 @@ def main():
     # Проверяем, что все модели существуют
     invalid_models = [m for m in model_keys if m not in MODEL_CONFIGS]
     if invalid_models:
-        print(f"Ошибка: следующие модели не найдены: {', '.join(invalid_models)}")
-        print("Доступные модели:", ", ".join(MODEL_CONFIGS.keys()))
+        invalid_joined = ", ".join(_safe_console_text(m) for m in invalid_models)
+        available_joined = ", ".join(_safe_console_text(m) for m in MODEL_CONFIGS.keys())
+        print(f"Ошибка: следующие модели не найдены: {invalid_joined}")
+        print("Доступные модели:", available_joined)
         return
     
     # Проверяем существование датасета
