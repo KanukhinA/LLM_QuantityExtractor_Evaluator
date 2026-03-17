@@ -177,6 +177,7 @@ class AgentState(TypedDict):
     quantities: list  # Список количеств
     # Поля для validation_fix_2agents
     validation_errors: str  # Ошибки валидации Pydantic (для повторной подачи LLM)
+    fix_prompt: str  # Промпт агента 2 (исправитель), чтобы в metrics JSON выводить сконкатенированный промпт
     prompt_template_name: str  # Название базового промпта (из --prompt или config) для генерации
     model_key: str  # Ключ модели (для few-shot и т.д.)
 
@@ -1577,6 +1578,7 @@ def process_with_multi_agent(
         "grade": None,
         "quantities": [],
         "validation_errors": "",
+        "fix_prompt": "",
         "prompt_template_name": hp.get("prompt_template_name") or "",
         "model_key": hp.get("model_key") or ""
     }

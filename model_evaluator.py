@@ -406,15 +406,13 @@ class ModelEvaluator:
     @staticmethod
     def _drop_empty_and_zero_values(obj):
         """
-        Рекурсивно удаляет из словарей ключи со значениями [], 0, 0.0, ''.
+        Рекурсивно удаляет из словарей ключи со значениями [], '' и None.
         После такой очистки Pydantic не падает на полях типа \"значение\": [].
         """
         if isinstance(obj, dict):
             out = {}
             for k, v in obj.items():
                 if v == [] or v == "" or v is None:
-                    continue
-                if v == 0 or (isinstance(v, float) and v == 0.0):
                     continue
                 out[k] = ModelEvaluator._drop_empty_and_zero_values(v)
             return out
