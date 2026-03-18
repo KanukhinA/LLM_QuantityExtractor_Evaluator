@@ -933,6 +933,7 @@ class ModelEvaluator:
                             memory_samples.append(memory_sample["allocated"])
                         
                         response_text = result.get("response", "")
+                        initial_response_text = result.get("initial_response", "")
                         json_part = result.get("json", "")
                         parsed_json = result.get("json_parsed", {})
                         # Та же постобработка, что и для одноагентного режима: латиница -> кириллица, очистка
@@ -990,6 +991,7 @@ class ModelEvaluator:
                             "parsed_validation": parsed_validation_for_result,
                             "prompt": result.get("prompt", ""),
                             "fix_prompt": result.get("fix_prompt", ""),
+                            "fix_called": result.get("fix_called", False),
                             "initial_response": result.get("initial_response", ""),
                             "validation_errors": result.get("validation_errors", ""),
                         })
@@ -1071,8 +1073,11 @@ class ModelEvaluator:
                         except Exception:
                             pass
                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
-                    if verbose and response_text:
-                        self._print_verbose_output(text, response_text, is_api_model or is_ollama, i, len(self.texts))
+                    # Для validation_fix_2agents иногда финальный response может быть пустым,
+                    # но initial_response будет заполнен.
+                    if verbose and (response_text or initial_response_text):
+                        response_for_print = response_text or initial_response_text
+                        self._print_verbose_output(text, response_for_print, is_api_model or is_ollama, i, len(self.texts))
                     
                     if not response_text:
                         result = self._handle_no_response(
@@ -1182,6 +1187,7 @@ class ModelEvaluator:
                                         memory_samples.append(memory_sample["allocated"])
                                         
                                         response_text = result.get("response", "")
+                                        initial_response_text = result.get("initial_response", "")
                                         json_part = result.get("json", "")
                                         parsed_json = result.get("json_parsed", {})
                                         # Та же постобработка, что и для одноагентного режима: латиница -> кириллица, очистка
@@ -1229,6 +1235,7 @@ class ModelEvaluator:
                                             "parsed_validation": parsed_validation_for_result,
                                             "prompt": result.get("prompt", ""),
                                             "fix_prompt": result.get("fix_prompt", ""),
+                                            "fix_called": result.get("fix_called", False),
                                             "initial_response": result.get("initial_response", ""),
                                             "validation_errors": result.get("validation_errors", ""),
                                         })
@@ -1299,8 +1306,9 @@ class ModelEvaluator:
                                         except Exception:
                                             pass
                                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
-                                    if verbose and response_text:
-                                        self._print_verbose_output(self.texts[i], response_text, is_api_model or is_ollama, i, len(self.texts))
+                                    if verbose and (response_text or initial_response_text):
+                                        response_for_print = response_text or initial_response_text
+                                        self._print_verbose_output(self.texts[i], response_for_print, is_api_model or is_ollama, i, len(self.texts))
                                     
                                     if not response_text:
                                         result = self._handle_no_response(
@@ -1576,25 +1584,39 @@ class ModelEvaluator:
                 for r in results:
                     p1 = r.get("prompt", "")
                     p2 = r.get("fix_prompt", "")
-                    # Если по какой-то причине fix_prompt не сохранился в results,
-                    # но изначально валидация агента 1 ругалась (validation_errors != ""),
-                    # восстановим промпт исправителя детерминированно.
-                    if (not p2 and use_multi_agent and multi_agent_mode == "validation_fix_2agents"
-                        and r.get("initial_response") and not r.get("is_valid", False)):
+                    fix_called = r.get("fix_called", False)
+                    should_concat = (
+                        use_multi_agent
+                        and multi_agent_mode == "validation_fix_2agents"
+                        and fix_called
+                    )
+                    # Если agent2 реально вызвался, в metrics нужен сконкатенированный промпт,
+                    # даже если его response окажется пустым.
+                    if should_concat and (not p2):
                         try:
                             text_for_fix = r.get("text", "")
                             validation_errors = r.get("validation_errors", "")
                             original_response = r.get("initial_response", "")
                             invalid_json = extract_json_from_response(original_response) or original_response
+
+                            # original_prompt уже содержит {text} в конце.
+                            # Agent2 (validation_fix) НЕ должен видеть текст дважды, поэтому
+                            # обрезаем original_prompt по маркеру "Текст для извлечения данных:".
+                            original_prompt_for_fix = p1 or ""
+                            text_marker = "Текст для извлечения данных:"
+                            if text_marker in original_prompt_for_fix:
+                                original_prompt_for_fix = original_prompt_for_fix.split(text_marker, 1)[0].rstrip()
+
                             p2 = prompt_config.VALIDATION_FIX_PROMPT.format(
-                                original_prompt=p1,
+                                original_prompt=original_prompt_for_fix,
                                 text=text_for_fix,
                                 invalid_json=invalid_json,
                                 validation_errors=validation_errors,
                             )
                         except Exception:
                             p2 = ""
-                    if p2:
+
+                    if should_concat and p2:
                         concrete_prompts.append(
                             "МУЛЬТИАГЕНТНЫЙ РЕЖИМ (использован для этого примера)\n\n" + p1 + "\n\n---\n\n" + p2
                         )

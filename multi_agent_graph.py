@@ -177,6 +177,7 @@ class AgentState(TypedDict):
     quantities: list  # Список количеств
     # Поля для validation_fix_2agents
     validation_errors: str  # Ошибки валидации Pydantic (для повторной подачи LLM)
+    fix_called: bool  # Был ли реально вызван агент-исправитель (даже если ответ оказался пустым)
     fix_prompt: str  # Промпт агента 2 (исправитель), чтобы в metrics JSON выводить сконкатенированный промпт
     prompt_template_name: str  # Название базового промпта (из --prompt или config) для генерации
     model_key: str  # Ключ модели (для few-shot и т.д.)
@@ -880,6 +881,9 @@ def fix_validation_agent(state: AgentState) -> AgentState:
     Агент 2: Исправление JSON по ошибкам валидации Pydantic (повторная подача в LLM).
     """
     print("   🤖 [Агент 2/2] Исправление по ошибкам валидации...", end=" ", flush=True)
+    # Важно: агент 2 может вернуть пустой ответ, но для metrics должен считаться "вызванным".
+    # Фиксируем это заранее.
+    state["fix_called"] = True
     generator = state.get("generator")
     text = state.get("text", "")
     invalid_json = state.get("json_result", "")
@@ -1590,6 +1594,7 @@ def process_with_multi_agent(
         "grade": None,
         "quantities": [],
         "validation_errors": "",
+        "fix_called": False,
         "fix_prompt": "",
         "prompt_template_name": hp.get("prompt_template_name") or "",
         "model_key": hp.get("model_key") or ""
@@ -1621,6 +1626,7 @@ def process_with_multi_agent(
                 "other_parameters": "",
                 "prompt": final_state.get("prompt", ""),
                 "fix_prompt": "",
+                "fix_called": False,
                 "initial_response": final_state.get("initial_response", ""),
                 "validation_errors": final_state.get("validation_errors", ""),
             }
@@ -1652,6 +1658,7 @@ def process_with_multi_agent(
                 "other_parameters": "",
                 "prompt": final_state.get("prompt", ""),
                 "fix_prompt": "",
+                "fix_called": False,
                 "initial_response": final_state.get("initial_response", ""),
                 "validation_errors": final_state.get("validation_errors", ""),
             }
@@ -1673,6 +1680,7 @@ def process_with_multi_agent(
             "other_parameters": final_state.get("other_parameters", ""),
             "prompt": final_state.get("prompt", ""),
             "fix_prompt": final_state.get("fix_prompt", ""),
+            "fix_called": final_state.get("fix_called", False),
             "initial_response": final_state.get("initial_response", ""),
             "validation_errors": final_state.get("validation_errors", ""),
         }
@@ -1688,6 +1696,7 @@ def process_with_multi_agent(
             "time": 0.0,
             "prompt": "",
             "fix_prompt": "",
+            "fix_called": False,
             "initial_response": "",
             "validation_errors": "",
         }
