@@ -1576,6 +1576,24 @@ class ModelEvaluator:
                 for r in results:
                     p1 = r.get("prompt", "")
                     p2 = r.get("fix_prompt", "")
+                    # Если по какой-то причине fix_prompt не сохранился в results,
+                    # но изначально валидация агента 1 ругалась (validation_errors != ""),
+                    # восстановим промпт исправителя детерминированно.
+                    if (not p2 and use_multi_agent and multi_agent_mode == "validation_fix_2agents"
+                        and r.get("initial_response") and not r.get("is_valid", False)):
+                        try:
+                            text_for_fix = r.get("text", "")
+                            validation_errors = r.get("validation_errors", "")
+                            original_response = r.get("initial_response", "")
+                            invalid_json = extract_json_from_response(original_response) or original_response
+                            p2 = prompt_config.VALIDATION_FIX_PROMPT.format(
+                                original_prompt=p1,
+                                text=text_for_fix,
+                                invalid_json=invalid_json,
+                                validation_errors=validation_errors,
+                            )
+                        except Exception:
+                            p2 = ""
                     if p2:
                         concrete_prompts.append(
                             "МУЛЬТИАГЕНТНЫЙ РЕЖИМ (использован для этого примера)\n\n" + p1 + "\n\n---\n\n" + p2

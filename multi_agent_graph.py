@@ -889,8 +889,20 @@ def fix_validation_agent(state: AgentState) -> AgentState:
         return {**state, "success": False, "error": "Missing generator or validation_errors", "time": state.get("time", 0.0)}
     try:
         original_prompt = state.get("prompt", "")
+        # В original_prompt уже вшит {text} (через build_prompt3(...)).
+        # VALIDATION_FIX_PROMPT добавляет {text} ещё раз в секции
+        # "Исходный текст для извлечения данных:", поэтому нужно убрать дублирование.
+        # Удаляем хвост начиная с "Текст для извлечения данных:" (если он есть).
+        text_marker = "Текст для извлечения данных:"
+        if text_marker in original_prompt:
+            original_prompt_for_fix = original_prompt.split(text_marker, 1)[0].rstrip()
+        else:
+            # На случай, если в шаблоне другой вариант двоеточия/пробелов
+            import re
+            m = re.search(r"Текст для извлечения данных\s*[:：]\s*", original_prompt)
+            original_prompt_for_fix = (original_prompt[: m.start()].rstrip() if m else original_prompt)
         fix_prompt = VALIDATION_FIX_PROMPT.format(
-            original_prompt=original_prompt,
+            original_prompt=original_prompt_for_fix,
             text=text,
             invalid_json=invalid_json,
             validation_errors=validation_errors,
