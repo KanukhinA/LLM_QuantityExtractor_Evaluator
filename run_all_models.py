@@ -14,7 +14,7 @@ from model_evaluator import StopAllModelsInterrupt, _append_to_model_errors_log
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                    structured_output: bool = False, use_outlines: bool = False,
                    prompt_template_name: str = None, pydantic_outlines: bool = False,
-                   use_guidance: bool = False):
+                   use_guidance: bool = False, ollama_only: bool = False):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -55,9 +55,17 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"📌 Промпт: {prompt_template_name}")
     print()
     
-    # Фильтруем модели, если указан флаг local_only
+    # Фильтруем модели, если указан флаг local_only / ollama_only
     all_models = list(MODEL_CONFIGS.keys())
-    if local_only:
+    if ollama_only:
+        # Ollama-версии автоматически добавляются в model_config_loader как <base_key>-ollama
+        models = [model_key for model_key in all_models if "-ollama" in model_key]
+        print(f"\n{'='*80}")
+        print(f"ЗАПУСК ОЦЕНКИ OLLAMA-МОДЕЛЕЙ")
+        print(f"{'='*80}")
+        print(f"Всего моделей в конфигурации: {len(all_models)}")
+        print(f"Ollama-моделей: {len(models)}")
+    elif local_only:
         # Локальные модели - это те, у которых нет "-api" в ключе
         models = [model_key for model_key in all_models if "-api" not in model_key]
         print(f"\n{'='*80}")
@@ -230,6 +238,11 @@ if __name__ == "__main__":
         help="Запустить оценку только для локальных моделей (исключить API модели)"
     )
     parser.add_argument(
+        "--ollama-only",
+        action="store_true",
+        help="Запустить оценку только для Ollama-версий моделей (ключи с суффиксом -ollama)"
+    )
+    parser.add_argument(
         "--multi-agent",
         type=str,
         metavar="MODE",
@@ -273,6 +286,7 @@ if __name__ == "__main__":
             use_outlines=args.outlines,
             prompt_template_name=args.prompt,
             pydantic_outlines=args.pydantic_outlines,
-            use_guidance=args.guidance
+            use_guidance=args.guidance,
+            ollama_only=args.ollama_only
         )
 

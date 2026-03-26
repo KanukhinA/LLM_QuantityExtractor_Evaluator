@@ -31,7 +31,8 @@ def load_model_configs():
     for model_key, model_config in yaml_data['models'].items():
         # Автоматическое определение модулей и функций, если не указаны явно
         is_api_model = "-api" in model_key
-        is_ollama = "-ollama" in model_key
+        name_str = (model_config.get("name") or "").strip()
+        is_ollama = "-ollama" in model_key or name_str.lower().endswith(".gguf")
 
         # Определяем load_module
         if 'load_module' in model_config:
@@ -182,6 +183,44 @@ def load_model_configs():
             "hyperparameters": hyperparameters
         }
     
+    # Авто-добавляем Ollama-версии для всех существующих моделей:
+    # <model_key> -> <model_key>-ollama
+    # Это нужно, чтобы запускать run_all_models через Ollama, не правя models.yaml вручную.
+    try:
+        import copy as _copy
+        if model_loaders_ollama_module is None:
+            import model_loaders_ollama as model_loaders_ollama_module  # noqa: F401
+        for base_model_key, base_model_config in yaml_data.get("models", {}).items():
+            if "-api" in base_model_key:
+                continue
+            if "-ollama" in base_model_key:
+                continue
+            derived_model_key = f"{base_model_key}-ollama"
+            if derived_model_key in configs:
+                continue
+            if base_model_key not in configs:
+                continue
+
+            derived_hp = _copy.deepcopy(configs[base_model_key].get("hyperparameters", {}))
+            derived_hp["ollama"] = True
+
+            oname = (base_model_config.get("ollama_name") or "").strip()
+            derived_name = oname or base_model_config.get("name")
+            if not derived_name:
+                continue
+
+            load_func = (lambda _n: lambda: model_loaders_ollama_module.load_ollama(_n))(derived_name)
+            generate_func = model_loaders_ollama_module.generate_ollama
+            configs[derived_model_key] = {
+                "name": derived_name,
+                "load_func": load_func,
+                "generate_func": generate_func,
+                "hyperparameters": derived_hp,
+            }
+    except Exception:
+        # Если авто-расширение по какой-то причине не сработало — возвращаем базовые configs.
+        pass
+
     return configs
 
 

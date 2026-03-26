@@ -6,6 +6,9 @@ import os
 import json
 import urllib.request
 import urllib.error
+import subprocess
+import tempfile
+import hashlib
 from typing import Tuple, Any, Optional, Dict
 
 # Метрики последнего ответа Ollama (eval_duration, eval_count и т.д.) для замера потребления
@@ -24,11 +27,68 @@ def get_last_ollama_metrics() -> Optional[Dict[str, Any]]:
     return out
 
 
+def ollama_inference_tag(model_user_name: str) -> Tuple[str, Optional[str]]:
+    """
+    Тег модели для API Ollama и абсолютный путь GGUF (если применимо), без создания модели.
+
+    Возвращает (ollama_tag, abs_gguf_path_or_none).
+    Если путь GGUF существует — tag стабильный от пути; иначе tag == model_user_name (тег из ollama pull и т.п.).
+    """
+    if not (isinstance(model_user_name, str) and model_user_name.strip()):
+        return str(model_user_name), None
+    expanded = os.path.expanduser(model_user_name)
+    abs_path = os.path.abspath(expanded) if os.path.exists(expanded) else expanded
+    if model_user_name.lower().endswith(".gguf") and os.path.exists(abs_path):
+        digest = hashlib.sha256(abs_path.encode("utf-8")).hexdigest()[:12]
+        base = os.path.splitext(os.path.basename(abs_path))[0]
+        safe_base = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in base)
+        return f"gguf-{safe_base}-{digest}", abs_path
+    return model_user_name, None
+
+
 def load_ollama(model_name: str) -> Tuple[str, None]:
     """
     «Загрузка» модели Ollama: весов нет, возвращаем имя модели для вызовов API.
-    Перед запуском: ollama pull <model_name> (например ollama pull gemma3:4b).
+
+    Поддерживаем 2 сценария:
+    1) model_name — это тег модели в Ollama (например: llama3:8b-instruct). В этом случае модель предполагается заранее загруженной.
+    2) model_name — это путь к локальному GGUF-файлу (например: /path/to/model.Q4_K_M.gguf). В этом случае создаём Ollama-модель через Modelfile автоматически.
     """
+    ollama_tag, abs_path = ollama_inference_tag(model_name)
+
+    # 1) GGUF путь -> auto-create model in ollama
+    if abs_path is not None:
+        print(f"   Ollama: GGUF '{abs_path}' -> создаём/используем '{ollama_tag}'")
+
+        try:
+            subprocess.run(["ollama", "show", ollama_tag],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           check=True)
+            print(f"   Ollama: модель '{ollama_tag}' уже существует, пропускаем create")
+            return (ollama_tag, None)
+        except subprocess.CalledProcessError:
+            pass
+
+        with tempfile.TemporaryDirectory() as td:
+            modelfile_path = os.path.join(td, "Modelfile")
+            modelfile = f'FROM "{abs_path}"\n'
+            with open(modelfile_path, "w", encoding="utf-8") as f:
+                f.write(modelfile)
+
+            # Создаём модель в Ollama
+            proc = subprocess.run(
+                ["ollama", "create", ollama_tag, "-f", modelfile_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(f"Ollama create failed for '{ollama_tag}'. Output:\n{proc.stdout}")
+
+        return (ollama_tag, None)
+
+    # 2) model_name — это тег модели в Ollama
     print(f"   Ollama: использование модели '{model_name}' (должна быть загружена: ollama pull {model_name})")
     return (model_name, None)
 

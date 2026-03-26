@@ -22,6 +22,8 @@ pyyaml>=6.0
 gspread>=5.0.0
 google-auth>=2.0.0
 protobuf>=3.20.0  # Требуется для токенизаторов SentencePiece (YandexGPT-5-Lite и др.)
+scikit_learn==1.8.0
+sentence_transformers==5.2.3
 
 # Опционально: Flash Attention 2 для ускорения и экономии VRAM у локальных моделей.
 # Установка: pip install flash-attn --no-build-isolation (нужны CUDA и совместимый компилятор; на Windows часто недоступен).
