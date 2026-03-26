@@ -237,6 +237,7 @@ class ModelEvaluator:
         """
         response_text = ""
         error_msg = None
+        is_ollama = bool(hyperparameters.get("ollama", False))
         
         for attempt in range(num_retries):
             try:
@@ -349,6 +350,29 @@ class ModelEvaluator:
                         "text_index": text_index,
                         "text": text,
                         "error": f"Ошибка запроса API (400): {error_msg}",
+                        "response": ""
+                    })
+                    raise InferenceCriticalFailure(error_msg, text_index, 1)
+
+                # Ошибка "модель не найдена" у Ollama — не повторяем (fail-fast),
+                # иначе будет много бесполезных попыток для каждого текста.
+                ollama_not_found = (
+                    is_ollama
+                    and (
+                        ("ollama api error" in error_msg.lower() and "not found" in error_msg.lower())
+                        or ("model" in error_msg.lower() and "not found" in error_msg.lower())
+                        or ("model '" in error_msg.lower() and "' not found" in error_msg.lower())
+                    )
+                )
+                if ollama_not_found:
+                    print(
+                        f"  ❌ Ответ #{text_index+1}/{total_texts} - Ollama модель не найдена, "
+                        f"повторные попытки не выполняются"
+                    )
+                    parsing_errors.append({
+                        "text_index": text_index,
+                        "text": text,
+                        "error": f"Ollama модель не найдена: {error_msg}",
                         "response": ""
                     })
                     raise InferenceCriticalFailure(error_msg, text_index, 1)
