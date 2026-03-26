@@ -25,6 +25,7 @@
 models:
   gemma-2-2b:
     name: "google/gemma-2-2b-it"
+    ollama_name: "gemma2:2b-instruct-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -32,6 +33,7 @@ models:
 
   qwen-2.5-3b:
     name: "Qwen/Qwen2.5-3B-Instruct"
+    ollama_name: "qwen2.5:3b-instruct-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -39,6 +41,7 @@ models:
 
   qwen-3-4b:
     name: "Qwen/Qwen3-4B-Instruct-2507"
+    ollama_name: "qwen3:4b-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -47,6 +50,7 @@ models:
 
   qwen-3-8b:
     name: "Qwen/Qwen3-8B"
+    ollama_name: "qwen3:8b-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -55,6 +59,7 @@ models:
 
   qwen-3-14b:
     name: "Qwen/Qwen3-14B"
+    ollama_name: "qwen3:14b-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -71,6 +76,7 @@ models:
 
   gemma-3-4b:
     name: "google/gemma-3-4b-it"
+    ollama_name: "gemma3:4b-it-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -78,6 +84,7 @@ models:
 
   codegemma-7b:
     name: "google/codegemma-7b-it"
+    ollama_name: "codegemma:7b-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -85,6 +92,7 @@ models:
 
   gemma-3-12b:
     name: "google/gemma-3-12b-it"
+    ollama_name: "gemma3:12b-it-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -136,6 +144,7 @@ models:
 
   mistral-3-8b-instruct:
     name: "mistralai/Ministral-3-8B-Instruct-2512"
+    ollama_name: "ministral-3:8b-instruct-2512-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -143,6 +152,7 @@ models:
 
   mistral-3-14b-instruct:
     name: "mistralai/Ministral-3-14B-Instruct-2512"
+    ollama_name: "ministral-3:14b-instruct-2512-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -150,6 +160,7 @@ models:
 
   mistral-3-3b-reasoning:
     name: "mistralai/Ministral-3-3B-Reasoning-2512"
+    ollama_name: "ministral-3:3b-instruct-2512-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -157,6 +168,7 @@ models:
 
   gigachat3-10b-1.8b:
     name: "ai-sage/GigaChat3-10B-A1.8B-bf16"
+    ollama_name: "forzer/GigaChat3-10B-A1.8B:Q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
