@@ -57,6 +57,27 @@ class FileManager:
     MULTI_AGENT_MODES_WITH_PROMPT_CHOICE = ("validation_fix_2agents", "critic_3agents")
 
     @staticmethod
+    def _extract_ollama_quantization(ollama_model_name: str) -> str:
+        """
+        Извлекает степень квантизации из тега Ollama.
+        Примеры:
+          - qwen3:8b-q4_K_M -> Q4_K_M
+          - gemma2:2b-instruct-q8_0 -> Q8_0
+          - model:fp16 -> FP16
+        Если не найдено, возвращает UNKNOWN.
+        """
+        name = (ollama_model_name or "").strip()
+        if not name:
+            return "UNKNOWN"
+        m = re.search(r'-(q[0-9]+(?:_[0-9A-Za-z]+)*)$', name, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+        m = re.search(r'-(fp16|bf16)$', name, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+        return "UNKNOWN"
+
+    @staticmethod
     def multi_agent_folder_name(mode: str, prompt_template_name: str = None) -> str:
         """
         Имя папки для мультиагентного подхода: MA_ + название режима (капсом).
@@ -323,6 +344,7 @@ class FileManager:
         structured_output = hyperparameters.get("structured_output", False)
         use_outlines = hyperparameters.get("use_outlines", False)
         use_guidance = hyperparameters.get("use_guidance", False)
+        is_ollama = bool(hyperparameters.get("ollama", False))
         
         if multi_agent_mode:
             # Имя промпта: из hyperparameters (--prompt) или дефолт из effective_prompt_template_name (config)
@@ -342,6 +364,13 @@ class FileManager:
         
         if mode_suffixes:
             prompt_folder_name = f"{prompt_folder_name}_{'_'.join(mode_suffixes)}"
+
+        # Для Ollama сохраняем в отдельную подпапку с префиксом и степенью квантизации,
+        # чтобы в агрегации (Google Sheets) это отображалось отдельным методом.
+        if is_ollama:
+            ollama_model_name = evaluation_result.get("model_name", "")
+            quant = FileManager._extract_ollama_quantization(ollama_model_name)
+            prompt_folder_name = f"OLLAMA_{quant}_{prompt_folder_name}"
         
         # Создаем структуру папок
         model_dir = self.build_path(output_dir, model_key)

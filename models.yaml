@@ -84,7 +84,7 @@ models:
 
   codegemma-7b:
     name: "google/codegemma-7b-it"
-    ollama_name: "codegemma:7b-q4_K_M"
+    ollama_name: "codegemma:7b-instruct-q4_K_M"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
@@ -168,7 +168,7 @@ models:
 
   gigachat3-10b-1.8b:
     name: "ai-sage/GigaChat3-10B-A1.8B-bf16"
-    ollama_name: "forzer/GigaChat3-10B-A1.8B:Q4_K_M"
+    ollama_name: "forzer/GigaChat3-10B-A1.8B"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
