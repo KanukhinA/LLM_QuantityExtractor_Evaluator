@@ -260,8 +260,16 @@ class ModelEvaluator:
                 max_length = hyperparameters.get("max_length")
                 pt_name = hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME
 
+                # Ollama: те же гиперпараметры, что и у локальной генерации (temperature, repeat_penalty, num_ctx)
+                if is_ollama:
+                    response_text = generate_func(
+                        model, tokenizer, prompt, max_new_tokens,
+                        hyperparameters=hyperparameters,
+                        repetition_penalty=repetition_penalty,
+                        max_length=max_length,
+                    )
                 # Для API моделей передаем model_name и structured_output из hyperparameters
-                if is_api_model and "model_name" in hyperparameters:
+                elif is_api_model and "model_name" in hyperparameters:
                     response_text = generate_func(
                         model, tokenizer, prompt, max_new_tokens,
                         model_name=hyperparameters["model_name"],
@@ -878,7 +886,6 @@ class ModelEvaluator:
         parsing_errors = []  # Список словарей с ошибками: {"text_index": int, "text": str, "error": str, "response": str}
         times = []
         memory_samples = []  # Для локальных моделей — torch; для Ollama — nvidia-smi (VRAM процесса Ollama)
-        ollama_metrics_list = []  # Метрики из ответов Ollama (eval_duration, eval_count и т.д.)
         total_start_time = time.time()
         
         # Переводим в eval режим только локальные модели (не API, не Ollama)
@@ -1089,13 +1096,6 @@ class ModelEvaluator:
                         from gpu_info import get_gpu_memory_usage_nvidia_smi
                         _m = get_gpu_memory_usage_nvidia_smi()
                         memory_samples.append(_m.get("used_gb", 0.0))
-                        try:
-                            from model_loaders_ollama import get_last_ollama_metrics
-                            _om = get_last_ollama_metrics()
-                            if _om:
-                                ollama_metrics_list.append(_om)
-                        except Exception:
-                            pass
                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
                     # Для validation_fix_2agents иногда финальный response может быть пустым,
                     # но initial_response будет заполнен.
@@ -1322,13 +1322,6 @@ class ModelEvaluator:
                                         from gpu_info import get_gpu_memory_usage_nvidia_smi
                                         _m = get_gpu_memory_usage_nvidia_smi()
                                         memory_samples.append(_m.get("used_gb", 0.0))
-                                        try:
-                                            from model_loaders_ollama import get_last_ollama_metrics
-                                            _om = get_last_ollama_metrics()
-                                            if _om:
-                                                ollama_metrics_list.append(_om)
-                                        except Exception:
-                                            pass
                                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
                                     if verbose and (response_text or initial_response_text):
                                         response_for_print = response_text or initial_response_text
@@ -1503,10 +1496,6 @@ class ModelEvaluator:
             print(f"💾 ИСПОЛЬЗОВАНИЕ РЕСУРСОВ (Ollama, nvidia-smi):")
             print(f"   • После загрузки: {memory_after_load['allocated']:.2f} GB")
             print(f"   • Во время инференса (средн.): {memory_during_inference_avg:.2f} GB")
-            if ollama_metrics_list:
-                total_ns = sum(m.get("total_duration_ns") or 0 for m in ollama_metrics_list)
-                eval_count = sum(m.get("eval_count") or 0 for m in ollama_metrics_list)
-                print(f"   • Метрики Ollama: {len(ollama_metrics_list)} ответов, всего токенов: {eval_count}, total_duration: {total_ns/1e9:.1f} с")
             print()
         else:
             print(f"💾 ИСПОЛЬЗОВАНИЕ ПАМЯТИ:")
@@ -1849,7 +1838,6 @@ class ModelEvaluator:
             "gpu_memory_during_inference_gb": memory_during_inference_avg if not is_api_model else 0.0,
             "api_model": is_api_model,
             "ollama": is_ollama,
-            "ollama_metrics": ollama_metrics_list if is_ollama else None,
             "average_response_time_seconds": avg_speed,
             "hyperparameters": hyperparameters_to_save,
             "effective_prompt_template_name": hyperparameters.get("prompt_template_name") or PROMPT_TEMPLATE_NAME,
