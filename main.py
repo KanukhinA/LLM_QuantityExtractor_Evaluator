@@ -253,9 +253,10 @@ def main():
     """Главная функция"""
     # Сначала парсим аргументы командной строки, чтобы проверить флаг --no-gemini
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--ollama] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         print("\nАргументы:")
         print("  <model_name>        - ключ модели из конфигурации (можно указать несколько через запятую или пробел)")
+        print("  --ollama            - (опционально) запуск через Ollama: для базового ключа X используется X-ollama (локальный API)")
         print("  --prompt NAME       - (опционально) название промпта из prompt_config.py (переопределяет config.PROMPT_TEMPLATE_NAME)")
         print("  --multi-agent       - (опционально) режим мультиагентного подхода")
         print("                        Доступные режимы: simple_4agents, critic_3agents, qa_workflow")
@@ -279,6 +280,7 @@ def main():
         print("  python main.py qwen-2.5-3b --no-gemini")
         print("  python main.py qwen-2.5-3b --structured-output --outlines")
         print("  python main.py qwen-2.5-3b --structured-output --pydantic-outlines")
+        print("  python main.py qwen-2.5-3b --ollama")
         print("  python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_CD --structured-output --outlines")
         print("\nДоступные модели (из models.yaml):")
         for key in MODEL_CONFIGS.keys():
@@ -296,6 +298,7 @@ def main():
     use_gemini = True  # По умолчанию включен
     verbose = True  # По умолчанию включен для main.py
     prompt_template_name = None
+    use_ollama = False
     
     i = 1
     while i < len(sys.argv):
@@ -339,6 +342,9 @@ def main():
             elif arg == "--no-gemini" or arg == "--skip-gemini":
                 use_gemini = False
                 i += 1
+            elif arg == "--ollama":
+                use_ollama = True
+                i += 1
             elif arg == "--verbose":
                 verbose = True
                 i += 1
@@ -347,7 +353,7 @@ def main():
                 i += 1
             else:
                 print(f"Неизвестный аргумент: {arg}")
-                print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--guidance] [--no-gemini] [--verbose] [--no-verbose]")
+                print("Использование: python main.py <model_name> [model_name2 ...] [--ollama] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--guidance] [--no-gemini] [--verbose] [--no-verbose]")
                 return
         else:
             # Это модель или список моделей через запятую
@@ -365,8 +371,31 @@ def main():
     # Проверяем, что указаны модели
     if not model_keys:
         print("Ошибка: не указаны модели для оценки")
-        print("Использование: python main.py <model_name> [model_name2 ...] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--ollama] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         return
+
+    # --ollama: базовый ключ X -> X-ollama (если ещё не ollama/API)
+    if use_ollama:
+        resolved_keys = []
+        for k in model_keys:
+            if "-api" in k:
+                print(f"Ошибка: флаг --ollama не применим к API-модели '{k}'")
+                return
+            cfg = MODEL_CONFIGS.get(k)
+            hp = (cfg or {}).get("hyperparameters") or {}
+            if k.endswith("-ollama") or hp.get("ollama"):
+                resolved_keys.append(k)
+                continue
+            nk = f"{k}-ollama"
+            if nk in MODEL_CONFIGS:
+                resolved_keys.append(nk)
+            else:
+                print(
+                    f"Ошибка: для ключа '{k}' нет Ollama-версии в конфиге "
+                    f"(ожидался ключ '{nk}'; задайте ollama_name в models.yaml при необходимости)"
+                )
+                return
+        model_keys = resolved_keys
     
     # Проверяем, что все модели существуют
     invalid_models = [m for m in model_keys if m not in MODEL_CONFIGS]
@@ -391,14 +420,16 @@ def main():
     try:
         _run_evaluation_loop(
             model_keys, multi_agent_mode, structured_output, use_outlines,
-            pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name
+            pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name,
+            ollama_requested=use_ollama,
         )
     finally:
         capture.__exit__(None, None, None)
 
 
 def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_outlines,
-                         pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name):
+                         pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name,
+                         ollama_requested=False):
     """Основной цикл оценки моделей (вывод перехватывается в evaluation_summary.log)."""
     # Проверяем работоспособность Gemini API (только если use_gemini=True)
     if use_gemini:
@@ -464,6 +495,10 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
         print(f"📌 Анализ через Gemini API: Включен")
     else:
         print(f"📌 Анализ через Gemini API: Отключен")
+    if ollama_requested or any(
+        (MODEL_CONFIGS.get(mk, {}).get("hyperparameters") or {}).get("ollama") for mk in model_keys
+    ):
+        print(f"📌 Ollama: Да (инференс через локальный API)")
     print(f"📁 Датасет: {find_dataset_path()}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

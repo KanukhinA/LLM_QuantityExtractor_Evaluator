@@ -371,9 +371,16 @@ class FileManager:
             ollama_model_name = evaluation_result.get("model_name", "")
             quant = FileManager._extract_ollama_quantization(ollama_model_name)
             prompt_folder_name = f"OLLAMA_{quant}_{prompt_folder_name}"
+
+        # Ollama: не создаём отдельную папку уровня модели (*-ollama) — результаты рядом с локальным прогоном той же модели.
+        storage_model_key = model_key
+        if is_ollama and isinstance(model_key, str) and model_key.endswith("-ollama"):
+            base = model_key[: -len("-ollama")].strip("_")
+            if base:
+                storage_model_key = base
         
         # Создаем структуру папок
-        model_dir = self.build_path(output_dir, model_key)
+        model_dir = self.build_path(output_dir, storage_model_key)
         prompt_dir = self.build_path(model_dir, prompt_folder_name)
         self.ensure_directory(prompt_dir)
         
@@ -393,6 +400,8 @@ class FileManager:
         for key in ["timestamp", "model_name", "model_key", "interrupted", "total_samples"]:
             if key in evaluation_result:
                 evaluation_result_for_json[key] = evaluation_result[key]
+        # В metrics JSON model_key должен совпадать с первым сегментом пути (для Google Sheets и т.п.)
+        evaluation_result_for_json["model_key"] = storage_model_key
         
         # Метрики парсинга и валидации
         for key in ["valid_json_count", "invalid_json_count", "parsing_error_rate", "parsing_errors_count", "validation_stats"]:
@@ -570,6 +579,9 @@ class FileManager:
             self.save_text(error_content, errors_path)
             saved_files["quality_errors"] = errors_path
             print(f"💾 Ошибки качества сохранены: {errors_path}")
+
+        # Чтобы пути на диске и возвращаемый из evaluate_model результат совпадали с JSON
+        evaluation_result["model_key"] = storage_model_key
         
         return saved_files
     
