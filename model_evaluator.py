@@ -856,16 +856,20 @@ class ModelEvaluator:
             gpu_info_after = {"api": True}
             memory_after_load = {"allocated": 0.0, "reserved": 0.0, "total": 0.0}
         elif is_ollama:
-            from gpu_info import get_gpu_memory_usage_nvidia_smi
+            from gpu_info import get_gpu_memory_usage_nvidia_smi, get_ollama_inference_vram_gb
             _mem = get_gpu_memory_usage_nvidia_smi()
+            _ollama_gb = get_ollama_inference_vram_gb()
             memory_after_load = {
-                "allocated": _mem["used_gb"],
+                "allocated": _ollama_gb,
                 "reserved": 0.0,
                 "total": _mem["total_gb"],
             }
             print(f"📊 ИНФОРМАЦИЯ О РЕСУРСАХ (Ollama):")
             print(f"   • Тип: Ollama (локальный API)")
-            print(f"   • GPU память (nvidia-smi): {memory_after_load['allocated']:.2f} / {memory_after_load['total']:.2f} GB")
+            print(
+                f"   • GPU: процессы Ollama (compute-apps) {_ollama_gb:.2f} GB "
+                f"| карта всего занято {_mem['used_gb']:.2f} / {_mem['total_gb']:.2f} GB"
+            )
             print()
             gpu_info_after = {"ollama": True}
         else:
@@ -885,7 +889,7 @@ class ModelEvaluator:
         results = []
         parsing_errors = []  # Список словарей с ошибками: {"text_index": int, "text": str, "error": str, "response": str}
         times = []
-        memory_samples = []  # Для локальных моделей — torch; для Ollama — nvidia-smi (VRAM процесса Ollama)
+        memory_samples = []  # Локально — torch.cuda.memory_allocated; Ollama — VRAM только процессов Ollama (compute-apps)
         total_start_time = time.time()
         
         # Переводим в eval режим только локальные модели (не API, не Ollama)
@@ -964,6 +968,9 @@ class ModelEvaluator:
                             memory_samples.append(memory_sample["allocated"])
                         
                         response_text = result.get("response", "")
+                        if is_ollama and response_text:
+                            from gpu_info import get_ollama_inference_vram_gb
+                            memory_samples.append(get_ollama_inference_vram_gb())
                         initial_response_text = result.get("initial_response", "")
                         json_part = result.get("json", "")
                         parsed_json = result.get("json_parsed", {})
@@ -1093,9 +1100,8 @@ class ModelEvaluator:
                     last_outlines_skip = False
                     # Ollama: замер GPU через nvidia-smi и сбор метрик из ответа API
                     if is_ollama and response_text:
-                        from gpu_info import get_gpu_memory_usage_nvidia_smi
-                        _m = get_gpu_memory_usage_nvidia_smi()
-                        memory_samples.append(_m.get("used_gb", 0.0))
+                        from gpu_info import get_ollama_inference_vram_gb
+                        memory_samples.append(get_ollama_inference_vram_gb())
                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
                     # Для validation_fix_2agents иногда финальный response может быть пустым,
                     # но initial_response будет заполнен.
@@ -1207,10 +1213,14 @@ class ModelEvaluator:
                                             only_agent_1 = (multi_agent_mode == "validation_fix_2agents" and result.get("is_valid") and not result.get("validation_errors"))
                                             msg = "Обработка текста" if only_agent_1 else "Мультиагентная обработка текста"
                                             print(f"   🔄 Ответ #{i+1}/{len(self.texts)} - {msg}:")
-                                        memory_sample = get_gpu_memory_usage()
-                                        memory_samples.append(memory_sample["allocated"])
+                                        if not is_api_model and not is_ollama:
+                                            memory_sample = get_gpu_memory_usage()
+                                            memory_samples.append(memory_sample["allocated"])
                                         
                                         response_text = result.get("response", "")
+                                        if is_ollama and response_text:
+                                            from gpu_info import get_ollama_inference_vram_gb
+                                            memory_samples.append(get_ollama_inference_vram_gb())
                                         initial_response_text = result.get("initial_response", "")
                                         json_part = result.get("json", "")
                                         parsed_json = result.get("json_parsed", {})
@@ -1319,9 +1329,8 @@ class ModelEvaluator:
                                         continue
                                     last_outlines_skip = False
                                     if is_ollama and response_text:
-                                        from gpu_info import get_gpu_memory_usage_nvidia_smi
-                                        _m = get_gpu_memory_usage_nvidia_smi()
-                                        memory_samples.append(_m.get("used_gb", 0.0))
+                                        from gpu_info import get_ollama_inference_vram_gb
+                                        memory_samples.append(get_ollama_inference_vram_gb())
                                     # Выводим исходный текст и полный ответ в консоль (только при verbose)
                                     if verbose and (response_text or initial_response_text):
                                         response_for_print = response_text or initial_response_text
@@ -1493,7 +1502,7 @@ class ModelEvaluator:
             print(f"   • Модель доступна через API")
             print()
         elif is_ollama:
-            print(f"💾 ИСПОЛЬЗОВАНИЕ РЕСУРСОВ (Ollama, nvidia-smi):")
+            print(f"💾 ИСПОЛЬЗОВАНИЕ РЕСУРСОВ (Ollama, VRAM процессов Ollama / compute-apps):")
             print(f"   • После загрузки: {memory_after_load['allocated']:.2f} GB")
             print(f"   • Во время инференса (средн.): {memory_during_inference_avg:.2f} GB")
             print()

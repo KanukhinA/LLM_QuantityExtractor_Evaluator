@@ -1,10 +1,11 @@
 """
 Утилиты для получения информации о GPU
 """
+import re
 import torch
 import subprocess
 import platform
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 
 def get_gpu_info() -> Dict[str, Any]:
@@ -65,14 +66,20 @@ def get_gpu_memory_usage() -> Dict[str, float]:
 
 def get_gpu_memory_usage_nvidia_smi() -> Dict[str, float]:
     """
-    Получает использование памяти GPU через nvidia-smi (без PyTorch).
-    Нужно для замера VRAM процесса Ollama: наш процесс не держит модель, GPU занят Ollama.
+    Получает суммарную занятость GPU через nvidia-smi (все процессы на устройстве).
     Возвращает used_gb, total_gb; при ошибке — used_gb=0, total_gb=0.
     """
     out = {"used_gb": 0.0, "total_gb": 0.0}
     try:
+        gpu_idx = torch.cuda.current_device() if torch.cuda.is_available() else 0
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            [
+                "nvidia-smi",
+                "-i",
+                str(gpu_idx),
+                "--query-gpu=memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -87,4 +94,55 @@ def get_gpu_memory_usage_nvidia_smi() -> Dict[str, float]:
     except Exception:
         pass
     return out
+
+
+def get_ollama_inference_vram_gb(gpu_index: Optional[int] = None) -> float:
+    """
+    Оценка VRAM только процессов Ollama на GPU (nvidia-smi query-compute-apps), в ГБ.
+    По смыслу ближе к torch.cuda.memory_allocated: не включает память других приложений на карте,
+    в отличие от memory.used по всему GPU.
+
+    Суммируются строки, где process_name содержит «ollama» (регистр не важен).
+    Если драйвер не отдаёт compute-apps, возвращает 0.0.
+    """
+    idx = gpu_index
+    if idx is None:
+        try:
+            idx = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        except Exception:
+            idx = 0
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "-i",
+                str(idx),
+                "--query-compute-apps=pid,process_name,used_gpu_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return 0.0
+        total_mib = 0.0
+        pattern = re.compile(r"^(\d+),\s*(.+),\s*(\d+)\s*$")
+        for line in result.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            m = pattern.match(line)
+            if not m:
+                continue
+            _pid, name, mem_s = m.group(1), m.group(2).strip(), m.group(3)
+            if "ollama" not in name.lower():
+                continue
+            try:
+                total_mib += float(mem_s)
+            except ValueError:
+                continue
+        return round(total_mib / 1024.0, 2)
+    except Exception:
+        return 0.0
 
