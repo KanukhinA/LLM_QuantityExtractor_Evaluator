@@ -14,7 +14,7 @@ from model_evaluator import StopAllModelsInterrupt, _append_to_model_errors_log
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                    structured_output: bool = False, use_outlines: bool = False,
                    prompt_template_name: str = None, pydantic_outlines: bool = False,
-                   use_guidance: bool = False, ollama_only: bool = False):
+                   use_guidance: bool = False, ollama_only: bool = False, vllm_only: bool = False):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -55,9 +55,16 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"📌 Промпт: {prompt_template_name}")
     print()
     
-    # Фильтруем модели, если указан флаг local_only / ollama_only
+    # Фильтруем модели, если указан флаг local_only / ollama_only / vllm_only
     all_models = list(MODEL_CONFIGS.keys())
-    if ollama_only:
+    if vllm_only:
+        models = [model_key for model_key in all_models if "-vllm" in model_key]
+        print(f"\n{'='*80}")
+        print(f"ЗАПУСК ОЦЕНКИ VLLM-МОДЕЛЕЙ")
+        print(f"{'='*80}")
+        print(f"Всего моделей в конфигурации: {len(all_models)}")
+        print(f"vLLM-моделей: {len(models)}")
+    elif ollama_only:
         # Ollama-версии автоматически добавляются в model_config_loader как <base_key>-ollama
         models = [model_key for model_key in all_models if "-ollama" in model_key]
         print(f"\n{'='*80}")
@@ -85,6 +92,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
         print(f"⚠️  Не найдено моделей для оценки.")
         if local_only:
             print(f"   Попробуйте запустить без флага --local-only для оценки всех моделей.")
+        if vllm_only:
+            print(f"   Убедитесь, что в model_config_loader сгенерированы ключи *-vllm (перезапустите после правки models.yaml).")
         return
     
     print(f"Модели: {', '.join(models)}\n")
@@ -238,9 +247,14 @@ if __name__ == "__main__":
         help="Запустить оценку только для локальных моделей (исключить API модели)"
     )
     parser.add_argument(
-        "--ollama-only",
+        "--ollama",
         action="store_true",
-        help="Запустить оценку только для Ollama-версий моделей (ключи с суффиксом -ollama)"
+        help="Запустить оценку только для ключей *-ollama",
+    )
+    parser.add_argument(
+        "--vllm",
+        action="store_true",
+        help="Запустить оценку только для ключей *-vllm",
     )
     parser.add_argument(
         "--multi-agent",
@@ -277,6 +291,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.ollama and args.vllm:
+        print("Ошибка: укажите только один из --ollama или --vllm")
+        sys.exit(1)
+    if args.local_only and (args.ollama or args.vllm):
+        print("Ошибка: не комбинируйте --local-only с --ollama / --vllm")
+        sys.exit(1)
+
     log_path = os.path.join(OUTPUT_DIR, "evaluation_summary.log")
     with ConsoleLogCapture(log_path):
         run_all_models(
@@ -287,6 +308,7 @@ if __name__ == "__main__":
             prompt_template_name=args.prompt,
             pydantic_outlines=args.pydantic_outlines,
             use_guidance=args.guidance,
-            ollama_only=args.ollama_only
+            ollama_only=args.ollama,
+            vllm_only=args.vllm,
         )
 

@@ -299,6 +299,7 @@ def main():
     verbose = True  # По умолчанию включен для main.py
     prompt_template_name = None
     use_ollama = False
+    use_vllm = False
     
     i = 1
     while i < len(sys.argv):
@@ -345,6 +346,9 @@ def main():
             elif arg == "--ollama":
                 use_ollama = True
                 i += 1
+            elif arg == "--vllm":
+                use_vllm = True
+                i += 1
             elif arg == "--verbose":
                 verbose = True
                 i += 1
@@ -368,10 +372,14 @@ def main():
     if use_guidance and prompt_template_name is None:
         prompt_template_name = "DETAILED_INSTR_ZEROSHOT_CD_RUS"
     
+    if use_ollama and use_vllm:
+        print("Ошибка: укажите только один из флагов --ollama или --vllm")
+        return
+    
     # Проверяем, что указаны модели
     if not model_keys:
         print("Ошибка: не указаны модели для оценки")
-        print("Использование: python main.py <model_name> [model_name2 ...] [--ollama] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--ollama|--vllm] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         return
 
     # --ollama: базовый ключ X -> X-ollama (если ещё не ollama/API)
@@ -393,6 +401,29 @@ def main():
                 print(
                     f"Ошибка: для ключа '{k}' нет Ollama-версии в конфиге "
                     f"(ожидался ключ '{nk}'; задайте ollama_name в models.yaml при необходимости)"
+                )
+                return
+        model_keys = resolved_keys
+
+    # --vllm: базовый ключ X -> X-vllm (инференс через HTTP API vLLM; сервер запускается отдельно)
+    if use_vllm:
+        resolved_keys = []
+        for k in model_keys:
+            if "-api" in k:
+                print(f"Ошибка: флаг --vllm не применим к API-модели '{k}'")
+                return
+            cfg = MODEL_CONFIGS.get(k)
+            hp = (cfg or {}).get("hyperparameters") or {}
+            if k.endswith("-vllm") or hp.get("vllm"):
+                resolved_keys.append(k)
+                continue
+            nk = f"{k}-vllm"
+            if nk in MODEL_CONFIGS:
+                resolved_keys.append(nk)
+            else:
+                print(
+                    f"Ошибка: для ключа '{k}' нет vLLM-версии в конфиге "
+                    f"(ожидался ключ '{nk}'; задайте vllm_name в models.yaml при необходимости)"
                 )
                 return
         model_keys = resolved_keys
@@ -422,6 +453,7 @@ def main():
             model_keys, multi_agent_mode, structured_output, use_outlines,
             pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name,
             ollama_requested=use_ollama,
+            vllm_requested=use_vllm,
         )
     finally:
         capture.__exit__(None, None, None)
@@ -429,7 +461,7 @@ def main():
 
 def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_outlines,
                          pydantic_outlines, use_guidance, use_gemini, verbose, prompt_template_name,
-                         ollama_requested=False):
+                         ollama_requested=False, vllm_requested=False):
     """Основной цикл оценки моделей (вывод перехватывается в evaluation_summary.log)."""
     # Проверяем работоспособность Gemini API (только если use_gemini=True)
     if use_gemini:
@@ -499,6 +531,10 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
         (MODEL_CONFIGS.get(mk, {}).get("hyperparameters") or {}).get("ollama") for mk in model_keys
     ):
         print(f"📌 Ollama: Да (инференс через локальный API)")
+    if vllm_requested or any(
+        (MODEL_CONFIGS.get(mk, {}).get("hyperparameters") or {}).get("vllm") for mk in model_keys
+    ):
+        print(f"📌 vLLM: Да (инференс через HTTP API; VLLM_BASE_URL, отдельно: vllm serve ...)")
     print(f"📁 Датасет: {find_dataset_path()}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

@@ -28,17 +28,21 @@ def load_model_configs():
     
     configs = {}
     model_loaders_ollama_module = None
+    model_loaders_vllm_module = None
     for model_key, model_config in yaml_data['models'].items():
         # Автоматическое определение модулей и функций, если не указаны явно
         is_api_model = "-api" in model_key
         name_str = (model_config.get("name") or "").strip()
-        is_ollama = "-ollama" in model_key or name_str.lower().endswith(".gguf")
+        is_vllm = "-vllm" in model_key
+        is_ollama = not is_vllm and ("-ollama" in model_key or name_str.lower().endswith(".gguf"))
 
         # Определяем load_module
         if 'load_module' in model_config:
             load_module_name = model_config['load_module']
         else:
-            if is_ollama:
+            if is_vllm:
+                load_module_name = "model_loaders_vllm"
+            elif is_ollama:
                 load_module_name = "model_loaders_ollama"
             else:
                 load_module_name = "model_loaders_api" if is_api_model else "model_loaders"
@@ -47,7 +51,9 @@ def load_model_configs():
         if 'generate_module' in model_config:
             generate_module_name = model_config['generate_module']
         else:
-            if is_ollama:
+            if is_vllm:
+                generate_module_name = "model_loaders_vllm"
+            elif is_ollama:
                 generate_module_name = "model_loaders_ollama"
             else:
                 generate_module_name = "model_loaders_api" if is_api_model else "model_loaders"
@@ -99,6 +105,8 @@ def load_model_configs():
             import model_loaders_api as model_loaders_api_module
         elif load_module_name == "model_loaders_ollama" and model_loaders_ollama_module is None:
             import model_loaders_ollama as model_loaders_ollama_module
+        elif load_module_name == "model_loaders_vllm" and model_loaders_vllm_module is None:
+            import model_loaders_vllm as model_loaders_vllm_module
 
         # Импортируем generate_module если нужно
         if generate_module_name == "model_loaders" and model_loaders_module is None:
@@ -107,6 +115,8 @@ def load_model_configs():
             import model_loaders_api as model_loaders_api_module
         elif generate_module_name == "model_loaders_ollama" and model_loaders_ollama_module is None:
             import model_loaders_ollama as model_loaders_ollama_module
+        elif generate_module_name == "model_loaders_vllm" and model_loaders_vllm_module is None:
+            import model_loaders_vllm as model_loaders_vllm_module
         
         # Преобразуем гиперпараметры (конвертируем строки в нужные типы)
         # Делаем это до создания load_func, чтобы использовать преобразованные значения
@@ -125,13 +135,20 @@ def load_model_configs():
             else:
                 hyperparameters[key] = value
         
-        # Ollama: помечаем в hyperparameters, загрузчик возвращает (model_name, None)
-        if is_ollama:
+        # vLLM / Ollama: помечаем в hyperparameters; загрузчик возвращает (handle, None)
+        if is_vllm:
+            hyperparameters["vllm"] = True
+        elif is_ollama:
             hyperparameters["ollama"] = True
 
         # Получаем функции по имени
         # Если индивидуальная функция не найдена, используем универсальную (только для локальных моделей)
-        if load_module_name == "model_loaders_ollama":
+        if load_module_name == "model_loaders_vllm":
+            _vn = (model_config.get("vllm_name") or "").strip()
+            _name = _vn or model_config["name"]
+            load_func = (lambda name: lambda: model_loaders_vllm_module.load_vllm(name))(_name)
+            generate_func = model_loaders_vllm_module.generate_vllm
+        elif load_module_name == "model_loaders_ollama":
             _name = model_config["name"]
             load_func = (lambda name: lambda: model_loaders_ollama_module.load_ollama(name))(_name)
             generate_func = model_loaders_ollama_module.generate_ollama
@@ -168,11 +185,13 @@ def load_model_configs():
             except AttributeError:
                 load_func = model_loaders_api_module.load_openrouter_api
 
-        if load_module_name != "model_loaders_ollama":
+        if load_module_name not in ("model_loaders_ollama", "model_loaders_vllm"):
             if generate_module_name == "model_loaders":
                 generate_func = getattr(model_loaders_module, generate_func_name)
             elif generate_module_name == "model_loaders_ollama":
                 generate_func = model_loaders_ollama_module.generate_ollama
+            elif generate_module_name == "model_loaders_vllm":
+                generate_func = model_loaders_vllm_module.generate_vllm
             else:
                 generate_func = getattr(model_loaders_api_module, generate_func_name)
         
@@ -219,6 +238,45 @@ def load_model_configs():
             }
     except Exception:
         # Если авто-расширение по какой-то причине не сработало — возвращаем базовые configs.
+        pass
+
+    # Авто-добавляем vLLM-версии: <model_key> -> <model_key>-vllm (инференс через HTTP API vLLM)
+    try:
+        import copy as _copy
+        if model_loaders_vllm_module is None:
+            import model_loaders_vllm as model_loaders_vllm_module  # noqa: F401
+        for base_model_key, base_model_config in yaml_data.get("models", {}).items():
+            if "-api" in base_model_key:
+                continue
+            if "-ollama" in base_model_key:
+                continue
+            if "-vllm" in base_model_key:
+                continue
+            derived_model_key = f"{base_model_key}-vllm"
+            if derived_model_key in configs:
+                continue
+            if base_model_key not in configs:
+                continue
+
+            derived_hp = _copy.deepcopy(configs[base_model_key].get("hyperparameters", {}))
+            derived_hp["vllm"] = True
+            derived_hp.setdefault("vllm_quant_tag", "Q4")
+            derived_hp.pop("ollama", None)
+
+            vname = (base_model_config.get("vllm_name") or "").strip()
+            derived_name = vname or base_model_config.get("name")
+            if not derived_name:
+                continue
+
+            load_func = (lambda _n: lambda: model_loaders_vllm_module.load_vllm(_n))(derived_name)
+            generate_func = model_loaders_vllm_module.generate_vllm
+            configs[derived_model_key] = {
+                "name": derived_name,
+                "load_func": load_func,
+                "generate_func": generate_func,
+                "hyperparameters": derived_hp,
+            }
+    except Exception:
         pass
 
     return configs

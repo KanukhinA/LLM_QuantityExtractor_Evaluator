@@ -345,6 +345,7 @@ class FileManager:
         use_outlines = hyperparameters.get("use_outlines", False)
         use_guidance = hyperparameters.get("use_guidance", False)
         is_ollama = bool(hyperparameters.get("ollama", False))
+        is_vllm = bool(hyperparameters.get("vllm", False))
         
         if multi_agent_mode:
             # Имя промпта: из hyperparameters (--prompt) или дефолт из effective_prompt_template_name (config)
@@ -372,10 +373,19 @@ class FileManager:
             quant = FileManager._extract_ollama_quantization(ollama_model_name)
             prompt_folder_name = f"OLLAMA_{quant}_{prompt_folder_name}"
 
+        # vLLM: отдельный префикс (квантизация задаётся при vllm serve; по умолчанию Q4 в hyperparameters)
+        if is_vllm:
+            vq = (hyperparameters.get("vllm_quant_tag") or "Q4").strip() or "Q4"
+            prompt_folder_name = f"VLLM_{vq}_{prompt_folder_name}"
+
         # Ollama: не создаём отдельную папку уровня модели (*-ollama) — результаты рядом с локальным прогоном той же модели.
         storage_model_key = model_key
         if is_ollama and isinstance(model_key, str) and model_key.endswith("-ollama"):
             base = model_key[: -len("-ollama")].strip("_")
+            if base:
+                storage_model_key = base
+        if is_vllm and isinstance(model_key, str) and model_key.endswith("-vllm"):
+            base = model_key[: -len("-vllm")].strip("_")
             if base:
                 storage_model_key = base
         

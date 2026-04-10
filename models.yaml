@@ -1,116 +1,102 @@
 # Конфигурация моделей для оценки
 # Каждая модель содержит:
 # - name: название модели на HuggingFace или для API
-# - hyperparameters: словарь гиперпараметров для генерации
-#   - prompt_template_name: (опционально) название промпта из prompt_config.py, переопределяет config.PROMPT_TEMPLATE_NAME
+# - ollama_name: (опционально) тег модели в Ollama для авто-ключа <key>-ollama
+# - vllm_name: id модели для vLLM (авто-ключ <key>-vllm); для локальных моделей задан явно (совпадает с name, если не указано иное)
+# - hyperparameters:
+#   - vllm_quant_tag: метка для папки результатов при прогоне *-vllm (квантизация реально задаётся при vllm serve, напр. --quantization awq)
+#
+# vLLM: vllm serve <vllm_name> ...   Базовый URL: VLLM_BASE_URL (http://127.0.0.1:8000).
+# Оценка: python main.py <key> --vllm   |   python run_all_models.py --vllm
+#
+# Записи *-api: внешний API, суффиксы -ollama / -vllm не генерируются (см. model_config_loader).
 #
 # Остальные параметры (load_func, load_module, generate_func, generate_module)
-# определяются автоматически по имени модели:
-# - Если в ключе модели есть "-api", используется model_loaders_api, иначе model_loaders
-# - load_func определяется как: load_{model_key.replace('-', '_').replace('.', '_').lower()}
-#   * Если индивидуальная функция не найдена, используется универсальная load_standard_model
-#   * Загрузчик выводится по name: gemma-3 -> load_gemma_3, Ministral-3 -> load_mistral_3, иначе load_standard_model.
-#     - load_standard_model() - для стандартных моделей (Qwen, Gemma 2, и т.д.)
-#   * Индивидуальные функции нужны только для особых случаев:
-#     - Модели с специальными классами (Gemma3ForCausalLM, Mistral3ForConditionalGeneration, T5ForConditionalGeneration)
-#     - Модели с особыми настройками или обработкой ошибок
-#     - Модели с предупреждениями о требованиях к VRAM
-# - generate_func определяется автоматически по паттернам:
-#   * API модели: "gemma" -> generate_gemma_api, иначе -> generate_openrouter_api
-#   * Локальные модели: "qwen-3" -> generate_qwen_3, "qwen" -> generate_qwen,
-#     "gemma" -> generate_gemma, "t5" -> generate_t5, иначе -> generate_standard
-#
-# Если нужно переопределить автоматические значения, можно указать их явно
+# определяются автоматически по имени модели — см. прежние комментарии в репозитории / README.
 
 models:
   gemma-2-2b:
     name: "google/gemma-2-2b-it"
     ollama_name: "gemma2:2b-instruct-q4_K_M"
+    vllm_name: "google/gemma-2-2b-it"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   qwen-2.5-3b:
     name: "Qwen/Qwen2.5-3B-Instruct"
     ollama_name: "qwen2.5:3b-instruct-q4_K_M"
+    vllm_name: "Qwen/Qwen2.5-3B-Instruct"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   qwen-3-4b:
     name: "Qwen/Qwen3-4B-Instruct-2507"
     ollama_name: "qwen3:4b-q4_K_M"
+    vllm_name: "Qwen/Qwen3-4B-Instruct-2507"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       dtype: "bfloat16"
       enable_thinking: false
+      vllm_quant_tag: "Q4"
 
   qwen-3-8b:
     name: "Qwen/Qwen3-8B"
     ollama_name: "qwen3:8b-q4_K_M"
+    vllm_name: "Qwen/Qwen3-8B"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
+      vllm_quant_tag: "Q4"
 
   qwen-3-14b:
     name: "Qwen/Qwen3-14B"
     ollama_name: "qwen3:14b-q4_K_M"
+    vllm_name: "Qwen/Qwen3-14B"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "auto"
       enable_thinking: false
-
-  # qwen-3-32b:
-  #   name: "Qwen/Qwen3-32B"
-  #   hyperparameters:
-  #     max_new_tokens: 1792
-  #     do_sample: false
-  #     torch_dtype: "auto"
-  #     enable_thinking: false
+      vllm_quant_tag: "Q4"
 
   gemma-3-4b:
     name: "google/gemma-3-4b-it"
     ollama_name: "gemma3:4b-it-q4_K_M"
+    vllm_name: "google/gemma-3-4b-it"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   codegemma-7b:
     name: "google/codegemma-7b-it"
     ollama_name: "codegemma:7b-instruct-q4_K_M"
+    vllm_name: "google/codegemma-7b-it"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   gemma-3-12b:
     name: "google/gemma-3-12b-it"
     ollama_name: "gemma3:12b-it-q4_K_M"
+    vllm_name: "google/gemma-3-12b-it"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
-
-  # gemma-3-27b:
-  #   name: "google/gemma-3-27b-it"
-  #   hyperparameters:
-  #     max_new_tokens: 3904
-  #     do_sample: false
-  #     torch_dtype: "bfloat16"
-
-  # gemma-3-27b-4bit:
-  #   name: "google/gemma-3-27b-it"
-  #   hyperparameters:
-  #     torch_dtype: "nf4"
-  #     max_new_tokens: 3904
-  #     do_sample: false
+      vllm_quant_tag: "Q4"
 
   gemma-3-4b-api:
     name: "gemma-3-4b-it"
@@ -145,46 +131,50 @@ models:
   mistral-3-8b-instruct:
     name: "mistralai/Ministral-3-8B-Instruct-2512"
     ollama_name: "ministral-3:8b-instruct-2512-q4_K_M"
+    vllm_name: "mistralai/Ministral-3-8B-Instruct-2512"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   mistral-3-14b-instruct:
     name: "mistralai/Ministral-3-14B-Instruct-2512"
     ollama_name: "ministral-3:14b-instruct-2512-q4_K_M"
+    vllm_name: "mistralai/Ministral-3-14B-Instruct-2512"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   mistral-3-3b-reasoning:
     name: "mistralai/Ministral-3-3B-Reasoning-2512"
     ollama_name: "ministral-3:3b-instruct-2512-q4_K_M"
+    vllm_name: "mistralai/Ministral-3-3B-Reasoning-2512"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
   gigachat3-10b-1.8b:
     name: "ai-sage/GigaChat3-10B-A1.8B-bf16"
     ollama_name: "forzer/GigaChat3-10B-A1.8B"
+    vllm_name: "ai-sage/GigaChat3-10B-A1.8B-bf16"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "bfloat16"
+      vllm_quant_tag: "Q4"
 
+  # name — карточка GGUF; vllm serve ожидает HF-модель весов (не GGUF). Подставьте свой id при необходимости.
   gigachat-20b-a3b:
     name: "ai-sage/GigaChat-20B-A3B-instruct-v1.5-GGUF"
     ollama_name: "gigachat-20b-a3b-instruct-v1.5:q4_K_M"
+    vllm_name: "ai-sage/GigaChat-20B-A3B-instruct-v1.5"
     hyperparameters:
       max_new_tokens: 3904
       do_sample: false
       torch_dtype: "auto"
-
-  # Ollama: локальный API (ollama pull <name> перед запуском). Хост: OLLAMA_HOST или http://localhost:11434
-  # gemma3-4b-ollama:
-  #   name: "gemma3:4b"
-  #   hyperparameters:
-  #     max_new_tokens: 3904
-  #     do_sample: false
+      vllm_quant_tag: "Q4"
