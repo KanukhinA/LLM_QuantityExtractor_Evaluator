@@ -136,6 +136,42 @@ python calc_max_new_tokens.py --all-models
 
 Опции: `--dataset PATH` — путь к датасету (Excel или CSV); `--tokenizer NAME` — модель токенизатора (по умолчанию `Qwen/Qwen2.5-3B-Instruct`); `--all-models` — один самый длинный ответ через все локальные токенизаторы (API и Ollama пропускаются); `--margin 0.15` — запас к max (15%); `--min 256` — минимальное рекомендуемое значение; `--round 64` — округлять до кратного 64. Полученное значение можно прописать в `models.yaml` в `hyperparameters.max_new_tokens` (или `max_length` при необходимости) для нужных моделей.
 
+### 2.5. Установка и запуск vLLM
+
+`vLLM` используется как отдельный HTTP-сервер инференса. Проект подключается к нему через OpenAI-совместимый endpoint `/v1/chat/completions`.
+
+Для `run_all_models.py --vllm` сервер поднимается автоматически: перед каждой `*-vllm` моделью запускается `vllm serve`, предыдущий автосервер завершается.
+
+1) Установите vLLM (лучше в отдельном окружении):
+
+```bash
+pip install vllm
+```
+
+2) Запустите сервер (пример):
+
+```bash
+vllm serve Qwen/Qwen2.5-3B-Instruct
+```
+
+Пример с квантизацией:
+
+```bash
+vllm serve Qwen/Qwen2.5-3B-Instruct --quantization awq
+```
+
+3) При необходимости задайте адрес сервера:
+- Windows: `set VLLM_BASE_URL=http://127.0.0.1:8000`
+- Linux/Mac: `export VLLM_BASE_URL=http://127.0.0.1:8000`
+
+4) Проверка, что нужные `*-vllm` модели доступны на сервере (полезно для `main.py --vllm`, где сервер не поднимается автоматически):
+
+```bash
+python check_vllm_models.py
+```
+
+Важно: в `models.yaml` поле `vllm_name` для модели должно совпадать с id, поднятым в `vllm serve`.
+
 ## 3. Структура проекта
 
 ```
@@ -307,6 +343,9 @@ python main.py qwen-2.5-3b --structured-output --pydantic-outlines
 # Structured output + llguidance (по умолчанию схема RUS)
 python main.py qwen-2.5-3b --guidance
 
+# Запуск через vLLM (используется ключ <model_key>-vllm)
+python main.py qwen-2.5-3b --vllm
+
 # Указание промпта из консоли (переопределяет config.PROMPT_TEMPLATE_NAME)
 python main.py qwen-2.5-3b --prompt DETAILED_INSTR_ZEROSHOT_CD --structured-output --outlines
 
@@ -339,6 +378,12 @@ python run_all_models.py --structured-output
 # Оценка всех локальных моделей с structured output и outlines
 python run_all_models.py --local-only --structured-output --outlines
 
+# Оценка только vLLM-версий моделей (*-vllm)
+python run_all_models.py --vllm
+
+# Оценка только Ollama-версий моделей (*-ollama)
+python run_all_models.py --ollama
+
 # Указание промпта из консоли
 python run_all_models.py --local-only --prompt DETAILED_INSTR_ZEROSHOT_CD --structured-output --outlines
 
@@ -354,6 +399,8 @@ python run_all_models.py --local-only --multi-agent qa_workflow --structured-out
 - `--outlines` - использовать outlines со схемой из outlines_schema.py (только для локальных моделей; взаимоисключающий с --pydantic-outlines)
 - `--pydantic-outlines` - использовать outlines со схемой из Pydantic model_json_schema() (взаимоисключающий с --outlines)
 - `--guidance` - использовать llguidance для constrained decoding (по умолчанию схема RUS)
+- `--vllm` - запускать только `*-vllm` версии моделей (инференс через сервер vLLM)
+- `--ollama` - запускать только `*-ollama` версии моделей (инференс через Ollama)
 
 Скрипт автоматически:
 - Проверит доступность Gemini API
@@ -1099,8 +1146,11 @@ python reevaluate.py
 | `python main.py <model_key> --guidance` | Оценка с llguidance (схема RUS по умолчанию) | Одноагентный | Включен | Включен | По умолчанию |
 | `python main.py <model_key> --prompt NAME` | Оценка с указанным промптом | Одноагентный | — | Включен (по умолчанию) | По умолчанию |
 | `python main.py <model_key> --no-gemini` | Оценка без анализа Gemini | Одноагентный | Отключен | Включен (по умолчанию) | Отключен |
+| `python main.py <model_key> --vllm` | Оценка через vLLM (`<model_key>-vllm`) | Одноагентный | По флагам | Включен (по умолчанию) | По умолчанию |
 | `python run_all_models.py` | Оценка всех моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --local-only` | Оценка только локальных моделей | Одноагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --vllm` | Оценка всех vLLM-версий (`*-vllm`) | Одноагентный | По флагам | Отключен (по умолчанию) | По умолчанию |
+| `python run_all_models.py --ollama` | Оценка всех Ollama-версий (`*-ollama`) | Одноагентный | По флагам | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --multi-agent <mode>` | Оценка всех моделей | Мультиагентный | Отключен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --structured-output` | Оценка всех моделей | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
 | `python run_all_models.py --local-only --structured-output --outlines` | Оценка локальных моделей с outlines | Одноагентный | Включен | Отключен (по умолчанию) | По умолчанию |
