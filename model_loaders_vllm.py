@@ -66,7 +66,16 @@ def generate_vllm(
 ) -> str:
     """
     POST /v1/chat/completions (OpenAI-совместимый API vLLM).
-    ``model`` — словарь от load_vllm; hyperparameters — из models.yaml.
+
+    Параметры выборки и шаблона чата согласованы с локальной генерацией
+    (``_make_generation_config`` / ``generate_qwen_3``) и с ``build_ollama_options``:
+
+    - ``do_sample``, ``temperature``, ``top_p``, ``top_k`` — как при локальном запуске;
+    - ``repetition_penalty`` — в тело запроса (SamplingParams в vLLM);
+    - ``enable_thinking`` — если ключ есть в ``models.yaml``, в ``chat_template_kwargs``
+      (для Qwen3 и др., см. документацию vLLM по ``chat_template_kwargs``).
+
+    Поля только для загрузки весов (``torch_dtype``, ``dtype``, ``vllm_quant_tag``) не передаются в API.
     """
     if not isinstance(model, dict) or not model.get("vllm"):
         raise TypeError("generate_vllm: ожидается model от load_vllm (dict с ключами vllm, base_url, served_model_id)")
@@ -91,6 +100,9 @@ def generate_vllm(
         "pydantic_outlines",
         "multi_agent_mode",
         "prompt_template_name",
+        "vllm_quant_tag",
+        "torch_dtype",
+        "dtype",
     ):
         hp.pop(k, None)
 
@@ -108,6 +120,18 @@ def generate_vllm(
             body["top_k"] = int(hp["top_k"])
     else:
         body["temperature"] = 0.0
+
+    rp = hp.get("repetition_penalty")
+    if rp is not None:
+        try:
+            body["repetition_penalty"] = float(rp)
+        except (TypeError, ValueError):
+            pass
+
+    if "enable_thinking" in hp:
+        body["chat_template_kwargs"] = {
+            "enable_thinking": _coerce_bool(hp.get("enable_thinking"), False),
+        }
 
     url = f"{base_url}/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
