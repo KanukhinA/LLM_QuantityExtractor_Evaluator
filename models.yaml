@@ -5,6 +5,7 @@
 # - vllm_name: id модели для vLLM (авто-ключ <key>-vllm); для локальных моделей задан явно (совпадает с name, если не указано иное)
 # - hyperparameters:
 #   - vllm_quant_tag: метка для папки результатов при прогоне *-vllm (квантизация реально задаётся при vllm serve, напр. --quantization awq)
+#   - vllm_serve_extra_args: опционально список аргументов к автозапуску vllm serve после --port (напр. ["--gpu-memory-utilization","0.85"] или одна строка)
 #
 # vLLM: vllm serve <vllm_name> ...   Базовый URL: VLLM_BASE_URL (http://127.0.0.1:8000).
 # Оценка: python main.py <key> --vllm   |   python run_all_models.py --vllm

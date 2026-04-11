@@ -545,13 +545,15 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
         clear_vllm_pid_file,
         default_vllm_ready_timeout_sec,
         kill_stale_autovllm_if_any,
+        normalize_vllm_serve_extra_args,
         start_vllm_autoserver,
         terminate_vllm_process,
+        vllm_autoserver_fingerprint,
     )
 
     vllm_ready_timeout = default_vllm_ready_timeout_sec()
     vllm_proc = None
-    active_vllm_model = None
+    active_vllm_fp = None
     if any((MODEL_CONFIGS.get(mk, {}).get("hyperparameters") or {}).get("vllm") for mk in model_keys):
         kill_stale_autovllm_if_any()
 
@@ -584,16 +586,24 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
                 served_model_id = (config.get("name") or "").strip()
                 if not served_model_id:
                     raise RuntimeError("Пустой name/vllm_name для vLLM модели")
-                if (vllm_proc is None) or (vllm_proc.poll() is not None) or (active_vllm_model != served_model_id):
+                fp = vllm_autoserver_fingerprint(served_model_id, config.get("hyperparameters"))
+                if (vllm_proc is None) or (vllm_proc.poll() is not None) or (active_vllm_fp != fp):
                     terminate_vllm_process(vllm_proc, reason="переключение на другую vLLM модель")
                     clear_vllm_pid_file()
-                    vllm_proc = start_vllm_autoserver(served_model_id, ready_timeout_sec=vllm_ready_timeout)
-                    active_vllm_model = served_model_id
+                    extras = normalize_vllm_serve_extra_args(
+                        (config.get("hyperparameters") or {}).get("vllm_serve_extra_args")
+                    )
+                    vllm_proc = start_vllm_autoserver(
+                        served_model_id,
+                        ready_timeout_sec=vllm_ready_timeout,
+                        extra_args=extras,
+                    )
+                    active_vllm_fp = fp
             else:
                 terminate_vllm_process(vllm_proc, reason="оценка не через vLLM")
                 clear_vllm_pid_file()
                 vllm_proc = None
-                active_vllm_model = None
+                active_vllm_fp = None
             
             try:
                 result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)

@@ -129,7 +129,7 @@ def generate_vllm(
     - ``enable_thinking`` — если ключ есть в ``models.yaml``, в ``chat_template_kwargs``
       (для Qwen3 и др., см. документацию vLLM по ``chat_template_kwargs``).
 
-    Поля только для загрузки весов (``torch_dtype``, ``dtype``, ``vllm_quant_tag``) не передаются в API.
+    Поля только для загрузки весов и автозапуска (``torch_dtype``, ``dtype``, ``vllm_quant_tag``, ``vllm_serve_extra_args``) не передаются в API.
     """
     if not isinstance(model, dict) or not model.get("vllm"):
         raise TypeError("generate_vllm: ожидается model от load_vllm (dict с ключами vllm, base_url, served_model_id)")
@@ -155,6 +155,7 @@ def generate_vllm(
         "multi_agent_mode",
         "prompt_template_name",
         "vllm_quant_tag",
+        "vllm_serve_extra_args",
         "torch_dtype",
         "dtype",
     ):

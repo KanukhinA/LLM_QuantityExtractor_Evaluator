@@ -9,10 +9,11 @@ import json
 import os
 import signal
 import shutil
+import socket
 import subprocess
 import time
 import urllib.request
-from typing import Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlparse
 
 from config import OUTPUT_DIR
@@ -30,6 +31,40 @@ def _vllm_host_port() -> tuple[str, int]:
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 8000)
     return host, int(port)
+
+
+def _tcp_port_has_listener(host: str, port: int) -> bool:
+    """True, если на host:port кто-то принимает TCP (старый vLLM ещё держит порт)."""
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return True
+    except (ConnectionRefusedError, TimeoutError, OSError):
+        return False
+
+
+def wait_until_vllm_port_free(host: str, port: int, timeout_sec: Optional[float] = None) -> None:
+    """
+    После SIGTERM дочерние процессы vLLM могут отпустить порт с задержкой.
+    Ждём, пока TCP-порт перестанет принимать соединения, затем запускаем новый сервер.
+    """
+    if timeout_sec is None:
+        try:
+            timeout_sec = float(os.environ.get("VLLM_PORT_FREE_WAIT_SEC", "90"))
+        except ValueError:
+            timeout_sec = 90.0
+    timeout_sec = max(5.0, timeout_sec)
+    deadline = time.time() + timeout_sec
+    if not _tcp_port_has_listener(host, port):
+        return
+    print("   ⏳ Жду освобождения порта после остановки предыдущего vLLM...")
+    while time.time() < deadline:
+        if not _tcp_port_has_listener(host, port):
+            return
+        time.sleep(0.25)
+    raise RuntimeError(
+        f"Порт {host}:{port} занят дольше {timeout_sec:.0f} с после остановки сервера. "
+        f"Завершите процесс вручную или увеличьте VLLM_PORT_FREE_WAIT_SEC / смените VLLM_BASE_URL."
+    )
 
 
 def _vllm_pid_path() -> str:
@@ -58,7 +93,7 @@ def _vllm_log_path() -> str:
     return os.path.join(OUTPUT_DIR, _VLLM_LOG_FILENAME)
 
 
-def _read_log_tail(path: str, max_bytes: int = 12000) -> str:
+def _read_log_tail(path: str, max_bytes: int = 12000, max_lines: int = 40) -> str:
     try:
         if not os.path.isfile(path) or os.path.getsize(path) == 0:
             return "(лог пуст или отсутствует)"
@@ -68,10 +103,38 @@ def _read_log_tail(path: str, max_bytes: int = 12000) -> str:
             f.seek(max(0, size - max_bytes))
             raw = f.read().decode("utf-8", errors="replace")
         lines = raw.strip().splitlines()
-        tail = "\n".join(lines[-40:])
+        tail = "\n".join(lines[-max_lines:])
         return tail if tail else raw.strip()[:max_bytes]
     except Exception as exc:
         return f"(не удалось прочитать лог: {exc})"
+
+
+def normalize_vllm_serve_extra_args(raw: Any) -> list[str]:
+    """Аргументы командной строки для ``vllm serve`` из models.yaml (список строк или одна строка для shlex)."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        import shlex
+
+        return [x for x in shlex.split(raw, posix=os.name != "nt") if x]
+    s = str(raw).strip()
+    return [s] if s else []
+
+
+def vllm_autoserver_fingerprint(model_id: str, hyperparameters: Optional[Mapping[str, Any]]) -> tuple[str, tuple[str, ...]]:
+    """Одинаковый отпечаток — тот же процесс serve, можно не перезапускать."""
+    hp = dict(hyperparameters or {})
+    extra = normalize_vllm_serve_extra_args(hp.get("vllm_serve_extra_args"))
+    return ((model_id or "").strip(), tuple(extra))
+
+
+_VLLM_FAIL_HINT = (
+    "Полная причина часто выше показанного фрагмента — откройте лог и найдите первый Traceback/CUDA/OOM. "
+    "Типично: нехватка VRAM, несовместимость движка v1 (попробуйте окружение VLLM_USE_V1=0), "
+    "или доп. флаги в hyperparameters.vllm_serve_extra_args (см. README, разд. 2.5)."
+)
 
 
 def default_vllm_ready_timeout_sec() -> int:
@@ -105,12 +168,28 @@ def terminate_vllm_process(proc: Optional[subprocess.Popen], reason: str = "") -
         if proc.poll() is None:
             if reason:
                 print(f"   ⚠️ Останавливаю vLLM автосервер ({reason})...")
-            proc.terminate()
+            # Вся группа процессов (Linux/macOS): дочерние worker/engine vLLM обычно в той же группе при start_new_session.
+            if os.name != "nt":
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError):
+                    proc.terminate()
+            else:
+                proc.terminate()
             try:
-                proc.wait(timeout=20)
+                proc.wait(timeout=25)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=10)
+                if os.name != "nt":
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        proc.kill()
+                else:
+                    proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    pass
     except Exception:
         pass
     finally:
@@ -143,11 +222,18 @@ def kill_stale_autovllm_if_any() -> None:
     clear_vllm_pid_file()
 
 
-def start_vllm_autoserver(model_id: str, ready_timeout_sec: int) -> subprocess.Popen:
+def start_vllm_autoserver(
+    model_id: str,
+    ready_timeout_sec: int,
+    extra_args: Optional[list[str]] = None,
+) -> subprocess.Popen:
     if not shutil.which("vllm"):
         raise RuntimeError("Команда 'vllm' не найдена в PATH. Установите vllm и повторите запуск.")
     host, port = _vllm_host_port()
+    wait_until_vllm_port_free(host, port)
+    extras = list(extra_args) if extra_args else []
     cmd = ["vllm", "serve", model_id, "--host", host, "--port", str(port)]
+    cmd.extend(extras)
     log_path = _vllm_log_path()
     print(f"   🚀 Запуск vLLM автосервера: {' '.join(cmd)}")
     print(f"   📝 Лог stdout/stderr vLLM: {log_path}")
@@ -157,12 +243,14 @@ def start_vllm_autoserver(model_id: str, ready_timeout_sec: int) -> subprocess.P
         log_fp.write(f"\n{'='*60}\n{time.strftime('%Y-%m-%d %H:%M:%S')} vllm serve {model_id}\n")
         log_fp.write(" ".join(cmd) + "\n")
         log_fp.flush()
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_fp,
-            stderr=subprocess.STDOUT,
-            close_fds=False,
-        )
+        popen_kw: dict = {
+            "stdout": log_fp,
+            "stderr": subprocess.STDOUT,
+            "close_fds": False,
+        }
+        if os.name != "nt":
+            popen_kw["start_new_session"] = True
+        proc = subprocess.Popen(cmd, **popen_kw)
         proc._vllm_log_fp = log_fp
     except Exception:
         try:
@@ -173,22 +261,24 @@ def start_vllm_autoserver(model_id: str, ready_timeout_sec: int) -> subprocess.P
     _write_vllm_pid(proc.pid, model_id)
     if proc.poll() is not None:
         clear_vllm_pid_file()
-        tail = _read_log_tail(log_path)
+        tail = _read_log_tail(log_path, max_bytes=48000, max_lines=120)
         raise RuntimeError(
-            f"vLLM процесс сразу завершился (код {proc.returncode}). См. {log_path}\n{tail}"
+            f"vLLM процесс сразу завершился (код {proc.returncode}). См. {log_path}\n"
+            f"{_VLLM_FAIL_HINT}\n{tail}"
         )
     if not _wait_vllm_ready(proc, timeout_sec=ready_timeout_sec):
         code = proc.poll()
         terminate_vllm_process(proc, reason="сервер не поднялся вовремя")
         clear_vllm_pid_file()
-        tail = _read_log_tail(log_path)
+        tail = _read_log_tail(log_path, max_bytes=48000, max_lines=120)
         if code is not None:
             raise RuntimeError(
-                f"vLLM процесс завершился (код {code}) до готовности. См. {log_path}\n{tail}"
+                f"vLLM процесс завершился (код {code}) до готовности. См. {log_path}\n"
+                f"{_VLLM_FAIL_HINT}\n{tail}"
             )
         raise RuntimeError(
             f"vLLM сервер не поднялся за {ready_timeout_sec} с: {vllm_base_url()}. "
-            f"Увеличьте VLLM_READY_TIMEOUT_SEC. См. лог:\n{log_path}\n{tail}"
+            f"Увеличьте VLLM_READY_TIMEOUT_SEC. {_VLLM_FAIL_HINT}\n{log_path}\n{tail}"
         )
     print(f"   ✅ vLLM автосервер готов: {vllm_base_url()}")
     return proc
