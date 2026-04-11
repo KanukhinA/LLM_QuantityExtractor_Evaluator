@@ -5,209 +5,25 @@ import os
 import sys
 import argparse
 import logging
-import json
-import time
-import signal
-import shutil
-import subprocess
-import urllib.request
-import urllib.error
-from typing import Optional
-from urllib.parse import urlparse
+
 from main import run_evaluation
 from gemini_analyzer import check_gemini_api
 from config import GEMINI_API_KEY, MODEL_CONFIGS, OUTPUT_DIR
 from utils import ConsoleLogCapture
 from model_evaluator import StopAllModelsInterrupt, _append_to_model_errors_log
+from vllm_autoserver import (
+    clear_vllm_pid_file,
+    default_vllm_ready_timeout_sec,
+    kill_stale_autovllm_if_any,
+    start_vllm_autoserver,
+    terminate_vllm_process,
+)
 
-
-_VLLM_PID_FILENAME = ".vllm_autoserver.pid"
-_VLLM_LOG_FILENAME = "vllm_autoserver.log"
-
-
-def _vllm_base_url() -> str:
-    return os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
-
-
-def _vllm_host_port() -> tuple[str, int]:
-    parsed = urlparse(_vllm_base_url())
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or (443 if parsed.scheme == "https" else 8000)
-    return host, int(port)
-
-
-def _vllm_pid_path() -> str:
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    return os.path.join(OUTPUT_DIR, _VLLM_PID_FILENAME)
-
-
-def _write_vllm_pid(pid: int, model_id: str) -> None:
-    try:
-        with open(_vllm_pid_path(), "w", encoding="utf-8") as f:
-            json.dump({"pid": int(pid), "model": model_id}, f, ensure_ascii=False)
-    except Exception:
-        pass
-
-
-def _clear_vllm_pid() -> None:
-    try:
-        if os.path.exists(_vllm_pid_path()):
-            os.remove(_vllm_pid_path())
-    except Exception:
-        pass
-
-
-def _vllm_log_path() -> str:
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    return os.path.join(OUTPUT_DIR, _VLLM_LOG_FILENAME)
-
-
-def _read_log_tail(path: str, max_bytes: int = 12000) -> str:
-    try:
-        if not os.path.isfile(path) or os.path.getsize(path) == 0:
-            return "(лог пуст или отсутствует)"
-        with open(path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - max_bytes))
-            raw = f.read().decode("utf-8", errors="replace")
-        lines = raw.strip().splitlines()
-        tail = "\n".join(lines[-40:])
-        return tail if tail else raw.strip()[:max_bytes]
-    except Exception as exc:
-        return f"(не удалось прочитать лог: {exc})"
-
-
-def _default_vllm_ready_timeout_sec() -> int:
-    try:
-        return max(30, int(os.environ.get("VLLM_READY_TIMEOUT_SEC", "600")))
-    except ValueError:
-        return 600
-
-
-def _resolve_vllm_ready_timeout(override: Optional[int]) -> int:
-    if override is not None:
-        return max(30, int(override))
-    return _default_vllm_ready_timeout_sec()
-
-
-def _wait_vllm_ready(proc: subprocess.Popen, timeout_sec: int) -> bool:
-    deadline = time.time() + timeout_sec
-    url = f"{_vllm_base_url()}/v1/models"
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            return False
-        try:
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            time.sleep(1.0)
-    return False
-
-
-def _terminate_process(proc: Optional[subprocess.Popen], reason: str = "") -> None:
-    if proc is None:
-        return
-    log_fp = getattr(proc, "_vllm_log_fp", None)
-    try:
-        if proc.poll() is None:
-            if reason:
-                print(f"   ⚠️ Останавливаю vLLM автосервер ({reason})...")
-            proc.terminate()
-            try:
-                proc.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=10)
-    except Exception:
-        pass
-    finally:
-        if log_fp is not None:
-            try:
-                log_fp.close()
-            except Exception:
-                pass
-            try:
-                del proc._vllm_log_fp
-            except Exception:
-                pass
-
-
-def _kill_stale_autovllm_if_any() -> None:
-    path = _vllm_pid_path()
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        pid = int(data.get("pid", 0))
-        if pid > 0:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    _clear_vllm_pid()
-
-
-def _start_vllm_autoserver(model_id: str, ready_timeout_sec: int) -> subprocess.Popen:
-    if not shutil.which("vllm"):
-        raise RuntimeError("Команда 'vllm' не найдена в PATH. Установите vllm и повторите запуск.")
-    host, port = _vllm_host_port()
-    cmd = ["vllm", "serve", model_id, "--host", host, "--port", str(port)]
-    log_path = _vllm_log_path()
-    print(f"   🚀 Запуск vLLM автосервера: {' '.join(cmd)}")
-    print(f"   📝 Лог stdout/stderr vLLM: {log_path}")
-    print(f"   ⏱ Ожидание готовности до {ready_timeout_sec} с (переменная VLLM_READY_TIMEOUT_SEC или --vllm-ready-timeout)")
-    log_fp = open(log_path, "a", encoding="utf-8")
-    try:
-        log_fp.write(f"\n{'='*60}\n{time.strftime('%Y-%m-%d %H:%M:%S')} vllm serve {model_id}\n")
-        log_fp.write(" ".join(cmd) + "\n")
-        log_fp.flush()
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_fp,
-            stderr=subprocess.STDOUT,
-            close_fds=False,
-        )
-        proc._vllm_log_fp = log_fp
-    except Exception:
-        try:
-            log_fp.close()
-        except Exception:
-            pass
-        raise
-    _write_vllm_pid(proc.pid, model_id)
-    if proc.poll() is not None:
-        _clear_vllm_pid()
-        tail = _read_log_tail(log_path)
-        raise RuntimeError(
-            f"vLLM процесс сразу завершился (код {proc.returncode}). См. {log_path}\n{tail}"
-        )
-    if not _wait_vllm_ready(proc, timeout_sec=ready_timeout_sec):
-        code = proc.poll()
-        _terminate_process(proc, reason="сервер не поднялся вовремя")
-        _clear_vllm_pid()
-        tail = _read_log_tail(log_path)
-        if code is not None:
-            raise RuntimeError(
-                f"vLLM процесс завершился (код {code}) до готовности. См. {log_path}\n{tail}"
-            )
-        raise RuntimeError(
-            f"vLLM сервер не поднялся за {ready_timeout_sec} с: {_vllm_base_url()}. "
-            f"Увеличьте VLLM_READY_TIMEOUT_SEC или --vllm-ready-timeout. См. лог:\n{log_path}\n{tail}"
-        )
-    print(f"   ✅ vLLM автосервер готов: {_vllm_base_url()}")
-    return proc
 
 def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                    structured_output: bool = False, use_outlines: bool = False,
                    prompt_template_name: str = None, pydantic_outlines: bool = False,
-                   use_guidance: bool = False, ollama_only: bool = False, vllm_only: bool = False,
-                   vllm_ready_timeout_sec: Optional[int] = None):
+                   use_guidance: bool = False, ollama_only: bool = False, vllm_only: bool = False):
     """Запускает оценку всех моделей из конфигурации"""
     # Проверяем работоспособность Gemini API в самом начале
     print(f"\n{'='*80}")
@@ -294,8 +110,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
     results_summary = []
     vllm_proc = None
     active_vllm_model = None
-    vllm_ready_timeout = _resolve_vllm_ready_timeout(vllm_ready_timeout_sec)
-    _kill_stale_autovllm_if_any()
+    vllm_ready_timeout = default_vllm_ready_timeout_sec()
+    kill_stale_autovllm_if_any()
 
     try:
         for i, model_key in enumerate(models, 1):
@@ -326,13 +142,13 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                     if not served_model_id:
                         raise RuntimeError("Пустой name/vllm_name для vLLM модели")
                     if (vllm_proc is None) or (vllm_proc.poll() is not None) or (active_vllm_model != served_model_id):
-                        _terminate_process(vllm_proc, reason="переключение на следующую vLLM модель")
-                        _clear_vllm_pid()
-                        vllm_proc = _start_vllm_autoserver(served_model_id, ready_timeout_sec=vllm_ready_timeout)
+                        terminate_vllm_process(vllm_proc, reason="переключение на следующую vLLM модель")
+                        clear_vllm_pid_file()
+                        vllm_proc = start_vllm_autoserver(served_model_id, ready_timeout_sec=vllm_ready_timeout)
                         active_vllm_model = served_model_id
                 else:
-                    _terminate_process(vllm_proc, reason="запуск не-vLLM модели")
-                    _clear_vllm_pid()
+                    terminate_vllm_process(vllm_proc, reason="запуск не-vLLM модели")
+                    clear_vllm_pid_file()
                     vllm_proc = None
                     active_vllm_model = None
 
@@ -409,8 +225,8 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                     "error": error_msg
                 })
     finally:
-        _terminate_process(vllm_proc, reason="завершение run_all_models")
-        _clear_vllm_pid()
+        terminate_vllm_process(vllm_proc, reason="завершение run_all_models")
+        clear_vllm_pid_file()
     
     # Выводим итоговую сводку
     print(f"\n{'='*80}")
@@ -477,13 +293,6 @@ if __name__ == "__main__":
         help="Запустить оценку только для ключей *-vllm",
     )
     parser.add_argument(
-        "--vllm-ready-timeout",
-        type=int,
-        default=None,
-        metavar="SEC",
-        help="Секунд ожидания готовности vLLM после vllm serve (по умолчанию VLLM_READY_TIMEOUT_SEC или 600)",
-    )
-    parser.add_argument(
         "--multi-agent",
         type=str,
         metavar="MODE",
@@ -537,6 +346,5 @@ if __name__ == "__main__":
             use_guidance=args.guidance,
             ollama_only=args.ollama,
             vllm_only=args.vllm,
-            vllm_ready_timeout_sec=args.vllm_ready_timeout,
         )
 

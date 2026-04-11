@@ -9,6 +9,7 @@
 
 Квантизация (Q4 и т.д.) задаётся при запуске vLLM, не этим модулем.
 """
+import errno
 import json
 import os
 import urllib.error
@@ -24,6 +25,56 @@ def _vllm_api_key() -> Optional[str]:
     return os.environ.get("VLLM_API_KEY") or None
 
 
+def _errno_from_urlerror(exc: urllib.error.URLError) -> Optional[int]:
+    r = exc.reason
+    if isinstance(r, OSError):
+        return int(r.errno) if r.errno is not None else None
+    if isinstance(r, BaseException) and getattr(r, "errno", None) is not None:
+        try:
+            return int(r.errno)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _format_vllm_unreachable_message(base_url: str, exc: urllib.error.URLError) -> str:
+    """
+    Понятное сообщение для URLError (отказ в соединении, таймаут, DNS и т.д.).
+    """
+    reason = exc.reason
+    detail = repr(reason) if reason is not None else str(exc)
+    en = _errno_from_urlerror(exc)
+    lines = [
+        f"vLLM недоступен по адресу {base_url}",
+        f"Техническая причина: {detail}",
+    ]
+    # Linux/macOS: 111 ECONNREFUSED; Windows: 10061 WSAECONNREFUSED
+    if en in (errno.ECONNREFUSED, 10061):
+        lines.append(
+            "Порт не принимает соединения: сервер vLLM не запущен, ещё стартует, "
+            "или слушает другой хост/порт, чем указано в VLLM_BASE_URL."
+        )
+        lines.append(
+            "Обычно сервер поднимается автоматически при запуске main.py / run_all_models.py с vLLM-моделью; "
+            "если автозапуск отключён или порт занят другим процессом, запустите вручную, например: "
+            "vllm serve <идентификатор_модели_из_models.yaml> --host 127.0.0.1 --port 8000"
+        )
+    elif en in (errno.ETIMEDOUT, 10060):
+        lines.append(
+            "Таймаут при подключении: проверьте сеть, файрвол и что VLLM_BASE_URL указывает на нужный хост."
+        )
+    elif en in (errno.EHOSTUNREACH, errno.ENETUNREACH, 10065):
+        lines.append("Сеть недоступна до указанного хоста: проверьте адрес в VLLM_BASE_URL.")
+    elif en in (errno.ECONNABORTED,):
+        lines.append("Соединение прервано до ответа сервера.")
+    else:
+        lines.append(
+            "Проверьте VLLM_BASE_URL (по умолчанию http://127.0.0.1:8000), что он совпадает с автозапуском "
+            "или с вашим ручным vllm serve."
+        )
+    return "\n".join(lines)
+
+
 def load_vllm(served_model_id: str) -> Tuple[Dict[str, Any], None]:
     """
     «Загрузка»: весов нет, возвращаем словарь для generate_vllm и tokenizer=None.
@@ -35,7 +86,10 @@ def load_vllm(served_model_id: str) -> Tuple[Dict[str, Any], None]:
     sid = (served_model_id or "").strip()
     if not sid:
         raise ValueError("vLLM: пустой идентификатор модели (vllm_name / name в models.yaml)")
-    print(f"   vLLM: инференс через {base} (модель «{sid}»). Запустите сервер: vllm serve <id> ...")
+    print(
+        f"   vLLM: инференс через {base} (модель «{sid}»). "
+        f"Сервер обычно поднимается автоматически из main.py / run_all_models.py; иначе: vllm serve <id> ..."
+    )
     return (
         {
             "vllm": True,
@@ -159,7 +213,7 @@ def generate_vllm(
             msg = raw or str(e)
         raise RuntimeError(f"vLLM API error: {msg}") from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f"vLLM недоступен ({base_url}): {e.reason}") from e
+        raise RuntimeError(_format_vllm_unreachable_message(base_url, e)) from e
 
     choices = data.get("choices") or []
     if not choices:

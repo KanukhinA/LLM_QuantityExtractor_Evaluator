@@ -140,9 +140,9 @@ python calc_max_new_tokens.py --all-models
 
 `vLLM` используется как отдельный HTTP-сервер инференса. Проект подключается к нему через OpenAI-совместимый endpoint `/v1/chat/completions`.
 
-Для `run_all_models.py --vllm` сервер поднимается автоматически: перед каждой `*-vllm` моделью запускается `vllm serve`, предыдущий автосервер завершается. Вывод `vllm serve` пишется в `OUTPUT_DIR/vllm_autoserver.log` (по умолчанию `results/vllm_autoserver.log`), чтобы при ошибке или таймауте было видно OOM, неверный id модели и т.д.
+Для `main.py` (ключ `*-vllm` или флаг `--vllm`) и для `run_all_models.py --vllm` сервер поднимается автоматически: перед оценкой для каждой `*-vllm` модели запускается `vllm serve`, при смене модели или в конце работы предыдущий автосервер завершается. Логика вынесена в модуль `vllm_autoserver.py`. Вывод `vllm serve` пишется в `OUTPUT_DIR/vllm_autoserver.log` (по умолчанию `results/vllm_autoserver.log`), чтобы при ошибке или таймауте было видно OOM, неверный id модели и т.д.
 
-**Таймаут готовности:** крупные модели или первый запуск (скачивание весов) могут занимать много времени. По умолчанию скрипт ждёт ответа `GET /v1/models` до **600** секунд. Настройка: переменная `VLLM_READY_TIMEOUT_SEC` (секунды) или флаг `python run_all_models.py --vllm --vllm-ready-timeout 1200`.
+**Таймаут готовности:** крупные модели или первый запуск (скачивание весов) могут занимать много времени. По умолчанию скрипт ждёт ответа `GET /v1/models` до **600** секунд. Изменить можно переменной окружения `VLLM_READY_TIMEOUT_SEC` (секунды), например: `set VLLM_READY_TIMEOUT_SEC=1200` (Windows) или `export VLLM_READY_TIMEOUT_SEC=1200` (Linux/macOS).
 
 1) Установите vLLM (лучше в отдельном окружении):
 
@@ -166,7 +166,7 @@ vllm serve Qwen/Qwen2.5-3B-Instruct --quantization awq
 - Windows: `set VLLM_BASE_URL=http://127.0.0.1:8000`
 - Linux/Mac: `export VLLM_BASE_URL=http://127.0.0.1:8000`
 
-4) Проверка, что нужные `*-vllm` модели доступны на сервере (полезно для `main.py --vllm`, где сервер не поднимается автоматически):
+4) Проверка, что нужные `*-vllm` модели доступны на сервере (удобно, если вы подняли `vllm serve` вручную или проверяете уже запущенный автосервер):
 
 ```bash
 python check_vllm_models.py
@@ -180,6 +180,7 @@ python check_vllm_models.py
 SmallLLMEvaluator/
 ├── main.py                 # Основной скрипт для запуска оценки одной модели
 ├── run_all_models.py       # Скрипт для запуска оценки всех моделей
+├── vllm_autoserver.py      # Автозапуск/остановка vllm serve для main.py и run_all_models.py
 ├── reevaluate.py           # Скрипт для переоценки результатов из файла
 ├── calc_max_new_tokens.py  # Расчёт max_new_tokens по длине ground truth в токенах
 ├── model_evaluator.py      # Класс для оценки моделей
@@ -402,7 +403,6 @@ python run_all_models.py --local-only --multi-agent qa_workflow --structured-out
 - `--pydantic-outlines` - использовать outlines со схемой из Pydantic model_json_schema() (взаимоисключающий с --outlines)
 - `--guidance` - использовать llguidance для constrained decoding (по умолчанию схема RUS)
 - `--vllm` - запускать только `*-vllm` версии моделей (инференс через сервер vLLM)
-- `--vllm-ready-timeout SEC` - сколько секунд ждать готовности vLLM после автозапуска `vllm serve` (см. разд. 2.5; по умолчанию `VLLM_READY_TIMEOUT_SEC` или 600)
 - `--ollama` - запускать только `*-ollama` версии моделей (инференс через Ollama)
 
 Скрипт автоматически:

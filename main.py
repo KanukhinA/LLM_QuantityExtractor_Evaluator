@@ -253,7 +253,7 @@ def main():
     """Главная функция"""
     # Сначала парсим аргументы командной строки, чтобы проверить флаг --no-gemini
     if len(sys.argv) < 2:
-        print("Использование: python main.py <model_name> [model_name2 ...] [--ollama] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
+        print("Использование: python main.py <model_name> [model_name2 ...] [--ollama|--vllm] [--prompt NAME] [--multi-agent MODE] [--structured-output] [--outlines] [--no-gemini] [--verbose] [--no-verbose]")
         print("\nАргументы:")
         print("  <model_name>        - ключ модели из конфигурации (можно указать несколько через запятую или пробел)")
         print("  --ollama            - (опционально) запуск через Ollama: для базового ключа X используется X-ollama (локальный API)")
@@ -534,132 +534,165 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
     if vllm_requested or any(
         (MODEL_CONFIGS.get(mk, {}).get("hyperparameters") or {}).get("vllm") for mk in model_keys
     ):
-        print(f"📌 vLLM: Да (инференс через HTTP API; VLLM_BASE_URL, отдельно: vllm serve ...)")
+        print(f"📌 vLLM: Да (инференс через HTTP API; сервер vllm serve поднимается автоматически, VLLM_BASE_URL)")
     print(f"📁 Датасет: {find_dataset_path()}")
     print(f"📁 Результаты: {OUTPUT_DIR}")
     print(f"📅 Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}\n")
     
-    # Запускаем оценку для каждой модели
     import copy
+    from vllm_autoserver import (
+        clear_vllm_pid_file,
+        default_vllm_ready_timeout_sec,
+        kill_stale_autovllm_if_any,
+        start_vllm_autoserver,
+        terminate_vllm_process,
+    )
+
+    vllm_ready_timeout = default_vllm_ready_timeout_sec()
+    vllm_proc = None
+    active_vllm_model = None
+    if any((MODEL_CONFIGS.get(mk, {}).get("hyperparameters") or {}).get("vllm") for mk in model_keys):
+        kill_stale_autovllm_if_any()
+
     results_summary = []
-    
-    for idx, model_key in enumerate(model_keys, 1):
-        if len(model_keys) > 1:
-            print(f"\n{'='*80}")
-            print(f"МОДЕЛЬ {idx}/{len(model_keys)}: {model_key}")
-            print(f"{'='*80}\n")
-        
-        # Создаем копию конфигурации и добавляем параметры если указаны
-        config = copy.deepcopy(MODEL_CONFIGS[model_key])
-        if multi_agent_mode:
-            config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
-        if structured_output:
-            config["hyperparameters"]["structured_output"] = True
-        if use_outlines:
-            config["hyperparameters"]["use_outlines"] = True
-        if pydantic_outlines:
-            config["hyperparameters"]["pydantic_outlines"] = True
-        if use_guidance:
-            config["hyperparameters"]["use_guidance"] = True
-        if prompt_template_name is not None:
-            config["hyperparameters"]["prompt_template_name"] = prompt_template_name
-        
-        try:
-            result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)
+
+    try:
+        for idx, model_key in enumerate(model_keys, 1):
+            if len(model_keys) > 1:
+                print(f"\n{'='*80}")
+                print(f"МОДЕЛЬ {idx}/{len(model_keys)}: {model_key}")
+                print(f"{'='*80}\n")
             
-            if result.get("status") != "error":
-                # Проверяем, была ли модель прервана
-                if result.get("interrupted") and result.get("timeout_reason"):
-                    timeout_reason = result.get("timeout_reason")
-                    results_summary.append({
-                        "model_key": model_key,
-                        "status": "timeout",
-                        "timeout_reason": timeout_reason,
-                        "result": result
-                    })
-                elif result.get("interrupted"):
-                    results_summary.append({
-                        "model_key": model_key,
-                        "status": "interrupted",
-                        "result": result
-                    })
+            # Создаем копию конфигурации и добавляем параметры если указаны
+            config = copy.deepcopy(MODEL_CONFIGS[model_key])
+            if multi_agent_mode:
+                config["hyperparameters"]["multi_agent_mode"] = multi_agent_mode
+            if structured_output:
+                config["hyperparameters"]["structured_output"] = True
+            if use_outlines:
+                config["hyperparameters"]["use_outlines"] = True
+            if pydantic_outlines:
+                config["hyperparameters"]["pydantic_outlines"] = True
+            if use_guidance:
+                config["hyperparameters"]["use_guidance"] = True
+            if prompt_template_name is not None:
+                config["hyperparameters"]["prompt_template_name"] = prompt_template_name
+
+            is_vllm_model = bool((config.get("hyperparameters") or {}).get("vllm", False))
+            if is_vllm_model:
+                served_model_id = (config.get("name") or "").strip()
+                if not served_model_id:
+                    raise RuntimeError("Пустой name/vllm_name для vLLM модели")
+                if (vllm_proc is None) or (vllm_proc.poll() is not None) or (active_vllm_model != served_model_id):
+                    terminate_vllm_process(vllm_proc, reason="переключение на другую vLLM модель")
+                    clear_vllm_pid_file()
+                    vllm_proc = start_vllm_autoserver(served_model_id, ready_timeout_sec=vllm_ready_timeout)
+                    active_vllm_model = served_model_id
+            else:
+                terminate_vllm_process(vllm_proc, reason="оценка не через vLLM")
+                clear_vllm_pid_file()
+                vllm_proc = None
+                active_vllm_model = None
+            
+            try:
+                result = run_evaluation(config, model_key=model_key, use_gemini=use_gemini, verbose=verbose)
+            
+                if result.get("status") != "error":
+                    # Проверяем, была ли модель прервана
+                    if result.get("interrupted") and result.get("timeout_reason"):
+                        timeout_reason = result.get("timeout_reason")
+                        results_summary.append({
+                            "model_key": model_key,
+                            "status": "timeout",
+                            "timeout_reason": timeout_reason,
+                            "result": result
+                        })
+                    elif result.get("interrupted"):
+                        results_summary.append({
+                            "model_key": model_key,
+                            "status": "interrupted",
+                            "result": result
+                        })
+                    else:
+                        results_summary.append({
+                            "model_key": model_key,
+                            "status": "success",
+                            "result": result
+                        })
+                
+                    if len(model_keys) == 1 and not result.get("interrupted"):
+                        # Для одной модели выводим полную сводку
+                        print(f"\n{'='*80}")
+                        print(f"🎉 ФИНАЛЬНАЯ СВОДКА")
+                        print(f"{'='*80}")
+                        print(f"Оценка модели '{model_key}' завершена успешно!")
+                        print(f"\nОсновные результаты:")
+                        print(f"   • Модель: {result.get('model_name', 'N/A')}")
+                        print(f"   • Время выполнения: {result.get('average_response_time_seconds', 0) * result.get('total_samples', 0) / 60:.2f} минут")
+                        print(f"   • Средняя скорость: {result.get('average_response_time_seconds', 0):.3f} сек/ответ")
+                        print(f"   • Ошибки парсинга: {result.get('parsing_error_rate', 0):.2%} ({result.get('invalid_json_count', 0)}/{result.get('total_samples', 0)})")
+                        print(f"   • Использование памяти: {result.get('gpu_memory_during_inference_gb', 0):.2f} GB")
+                    
+                        quality = result.get('quality_metrics')
+                        if quality:
+                            print(f"\n🎯 Метрики качества (с умным парсером):")
+                            mass = quality.get('массовая доля', {})
+                            prochee = quality.get('прочее', {})
+                            print(f"   • 'массовая доля':")
+                            print(f"     - Accuracy: {mass.get('accuracy', 0):.2%}")
+                            print(f"     - Precision: {mass.get('precision', 0):.2%}, Recall: {mass.get('recall', 0):.2%}, F1: {mass.get('f1', 0):.2%}")
+                            print(f"   • 'прочее':")
+                            print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
+                            print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
+                        
+                            # Выводим отношение валидных JSON
+                            valid_json_count = result.get('valid_json_count', 0)
+                            total_samples = result.get('total_samples', 0)
+                            if total_samples > 0:
+                                valid_json_rate = valid_json_count / total_samples
+                                print(f"   • Валидных JSON: {valid_json_count}/{total_samples} ({valid_json_rate:.2%})")
+                    
+                        # Выводим raw метрики (строгий парсинг без допущений)
+                        raw_metrics = result.get('raw_output_metrics')
+                        if raw_metrics:
+                            print(f"\n📊 Метрики качества (raw output, строгий парсинг):")
+                            raw_mass = raw_metrics.get('массовая доля', {})
+                            raw_prochee = raw_metrics.get('прочее', {})
+                            print(f"   • 'массовая доля':")
+                            print(f"     - Accuracy: {raw_mass.get('accuracy', 0):.2%}")
+                            print(f"     - Precision: {raw_mass.get('precision', 0):.2%}, Recall: {raw_mass.get('recall', 0):.2%}, F1: {raw_mass.get('f1', 0):.2%}")
+                            print(f"   • 'прочее':")
+                            print(f"     - Accuracy: {raw_prochee.get('accuracy', 0):.2%}")
+                            print(f"     - Precision: {raw_prochee.get('precision', 0):.2%}, Recall: {raw_prochee.get('recall', 0):.2%}, F1: {raw_prochee.get('f1', 0):.2%}")
+                    
+                        print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")
+                        print(f"{'='*80}\n")
+                    elif len(model_keys) == 1 and result.get("interrupted"):
+                        print(f"\nОценка прервана. Результаты не сохранены (запись в model_errors.log).\n")
                 else:
                     results_summary.append({
                         "model_key": model_key,
-                        "status": "success",
-                        "result": result
+                        "status": "error",
+                        "error": result.get("error", "Unknown error")
                     })
-                
-                if len(model_keys) == 1 and not result.get("interrupted"):
-                    # Для одной модели выводим полную сводку
-                    print(f"\n{'='*80}")
-                    print(f"🎉 ФИНАЛЬНАЯ СВОДКА")
-                    print(f"{'='*80}")
-                    print(f"Оценка модели '{model_key}' завершена успешно!")
-                    print(f"\nОсновные результаты:")
-                    print(f"   • Модель: {result.get('model_name', 'N/A')}")
-                    print(f"   • Время выполнения: {result.get('average_response_time_seconds', 0) * result.get('total_samples', 0) / 60:.2f} минут")
-                    print(f"   • Средняя скорость: {result.get('average_response_time_seconds', 0):.3f} сек/ответ")
-                    print(f"   • Ошибки парсинга: {result.get('parsing_error_rate', 0):.2%} ({result.get('invalid_json_count', 0)}/{result.get('total_samples', 0)})")
-                    print(f"   • Использование памяти: {result.get('gpu_memory_during_inference_gb', 0):.2f} GB")
-                    
-                    quality = result.get('quality_metrics')
-                    if quality:
-                        print(f"\n🎯 Метрики качества (с умным парсером):")
-                        mass = quality.get('массовая доля', {})
-                        prochee = quality.get('прочее', {})
-                        print(f"   • 'массовая доля':")
-                        print(f"     - Accuracy: {mass.get('accuracy', 0):.2%}")
-                        print(f"     - Precision: {mass.get('precision', 0):.2%}, Recall: {mass.get('recall', 0):.2%}, F1: {mass.get('f1', 0):.2%}")
-                        print(f"   • 'прочее':")
-                        print(f"     - Accuracy: {prochee.get('accuracy', 0):.2%}")
-                        print(f"     - Precision: {prochee.get('precision', 0):.2%}, Recall: {prochee.get('recall', 0):.2%}, F1: {prochee.get('f1', 0):.2%}")
-                        
-                        # Выводим отношение валидных JSON
-                        valid_json_count = result.get('valid_json_count', 0)
-                        total_samples = result.get('total_samples', 0)
-                        if total_samples > 0:
-                            valid_json_rate = valid_json_count / total_samples
-                            print(f"   • Валидных JSON: {valid_json_count}/{total_samples} ({valid_json_rate:.2%})")
-                    
-                    # Выводим raw метрики (строгий парсинг без допущений)
-                    raw_metrics = result.get('raw_output_metrics')
-                    if raw_metrics:
-                        print(f"\n📊 Метрики качества (raw output, строгий парсинг):")
-                        raw_mass = raw_metrics.get('массовая доля', {})
-                        raw_prochee = raw_metrics.get('прочее', {})
-                        print(f"   • 'массовая доля':")
-                        print(f"     - Accuracy: {raw_mass.get('accuracy', 0):.2%}")
-                        print(f"     - Precision: {raw_mass.get('precision', 0):.2%}, Recall: {raw_mass.get('recall', 0):.2%}, F1: {raw_mass.get('f1', 0):.2%}")
-                        print(f"   • 'прочее':")
-                        print(f"     - Accuracy: {raw_prochee.get('accuracy', 0):.2%}")
-                        print(f"     - Precision: {raw_prochee.get('precision', 0):.2%}, Recall: {raw_prochee.get('recall', 0):.2%}, F1: {raw_prochee.get('f1', 0):.2%}")
-                    
-                    print(f"\n📁 Результаты сохранены в директории: {OUTPUT_DIR}")
-                    print(f"{'='*80}\n")
-                elif len(model_keys) == 1 and result.get("interrupted"):
-                    print(f"\nОценка прервана. Результаты не сохранены (запись в model_errors.log).\n")
-            else:
+                    print(f"❌ Ошибка при оценке модели '{model_key}': {result.get('error', 'Unknown error')}\n")
+            except KeyboardInterrupt:
+                print(f"\n⚠️ Прервано пользователем. Остановка оценки моделей.")
+                break
+            except Exception as e:
+                import traceback
+                error_msg = str(e)
+                print(f"❌ Критическая ошибка при оценке '{model_key}': {error_msg}")
+                print(f"   Детали: {traceback.format_exc()[:500]}...\n")
                 results_summary.append({
                     "model_key": model_key,
                     "status": "error",
-                    "error": result.get("error", "Unknown error")
+                    "error": error_msg
                 })
-                print(f"❌ Ошибка при оценке модели '{model_key}': {result.get('error', 'Unknown error')}\n")
-        except KeyboardInterrupt:
-            print(f"\n⚠️ Прервано пользователем. Остановка оценки моделей.")
-            break
-        except Exception as e:
-            import traceback
-            error_msg = str(e)
-            print(f"❌ Критическая ошибка при оценке '{model_key}': {error_msg}")
-            print(f"   Детали: {traceback.format_exc()[:500]}...\n")
-            results_summary.append({
-                "model_key": model_key,
-                "status": "error",
-                "error": error_msg
-            })
+    finally:
+        terminate_vllm_process(vllm_proc, reason="завершение main.py")
+        clear_vllm_pid_file()
     
     # Выводим итоговую сводку для нескольких моделей
     if len(model_keys) > 1:

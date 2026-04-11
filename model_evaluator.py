@@ -415,9 +415,32 @@ class ModelEvaluator:
                     })
                     raise InferenceCriticalFailure(error_msg, text_index, 1)
 
-                if is_api_model:
+                # Сервер vLLM не слушает порт / сеть — повторы не помогут.
+                vllm_unreachable = is_vllm and (
+                    "Connection refused" in error_msg
+                    or "[Errno 111]" in error_msg
+                    or "Errno 10061" in error_msg
+                    or "[WinError 10061]" in error_msg
+                )
+                if vllm_unreachable:
+                    print(
+                        f"  ❌ Ответ #{text_index+1}/{total_texts} - vLLM: нет соединения с сервером, "
+                        f"повторные попытки не выполняются"
+                    )
+                    for line in (error_msg.splitlines() or [error_msg]):
+                        print(f"     {line}")
+                    parsing_errors.append({
+                        "text_index": text_index,
+                        "text": text,
+                        "error": error_msg,
+                        "response": "",
+                    })
+                    raise InferenceCriticalFailure(error_msg, text_index, 1)
+
+                if is_api_model or is_vllm:
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}):")
-                    print(f"     {error_msg}")
+                    for line in (error_msg.splitlines() or [error_msg]):
+                        print(f"     {line}")
                 else:
                     error_display = error_msg if verbose else error_msg[:100]
                     print(f"  ⚠️ Ответ #{text_index+1}/{total_texts} - Ошибка при генерации (попытка {attempt+1}/{num_retries}): {error_display}")
@@ -426,7 +449,7 @@ class ModelEvaluator:
                 else:
                     import traceback
                     traceback_str = traceback.format_exc()
-                    traceback_display = traceback_str if is_api_model else traceback_str[:200]
+                    traceback_display = traceback_str if (is_api_model or is_vllm) else traceback_str[:200]
                     parsing_errors.append({
                         "text_index": text_index,
                         "text": text,
