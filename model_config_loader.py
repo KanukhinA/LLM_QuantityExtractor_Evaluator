@@ -2,7 +2,6 @@
 Загрузчик конфигураций моделей из YAML файла
 """
 import os
-import yaml
 
 
 def load_model_configs():

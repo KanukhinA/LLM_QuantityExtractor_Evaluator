@@ -4,6 +4,7 @@
 import os
 import time
 import re
+import warnings
 from typing import Tuple, Any, Optional
 from config import GEMINI_API_KEY, OPENAI_API_KEY
 
@@ -117,9 +118,6 @@ def generate_gemma_api(
     Returns:
         сгенерированный текст
     """
-    import time
-    import re
-    
     # По умолчанию используем детерминированную генерацию (do_sample=False)
     if temperature is None:
         temperature = 0.0
@@ -374,9 +372,6 @@ def generate_openrouter_api(
     Returns:
         сгенерированный текст
     """
-    import time
-    import warnings
-    
     # Защита: убеждаемся, что tokenizer не используется для API моделей
     if tokenizer is not None:
         warnings.warn("tokenizer передан в generate_openrouter_api, но не используется для API моделей. Убедитесь, что для API моделей tokenizer=None.")

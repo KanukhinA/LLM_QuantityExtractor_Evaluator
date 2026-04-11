@@ -1,7 +1,7 @@
 """
 Метрики для оценки качества ответов моделей
 """
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple
 import json
 from pydantic import ValidationError
 from structured_schemas import FertilizerExtractionOutput

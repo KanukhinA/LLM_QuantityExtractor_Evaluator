@@ -5,9 +5,7 @@
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
-import json
 import os
-from collections import Counter
 from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 from sentence_transformers import SentenceTransformer
@@ -71,7 +69,6 @@ def levenshtein_distance(s1: str, s2: str) -> int:
     return previous_row[-1]
 
 from utils import build_prompt3, parse_json_safe, is_valid_json, extract_json_from_response
-from config import PROMPT_TEMPLATE_NAME
 
 
 def cluster_russian_texts(
@@ -760,7 +757,6 @@ if __name__ == "__main__":
     import sys
     from config import UNLABELED_CORPUS_PATH
     from utils import find_dataset_path, find_file_path
-    import model_loaders as ml
     
     parser = argparse.ArgumentParser(
         description="Извлечение few-shot примеров из неразмеченного корпуса на основе Dual-Level Introspective Uncertainty"

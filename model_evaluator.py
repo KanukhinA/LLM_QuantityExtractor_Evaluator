@@ -8,7 +8,6 @@ import logging
 import pandas as pd
 import json
 import copy
-import glob
 import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
@@ -1987,7 +1986,7 @@ class ModelEvaluator:
         print(f"\n💾 СОХРАНЕНИЕ РЕЗУЛЬТАТОВ...")
         
         # Используем высокоуровневый метод FileManager для сохранения всех результатов
-        saved_files = self.file_manager.save_evaluation_results(
+        self.file_manager.save_evaluation_results(
             evaluation_result=evaluation_result,
             results=results,
             output_dir=self.output_dir,
@@ -2325,7 +2324,6 @@ class ModelEvaluator:
             # Убираем префикс "results_" и расширение ".csv"
             name_without_ext = filename.replace("results_", "").replace(".csv", "")
             # Убираем timestamp в конце (формат: _HHMMSS или _YYYYMMDD_HHMMSS)
-            import re
             # Убираем паттерны типа _123456 или _20260123_123456
             name_without_timestamp = re.sub(r'_\d{4}$|_\d{8}_\d{4}$', '', name_without_ext)
             if name_without_timestamp:
@@ -2425,7 +2423,7 @@ class ModelEvaluator:
         
         # Используем высокоуровневый метод FileManager для сохранения всех результатов переоценки
         file_manager = FileManager()
-        saved_files = file_manager.save_reevaluation_results(
+        file_manager.save_reevaluation_results(
             evaluation_result=evaluation_result,
             results_csv_path=results_csv_path,
             df_results=df_results,

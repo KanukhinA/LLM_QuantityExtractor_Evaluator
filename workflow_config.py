@@ -114,7 +114,6 @@ def _get_critic_3agents_prompts(example_text: str) -> Dict[str, Any]:
 
 def _get_qa_workflow_prompts(example_text: str) -> Dict[str, Any]:
     """Генерирует примеры промптов для qa_workflow"""
-    example_nutrients = ["N", "P2O5", "K2O"]
     example_substance = "N"
     
     return {

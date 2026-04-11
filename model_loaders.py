@@ -5,9 +5,10 @@ import torch
 import os
 import warnings
 import time
-from transformers import AutoTokenizer, AutoModelForCausalLM, Gemma3ForCausalLM, AutoProcessor, AutoModelForSeq2SeqLM, AutoModelForImageTextToText, T5ForConditionalGeneration, T5Tokenizer
+import importlib.util
+from transformers import AutoTokenizer, AutoModelForCausalLM, Gemma3ForCausalLM
 from typing import Tuple, Any, Optional
-from config import HF_TOKEN, GEMINI_API_KEY, USE_FLASH_ATTENTION_2
+from config import HF_TOKEN, USE_FLASH_ATTENTION_2
 
 # Импорт для API моделей
 try:
@@ -173,7 +174,6 @@ def _generate_with_outlines(
     """
     prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
-        import outlines  # type: ignore
         from outlines import Generator  # type: ignore
     except ImportError as e:
         raise ImportError(
@@ -241,19 +241,17 @@ def _generate_with_guidance(
     """
     prompt = _apply_chat_template_if_available(tokenizer, prompt)
     try:
-        import outlines  # type: ignore
         from outlines import Generator  # type: ignore
         from outlines.types import JsonSchema  # type: ignore
     except ImportError as e:
         raise ImportError(
             f"Не удалось загрузить outlines: {e}. Установите: pip install \"outlines[transformers]\""
         ) from e
-    try:
-        import llguidance  # type: ignore
-    except ImportError as e:
+
+    if importlib.util.find_spec("llguidance") is None:
         raise ImportError(
             "Для режима --guidance нужен llguidance. Установите: pip install llguidance"
-        ) from e
+        )
 
     outlines_model = _outlines_model_from_transformers(model, tokenizer)
     schema_term = JsonSchema(schema_str)
@@ -1028,7 +1026,7 @@ def generate_t5(
             input_ids = actual_tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
             decoder = actual_tokenizer
             
-    except Exception as e:
+    except Exception:
         # Если все не сработало, пробуем последний вариант
         try:
             if hasattr(tokenizer_or_processor, 'tokenizer'):

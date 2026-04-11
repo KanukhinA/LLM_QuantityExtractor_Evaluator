@@ -12,8 +12,8 @@ from config_loader import load_api_keys
 HF_TOKEN, GEMINI_API_KEY, OPENAI_API_KEY = load_api_keys()
 
 # Конфигурации моделей загружаются через model_config_loader.py
-# Импортируем MODEL_CONFIGS из модуля загрузчика
-from model_config_loader import MODEL_CONFIGS
+# Реэкспорт для `from config import MODEL_CONFIGS`
+from model_config_loader import MODEL_CONFIGS  # noqa: F401
 
 # ============================================================================
 # Настройки датасета

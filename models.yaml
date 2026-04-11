@@ -169,13 +169,3 @@ models:
       torch_dtype: "bfloat16"
       vllm_quant_tag: "Q4"
 
-  # name — карточка GGUF; vllm serve ожидает HF-модель весов (не GGUF). Подставьте свой id при необходимости.
-  gigachat-20b-a3b:
-    name: "ai-sage/GigaChat-20B-A3B-instruct-v1.5-GGUF"
-    ollama_name: "gigachat-20b-a3b-instruct-v1.5:q4_K_M"
-    vllm_name: "ai-sage/GigaChat-20B-A3B-instruct-v1.5"
-    hyperparameters:
-      max_new_tokens: 3904
-      do_sample: false
-      torch_dtype: "auto"
-      vllm_quant_tag: "Q4"

@@ -7,7 +7,7 @@ import logging
 import warnings
 from datetime import datetime
 from model_evaluator import ModelEvaluator
-from gemini_analyzer import analyze_errors_with_gemini, check_gemini_api
+from gemini_analyzer import check_gemini_api
 from config import GROUND_TRUTH_PATH, OUTPUT_DIR, GEMINI_API_KEY, MODEL_CONFIGS
 from utils import find_dataset_path
 

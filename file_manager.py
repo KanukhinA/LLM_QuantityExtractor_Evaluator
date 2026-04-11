@@ -308,7 +308,6 @@ class FileManager:
             словарь с путями к сохраненным файлам
         """
         import re
-        import json
         import pandas as pd
         
         saved_files = {}
@@ -633,7 +632,6 @@ class FileManager:
         self.ensure_directory(csv_dir)
         
         csv_name_without_ext = self.get_name_without_ext(results_csv_path)
-        model_name_for_file = FileManager.sanitize_filename(model_name)
         
         # 1. Сохраняем CSV с результатами
         results_for_csv = []

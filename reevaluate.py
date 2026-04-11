@@ -54,10 +54,8 @@ def main():
         gemini_analysis = result.get("gemini_analysis")
         if gemini_analysis and gemini_analysis.get("status") == "success":
             from datetime import datetime
-            import json
             timestamp = result.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M"))
             from model_evaluator import sanitize_filename
-            model_name_safe = sanitize_filename(result.get("model_name", "unknown"))
             
             analysis_text = gemini_analysis.get("analysis", "")
             quality_metrics = result.get("quality_metrics", {})
