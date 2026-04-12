@@ -94,17 +94,39 @@ def _get_flash_attn_kwargs() -> dict:
         return {}
 
 
-def _is_mistral_common_backend(tokenizer: Any) -> bool:
-    """Проверяет, что токенизатор — MistralCommonBackend (для него tokenize=False небезопасен)."""
+def _get_mistral_common_backend_cls():
+    """
+    В части версий transformers класс не реэкспортируется из пакета, но лежит в подмодуле.
+    """
+    try:
+        from transformers import MistralCommonBackend
+        return MistralCommonBackend
+    except ImportError:
+        pass
+    try:
+        from transformers.tokenization_mistral_common import MistralCommonBackend
+        return MistralCommonBackend
+    except ImportError:
+        return None
+
+
+def _is_mistral_common_backend(tokenizer: Any, model: Any = None) -> bool:
+    """Mistral 3: MistralCommonBackend или связка с Mistral3ForConditionalGeneration (AutoTokenizer)."""
     cls_name = str(getattr(getattr(tokenizer, "__class__", None), "__name__", "") or "")
-    return cls_name == "MistralCommonBackend"
+    if cls_name == "MistralCommonBackend":
+        return True
+    if model is not None:
+        mod_cls = str(getattr(getattr(model, "__class__", None), "__name__", "") or "")
+        if mod_cls == "Mistral3ForConditionalGeneration":
+            return True
+    return False
 
 
-def _apply_chat_template_if_available(tokenizer: Any, prompt: str) -> str:
+def _apply_chat_template_if_available(tokenizer: Any, prompt: str, model: Any = None) -> str:
     """Если у токенизатора есть chat_template (Llama и др.), форматирует промпт как user message.
     Для MistralCommonBackend не вызываем apply_chat_template(tokenize=False) — он небезопасен;
     для генерации Mistral используйте generate_mistral()."""
-    if _is_mistral_common_backend(tokenizer):
+    if _is_mistral_common_backend(tokenizer, model):
         return prompt
     try:
         messages = [{"role": "user", "content": prompt}]
@@ -172,7 +194,7 @@ def _generate_with_outlines(
     Генерация JSON через outlines. Схема берётся из outlines_schema или из Pydantic model_json_schema().
     При pydantic_outlines=True схема генерируется из response_schema.model_json_schema().
     """
-    prompt = _apply_chat_template_if_available(tokenizer, prompt)
+    prompt = _apply_chat_template_if_available(tokenizer, prompt, model)
     try:
         from outlines import Generator  # type: ignore
     except ImportError as e:
@@ -239,7 +261,7 @@ def _generate_with_guidance(
     Генерация JSON через outlines с бэкендом llguidance (constrained decoding).
     По умолчанию используется схема с кириллическими ключами (outlines_schema_rus).
     """
-    prompt = _apply_chat_template_if_available(tokenizer, prompt)
+    prompt = _apply_chat_template_if_available(tokenizer, prompt, model)
     try:
         from outlines import Generator  # type: ignore
         from outlines.types import JsonSchema  # type: ignore
@@ -419,15 +441,25 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         from transformers import Mistral3ForConditionalGeneration
         return _load_causal_4bit(model_name, Mistral3ForConditionalGeneration, hyperparameters)
-    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
-    
+    from transformers import Mistral3ForConditionalGeneration, AutoTokenizer
+
+    mcb_cls = _get_mistral_common_backend_cls()
     print(f"   Загрузка токенизатора {model_name}...")
     if vram_warning:
         print(f"   ⚠️ {vram_warning}")
-    
+    if mcb_cls is None:
+        warnings.warn(
+            "MistralCommonBackend недоступен в установленном transformers — используем AutoTokenizer. "
+            "Рекомендуется: pip install -U 'transformers>=4.51.1'",
+            stacklevel=2,
+        )
+
     try:
         start_time = time.time()
-        tokenizer = _from_pretrained_local_first(MistralCommonBackend.from_pretrained, model_name, token=HF_TOKEN)
+        if mcb_cls is not None:
+            tokenizer = _from_pretrained_local_first(mcb_cls.from_pretrained, model_name, token=HF_TOKEN)
+        else:
+            tokenizer = _from_pretrained_local_first(AutoTokenizer.from_pretrained, model_name, token=HF_TOKEN)
         elapsed = time.time() - start_time
         print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
     except Exception as e:
@@ -847,7 +879,7 @@ def generate_standard(
 
     max_length: из models.yaml — верхняя граница общей длины (input + output).
     """
-    if _is_mistral_common_backend(tokenizer):
+    if _is_mistral_common_backend(tokenizer, model):
         return generate_mistral(
             model, tokenizer, prompt,
             max_new_tokens=max_new_tokens,
@@ -863,7 +895,7 @@ def generate_standard(
         return _generate_with_outlines(model, tokenizer, prompt, response_schema, max_new_tokens,
                                        prompt_template_name=prompt_template_name, pydantic_outlines=pydantic_outlines)
 
-    formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt)
+    formatted_prompt = _apply_chat_template_if_available(tokenizer, prompt, model)
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
     input_ids = inputs["input_ids"]
     attention_mask = inputs.get("attention_mask")
