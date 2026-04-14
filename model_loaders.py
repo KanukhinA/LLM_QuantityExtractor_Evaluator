@@ -96,31 +96,43 @@ def _get_flash_attn_kwargs() -> dict:
 
 def _get_mistral_common_backend_cls():
     """
-    В части версий transformers класс не реэкспортируется из пакета, но лежит в подмодуле.
-    В 4.5x часто: только transformers.tokenization_mistral_common.MistralCommonBackend.
+    Возвращает backend-класс токенизатора для Mistral 3.
+    В разных версиях transformers он может называться:
+    - MistralCommonBackend (старые релизы)
+    - TokenizersBackend (новые релизы, например 4.57.x)
     """
-    try:
-        from transformers import MistralCommonBackend
-        return MistralCommonBackend
-    except ImportError:
-        pass
-    try:
-        from transformers.tokenization_mistral_common import MistralCommonBackend
-        return MistralCommonBackend
-    except ImportError:
-        pass
+    for cls_name in ("MistralCommonBackend", "TokenizersBackend"):
+        try:
+            mod = __import__("transformers", fromlist=[cls_name])
+            cls = getattr(mod, cls_name, None)
+            if cls is not None:
+                return cls
+        except Exception:
+            pass
+    for cls_name in ("MistralCommonBackend", "TokenizersBackend"):
+        try:
+            mod = __import__("transformers.tokenization_mistral_common", fromlist=[cls_name])
+            cls = getattr(mod, cls_name, None)
+            if cls is not None:
+                return cls
+        except Exception:
+            pass
     try:
         import importlib
         mod = importlib.import_module("transformers.tokenization_mistral_common")
-        return getattr(mod, "MistralCommonBackend", None)
+        for cls_name in ("MistralCommonBackend", "TokenizersBackend"):
+            cls = getattr(mod, cls_name, None)
+            if cls is not None:
+                return cls
+        return None
     except Exception:
         return None
 
 
 def _is_mistral_common_backend(tokenizer: Any, model: Any = None) -> bool:
-    """Mistral 3: MistralCommonBackend или связка с Mistral3ForConditionalGeneration (AutoTokenizer)."""
+    """Mistral 3: backend-класс Mistral (MistralCommonBackend/TokenizersBackend) или связка с Mistral3ForConditionalGeneration."""
     cls_name = str(getattr(getattr(tokenizer, "__class__", None), "__name__", "") or "")
-    if cls_name == "MistralCommonBackend":
+    if cls_name in ("MistralCommonBackend", "TokenizersBackend"):
         return True
     if model is not None:
         mod_cls = str(getattr(getattr(model, "__class__", None), "__name__", "") or "")
@@ -151,7 +163,7 @@ def _patch_mistral_common_backend_tokenizer(tokenizer: Any, model_name: str) -> 
     если он доступен локально, и добавляя get_chat_template().
     """
     cls_name = str(getattr(getattr(tokenizer, "__class__", None), "__name__", "") or "")
-    if cls_name != "MistralCommonBackend":
+    if cls_name not in ("MistralCommonBackend", "TokenizersBackend"):
         return
     chat_template = None
     try:
@@ -448,27 +460,23 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         from transformers import Mistral3ForConditionalGeneration
         return _load_causal_4bit(model_name, Mistral3ForConditionalGeneration, hyperparameters)
-    from transformers import Mistral3ForConditionalGeneration, AutoTokenizer
+    from transformers import Mistral3ForConditionalGeneration
 
     mcb_cls = _get_mistral_common_backend_cls()
     print(f"   Загрузка токенизатора {model_name}...")
     if vram_warning:
         print(f"   ⚠️ {vram_warning}")
     if mcb_cls is None:
-        warnings.warn(
-            "MistralCommonBackend не найден в transformers (нет в __init__ и в tokenization_mistral_common). "
-            "Используем AutoTokenizer. Рекомендуется: pip install -U 'transformers>=4.51.1'",
-            stacklevel=2,
+        raise ImportError(
+            "Backend токенизатора Mistral не найден в transformers "
+            "(ни MistralCommonBackend, ни TokenizersBackend). "
+            "Для Ministral-3 требуется backend из mistral-common. "
+            "Обновите окружение: pip install -U mistral-common 'transformers>=4.51.1'"
         )
 
     try:
         start_time = time.time()
-        if mcb_cls is not None:
-            tokenizer = _from_pretrained_local_first(mcb_cls.from_pretrained, model_name, token=HF_TOKEN)
-        else:
-            tokenizer = _from_pretrained_local_first(
-                AutoTokenizer.from_pretrained, model_name, token=HF_TOKEN, trust_remote_code=True
-            )
+        tokenizer = _from_pretrained_local_first(mcb_cls.from_pretrained, model_name, token=HF_TOKEN)
         elapsed = time.time() - start_time
         print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
     except Exception as e:
