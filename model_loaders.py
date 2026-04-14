@@ -97,6 +97,7 @@ def _get_flash_attn_kwargs() -> dict:
 def _get_mistral_common_backend_cls():
     """
     В части версий transformers класс не реэкспортируется из пакета, но лежит в подмодуле.
+    В 4.5x часто: только transformers.tokenization_mistral_common.MistralCommonBackend.
     """
     try:
         from transformers import MistralCommonBackend
@@ -107,6 +108,12 @@ def _get_mistral_common_backend_cls():
         from transformers.tokenization_mistral_common import MistralCommonBackend
         return MistralCommonBackend
     except ImportError:
+        pass
+    try:
+        import importlib
+        mod = importlib.import_module("transformers.tokenization_mistral_common")
+        return getattr(mod, "MistralCommonBackend", None)
+    except Exception:
         return None
 
 
@@ -441,15 +448,27 @@ def load_mistral_3(model_name: str, vram_warning: Optional[str] = None, hyperpar
     if hp.get("torch_dtype") in ("nf4", "4bit"):
         from transformers import Mistral3ForConditionalGeneration
         return _load_causal_4bit(model_name, Mistral3ForConditionalGeneration, hyperparameters)
-    from transformers import Mistral3ForConditionalGeneration, MistralCommonBackend
+    from transformers import Mistral3ForConditionalGeneration, AutoTokenizer
 
+    mcb_cls = _get_mistral_common_backend_cls()
     print(f"   Загрузка токенизатора {model_name}...")
     if vram_warning:
         print(f"   ⚠️ {vram_warning}")
+    if mcb_cls is None:
+        warnings.warn(
+            "MistralCommonBackend не найден в transformers (нет в __init__ и в tokenization_mistral_common). "
+            "Используем AutoTokenizer. Рекомендуется: pip install -U 'transformers>=4.51.1'",
+            stacklevel=2,
+        )
 
     try:
         start_time = time.time()
-        tokenizer = _from_pretrained_local_first(MistralCommonBackend.from_pretrained, model_name, token=HF_TOKEN)
+        if mcb_cls is not None:
+            tokenizer = _from_pretrained_local_first(mcb_cls.from_pretrained, model_name, token=HF_TOKEN)
+        else:
+            tokenizer = _from_pretrained_local_first(
+                AutoTokenizer.from_pretrained, model_name, token=HF_TOKEN, trust_remote_code=True
+            )
         elapsed = time.time() - start_time
         print(f"   ✓ Токенизатор загружен за {elapsed:.1f}с")
     except Exception as e:
