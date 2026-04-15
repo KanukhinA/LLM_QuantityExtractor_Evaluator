@@ -1,6 +1,11 @@
 """
 Автозапуск и остановка ``vllm serve`` для ``main.py --vllm`` и ``run_all_models.py --vllm``.
 
+По умолчанию, если модель уже есть в кэше Hugging Face Hub, подставляется путь к снапшоту и
+``--served-model-name <repo id>``, в окружение процесса добавляются ``HF_HUB_OFFLINE=1`` и
+``TRANSFORMERS_OFFLINE=1``, чтобы не вызывать Hub (list_repo_files / DNS). Отключить:
+``VLLM_SERVE_LOCAL_SNAPSHOT=0``.
+
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
 from __future__ import annotations
@@ -20,6 +25,68 @@ from config import OUTPUT_DIR
 
 _VLLM_PID_FILENAME = ".vllm_autoserver.pid"
 _VLLM_LOG_FILENAME = "vllm_autoserver.log"
+
+
+def _local_hf_snapshot_dir(repo_id: str) -> Optional[str]:
+    """
+    Путь к снапшоту в HF hub cache (как utils.local_cache_path_for_model), без сетевых вызовов.
+    """
+    if not repo_id or not isinstance(repo_id, str) or "/" not in repo_id or os.path.isabs(repo_id):
+        return None
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        for filename in ("config.json", "tokenizer.json"):
+            path = try_to_load_from_cache(repo_id=repo_id, filename=filename)
+            if path and os.path.isfile(path):
+                d = os.path.dirname(path)
+                if os.path.isfile(os.path.join(d, "config.json")):
+                    return d
+    except Exception:
+        pass
+    return None
+
+
+def _extras_has_served_model_name(extras: list[str]) -> bool:
+    for a in extras:
+        if a == "--served-model-name" or str(a).startswith("--served-model-name="):
+            return True
+    return False
+
+
+def _resolve_vllm_serve_args(model_id: str) -> tuple[str, list[str], dict[str, str]]:
+    """
+    Если в кэше HF уже есть снапшот — передаём в vLLM локальный путь и выставляем offline для Hub,
+    чтобы не было list_repo_files / DNS к huggingface.co. Имя в API — исходный repo id
+    (через --served-model-name), чтобы совпадало с models.yaml и check_vllm_models.
+
+    Отключить: VLLM_SERVE_LOCAL_SNAPSHOT=0
+    """
+    logical = (model_id or "").strip()
+    if not logical:
+        return logical, [], {}
+
+    if os.path.isdir(logical) and os.path.isfile(os.path.join(logical, "config.json")):
+        return logical, [], {}
+
+    use_local = os.environ.get("VLLM_SERVE_LOCAL_SNAPSHOT", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    if not use_local:
+        return logical, [], {}
+
+    snap = _local_hf_snapshot_dir(logical)
+    if not snap:
+        return logical, [], {}
+
+    env = {
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+    }
+    return snap, ["--served-model-name", logical], env
 
 
 def vllm_base_url() -> str:
@@ -231,22 +298,36 @@ def start_vllm_autoserver(
         raise RuntimeError("Команда 'vllm' не найдена в PATH. Установите vllm и повторите запуск.")
     host, port = _vllm_host_port()
     wait_until_vllm_port_free(host, port)
-    extras = list(extra_args) if extra_args else []
-    cmd = ["vllm", "serve", model_id, "--host", host, "--port", str(port)]
+    extras = normalize_vllm_serve_extra_args(extra_args)
+    serve_arg, local_extra, env_updates = _resolve_vllm_serve_args(model_id)
+    if _extras_has_served_model_name(extras):
+        local_extra = []
+    cmd = ["vllm", "serve", serve_arg] + local_extra + ["--host", host, "--port", str(port)]
     cmd.extend(extras)
     log_path = _vllm_log_path()
+    if env_updates:
+        print(f"   📁 vLLM: локальный снапшот HF → {serve_arg}")
+        print(
+            f"      Имя в API: «{model_id.strip()}» (--served-model-name); "
+            "HF_HUB_OFFLINE=1 — без запросов к Hugging Face Hub"
+        )
     print(f"   🚀 Запуск vLLM автосервера: {' '.join(cmd)}")
     print(f"   📝 Лог stdout/stderr vLLM: {log_path}")
     print(f"   ⏱ Ожидание готовности до {ready_timeout_sec} с (переменная окружения VLLM_READY_TIMEOUT_SEC)")
     log_fp = open(log_path, "a", encoding="utf-8")
     try:
         log_fp.write(f"\n{'='*60}\n{time.strftime('%Y-%m-%d %H:%M:%S')} vllm serve {model_id}\n")
+        if serve_arg != (model_id or "").strip():
+            log_fp.write(f"(локальный путь: {serve_arg})\n")
         log_fp.write(" ".join(cmd) + "\n")
         log_fp.flush()
+        child_env = os.environ.copy()
+        child_env.update(env_updates)
         popen_kw: dict = {
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,
             "close_fds": False,
+            "env": child_env,
         }
         if os.name != "nt":
             popen_kw["start_new_session"] = True
