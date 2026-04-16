@@ -136,16 +136,27 @@ def _patch_mistral3_text_config_architectures(snapshot_dir: str) -> bool:
     tc = data.get("text_config")
     if not isinstance(tc, dict):
         return False
-    if tc.get("architectures") is not None:
-        return False
     mt = (tc.get("model_type") or "").lower()
+    changed = False
+    # Для части снапшотов Ministral в text_config приходит model_type=ministral3,
+    # а transformers ожидает базовый model_type внутренней LM (обычно "mistral").
+    if mt == "ministral3":
+        tc["model_type"] = "mistral"
+        mt = "mistral"
+        changed = True
+    if tc.get("architectures") is not None and not changed:
+        return False
     if mt == "mistral":
         inner = ["MistralForCausalLM"]
     elif mt == "llama":
         inner = ["LlamaForCausalLM"]
     else:
         inner = ["MistralForCausalLM"]
-    tc["architectures"] = inner
+    if tc.get("architectures") is None:
+        tc["architectures"] = inner
+        changed = True
+    if not changed:
+        return False
     try:
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -153,8 +164,9 @@ def _patch_mistral3_text_config_architectures(snapshot_dir: str) -> bool:
     except Exception:
         return False
     print(
-        f"   ⚙️ Патч {cfg_path}: text_config.architectures = {inner!r} "
-        "(HF часто отдаёт null; иначе vLLM падает при загрузке LM). "
+        f"   ⚙️ Патч {cfg_path}: text_config.model_type={tc.get('model_type')!r}, "
+        f"text_config.architectures={tc.get('architectures')!r} "
+        "(нормализация под transformers/vLLM). "
         "VLLM_SKIP_PATCH_MISTRAL3_CONFIG=1 — не менять файл."
     )
     return True
