@@ -6,6 +6,9 @@
 ``TRANSFORMERS_OFFLINE=1``, чтобы не вызывать Hub (list_repo_files / DNS). Отключить:
 ``VLLM_SERVE_LOCAL_SNAPSHOT=0``.
 
+Для ``mistralai/Ministral-*`` (Mistral3) при отсутствии ``VLLM_USE_V1`` в окружении выставляется
+``VLLM_USE_V1=0``, чтобы обойти падения v1 на PixtralProcessor при текстовом инференсе.
+
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
 from __future__ import annotations
@@ -64,6 +67,12 @@ def _extras_has_tokenizer_mode(extras: list[str]) -> bool:
 def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
     s = (model_id or "").strip().lower()
     return s.startswith("mistralai/ministral-") or s.startswith("mistralai/mistral-")
+
+
+def _is_mistralai_ministral_line(model_id: str) -> bool:
+    """Ministral-3 (Mistral3ForConditionalGeneration): в vLLM 0.19 v1 может падать на PixtralProcessor."""
+    s = (model_id or "").strip().lower()
+    return s.startswith("mistralai/ministral-")
 
 
 def _resolve_vllm_serve_args(model_id: str) -> tuple[str, list[str], dict[str, str]]:
@@ -338,6 +347,12 @@ def start_vllm_autoserver(
         log_fp.flush()
         child_env = os.environ.copy()
         child_env.update(env_updates)
+        if _is_mistralai_ministral_line(model_id) and "VLLM_USE_V1" not in os.environ:
+            child_env["VLLM_USE_V1"] = "0"
+            print(
+                "   ⚙️ Ministral-3: VLLM_USE_V1=0 (обход падения v1 на PixtralProcessor; "
+                "задайте VLLM_USE_V1 в окружении, если нужен явно v1)"
+            )
         popen_kw: dict = {
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,
