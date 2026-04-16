@@ -12,6 +12,10 @@
 ``VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON``. Отключить автодобавление:
 ``VLLM_MINISTRAL_TEXT_ONLY_MM=0`` (или устар. ``VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0``).
 
+Если в кэше у Mistral3 в ``text_config`` стоит ``"architectures": null`` (типично для Ministral в HF),
+перед запуском в снапшоте правится ``config.json`` (как во внутренней логике vLLM для Pixtral).
+Отключить: ``VLLM_SKIP_PATCH_MISTRAL3_CONFIG=1``.
+
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
 from __future__ import annotations
@@ -108,6 +112,52 @@ def _ministral_limit_mm_per_prompt_json() -> str:
         return raw
     except Exception:
         return default
+
+
+def _patch_mistral3_text_config_architectures(snapshot_dir: str) -> bool:
+    """
+    vLLM 0.19: init_vllm_registered_model(hf_config=text_config) вызывает get_model_architecture;
+    при ``architectures: null`` в JSON получается tuple(None) → TypeError.
+    В mistral3.py для Hub-конфига это иногда чинится, для локального снапшота — дописываем в файл.
+    """
+    if os.environ.get("VLLM_SKIP_PATCH_MISTRAL3_CONFIG", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    cfg_path = os.path.join(snapshot_dir, "config.json")
+    if not os.path.isfile(cfg_path):
+        return False
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    top_arch = data.get("architectures")
+    if not isinstance(top_arch, list) or not any("Mistral3" in str(a) for a in top_arch):
+        return False
+    tc = data.get("text_config")
+    if not isinstance(tc, dict):
+        return False
+    if tc.get("architectures") is not None:
+        return False
+    mt = (tc.get("model_type") or "").lower()
+    if mt == "mistral":
+        inner = ["MistralForCausalLM"]
+    elif mt == "llama":
+        inner = ["LlamaForCausalLM"]
+    else:
+        inner = ["MistralForCausalLM"]
+    tc["architectures"] = inner
+    try:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except Exception:
+        return False
+    print(
+        f"   ⚙️ Патч {cfg_path}: text_config.architectures = {inner!r} "
+        "(HF часто отдаёт null; иначе vLLM падает при загрузке LM). "
+        "VLLM_SKIP_PATCH_MISTRAL3_CONFIG=1 — не менять файл."
+    )
+    return True
 
 
 def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
@@ -367,6 +417,8 @@ def start_vllm_autoserver(
     wait_until_vllm_port_free(host, port)
     extras = normalize_vllm_serve_extra_args(extra_args)
     serve_arg, local_extra, env_updates = _resolve_vllm_serve_args(model_id)
+    if os.path.isdir(serve_arg) and os.path.isfile(os.path.join(serve_arg, "config.json")):
+        _patch_mistral3_text_config_architectures(serve_arg)
     if _extras_has_served_model_name(extras):
         local_extra = []
     if _needs_mistral_tokenizer_mode(model_id) and not _extras_has_tokenizer_mode(extras):

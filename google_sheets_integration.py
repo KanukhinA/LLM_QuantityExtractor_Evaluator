@@ -45,7 +45,7 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "10.MIFCRG", "Минимальный few-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
     ("MA_SIMPLE_4AGENTS", "11.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
     ("MA_CRITIC_3AGENTS", "12.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
-    ("MINIMAL_INSTR_FIVESHOT_APIE", "13.MIFA", "Минимальный few-shot промпт с 5 примерами определёнными при помощи техники APIE"),
+    ("MA_VALIDATION_FIX_2AGENTS_DETAILED_INSTR_ZEROSHOT_BASELINE", "13.MVF2DIZB", "Режим validation_fix_2agents с базовым промптом DETAILED_INSTR_ZEROSHOT_BASELINE: генерация JSON (как в одноагентном) → программная валидация Pydantic; при ошибках — второй LLM-вызов исправителя по тексту исхода, черновику ответа и сообщениям валидации (без критика и исследователя)"),
 ]
 
 
