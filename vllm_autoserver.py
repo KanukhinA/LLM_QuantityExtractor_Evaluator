@@ -54,6 +54,18 @@ def _extras_has_served_model_name(extras: list[str]) -> bool:
     return False
 
 
+def _extras_has_tokenizer_mode(extras: list[str]) -> bool:
+    for a in extras:
+        if a == "--tokenizer-mode" or str(a).startswith("--tokenizer-mode="):
+            return True
+    return False
+
+
+def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
+    s = (model_id or "").strip().lower()
+    return s.startswith("mistralai/ministral-") or s.startswith("mistralai/mistral-")
+
+
 def _resolve_vllm_serve_args(model_id: str) -> tuple[str, list[str], dict[str, str]]:
     """
     Если в кэше HF уже есть снапшот — передаём в vLLM локальный путь и выставляем offline для Hub,
@@ -302,6 +314,9 @@ def start_vllm_autoserver(
     serve_arg, local_extra, env_updates = _resolve_vllm_serve_args(model_id)
     if _extras_has_served_model_name(extras):
         local_extra = []
+    if _needs_mistral_tokenizer_mode(model_id) and not _extras_has_tokenizer_mode(extras):
+        # Для Ministral/Mistral в vLLM 0.19.x это снижает риск падения на tokenizer-конвертации.
+        extras = ["--tokenizer-mode", "mistral"] + extras
     cmd = ["vllm", "serve", serve_arg] + local_extra + ["--host", host, "--port", str(port)]
     cmd.extend(extras)
     log_path = _vllm_log_path()
