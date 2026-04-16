@@ -6,8 +6,9 @@
 ``TRANSFORMERS_OFFLINE=1``, чтобы не вызывать Hub (list_repo_files / DNS). Отключить:
 ``VLLM_SERVE_LOCAL_SNAPSHOT=0``.
 
-Для ``mistralai/Ministral-*`` (Mistral3) при отсутствии ``VLLM_USE_V1`` в окружении выставляется
-``VLLM_USE_V1=0``, чтобы обойти падения v1 на PixtralProcessor при текстовом инференсе.
+Для ``mistralai/Ministral-*`` (Mistral3 в vLLM ≥0.19) по умолчанию добавляется
+``--language-model-only`` (отключает vision-ветку PixtralProcessor при текстовом чате).
+Отключить автодобавление: ``VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0``.
 
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
@@ -64,13 +65,24 @@ def _extras_has_tokenizer_mode(extras: list[str]) -> bool:
     return False
 
 
+def _extras_has_language_model_only(extras: list[str]) -> bool:
+    """Пользователь явно задал режим LM-only или отказ от него."""
+    for a in extras:
+        al = str(a).lower()
+        if al == "--language-model-only" or al.startswith("--language-model-only="):
+            return True
+        if al == "--no-language-model-only" or al.startswith("--no-language-model-only="):
+            return True
+    return False
+
+
 def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
     s = (model_id or "").strip().lower()
     return s.startswith("mistralai/ministral-") or s.startswith("mistralai/mistral-")
 
 
 def _is_mistralai_ministral_line(model_id: str) -> bool:
-    """Ministral-3 (Mistral3ForConditionalGeneration): в vLLM 0.19 v1 может падать на PixtralProcessor."""
+    """Линейка Ministral-3 (Mistral3): в vLLM 0.19+ без --language-model-only падает PixtralProcessor на старте."""
     s = (model_id or "").strip().lower()
     return s.startswith("mistralai/ministral-")
 
@@ -326,6 +338,23 @@ def start_vllm_autoserver(
     if _needs_mistral_tokenizer_mode(model_id) and not _extras_has_tokenizer_mode(extras):
         # Для Ministral/Mistral в vLLM 0.19.x это снижает риск падения на tokenizer-конвертации.
         extras = ["--tokenizer-mode", "mistral"] + extras
+    use_lmo = os.environ.get("VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    if (
+        _is_mistralai_ministral_line(model_id)
+        and use_lmo
+        and not _extras_has_language_model_only(extras)
+    ):
+        # vLLM 0.19+: только V1; без этого инициализация MM падает в PixtralProcessor на текстовых прогонах.
+        extras = ["--language-model-only"] + extras
+        print(
+            "   ⚙️ Ministral-3: --language-model-only (только текст; для vision уберите флаг или "
+            "задайте VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0 и настройте vllm_serve_extra_args)"
+        )
     cmd = ["vllm", "serve", serve_arg] + local_extra + ["--host", host, "--port", str(port)]
     cmd.extend(extras)
     log_path = _vllm_log_path()
@@ -347,12 +376,6 @@ def start_vllm_autoserver(
         log_fp.flush()
         child_env = os.environ.copy()
         child_env.update(env_updates)
-        if _is_mistralai_ministral_line(model_id) and "VLLM_USE_V1" not in os.environ:
-            child_env["VLLM_USE_V1"] = "0"
-            print(
-                "   ⚙️ Ministral-3: VLLM_USE_V1=0 (обход падения v1 на PixtralProcessor; "
-                "задайте VLLM_USE_V1 в окружении, если нужен явно v1)"
-            )
         popen_kw: dict = {
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,
