@@ -6,9 +6,11 @@
 ``TRANSFORMERS_OFFLINE=1``, чтобы не вызывать Hub (list_repo_files / DNS). Отключить:
 ``VLLM_SERVE_LOCAL_SNAPSHOT=0``.
 
-Для ``mistralai/Ministral-*`` (Mistral3 в vLLM ≥0.19) по умолчанию добавляется
-``--language-model-only`` (отключает vision-ветку PixtralProcessor при текстовом чате).
-Отключить автодобавление: ``VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0``.
+Для ``mistralai/Ministral-*`` по умолчанию добавляется ``--limit-mm-per-prompt`` с нулевыми лимитами
+(эквивалент «только текст» по документации vLLM, без бага ``--language-model-only`` в 0.19.x, когда
+``text_config.architectures`` остаётся None и падает загрузка весов). JSON можно задать в
+``VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON``. Отключить автодобавление:
+``VLLM_MINISTRAL_TEXT_ONLY_MM=0`` (или устар. ``VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0``).
 
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
@@ -65,15 +67,47 @@ def _extras_has_tokenizer_mode(extras: list[str]) -> bool:
     return False
 
 
-def _extras_has_language_model_only(extras: list[str]) -> bool:
-    """Пользователь явно задал режим LM-only или отказ от него."""
+def _extras_has_mm_or_lm_only_flags(extras: list[str]) -> bool:
+    """Пользователь задал лимиты MM, LM-only или явный отказ — не подмешиваем свои флаги."""
     for a in extras:
         al = str(a).lower()
+        if al == "--limit-mm-per-prompt" or al.startswith("--limit-mm-per-prompt="):
+            return True
         if al == "--language-model-only" or al.startswith("--language-model-only="):
             return True
         if al == "--no-language-model-only" or al.startswith("--no-language-model-only="):
             return True
     return False
+
+
+def _ministral_auto_mm_limits_enabled() -> bool:
+    if "VLLM_MINISTRAL_TEXT_ONLY_MM" in os.environ:
+        return os.environ["VLLM_MINISTRAL_TEXT_ONLY_MM"].strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+    if "VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY" in os.environ:
+        return os.environ["VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY"].strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+    return True
+
+
+def _ministral_limit_mm_per_prompt_json() -> str:
+    default = '{"image":0,"video":0}'
+    raw = (os.environ.get("VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON") or "").strip()
+    if not raw:
+        return default
+    try:
+        json.loads(raw)
+        return raw
+    except Exception:
+        return default
 
 
 def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
@@ -82,7 +116,7 @@ def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
 
 
 def _is_mistralai_ministral_line(model_id: str) -> bool:
-    """Линейка Ministral-3 (Mistral3): в vLLM 0.19+ без --language-model-only падает PixtralProcessor на старте."""
+    """Линейка Ministral-3 (Mistral3): нужны нулевые MM-лимиты или отдельные костыли vLLM для текстового режима."""
     s = (model_id or "").strip().lower()
     return s.startswith("mistralai/ministral-")
 
@@ -338,22 +372,18 @@ def start_vllm_autoserver(
     if _needs_mistral_tokenizer_mode(model_id) and not _extras_has_tokenizer_mode(extras):
         # Для Ministral/Mistral в vLLM 0.19.x это снижает риск падения на tokenizer-конвертации.
         extras = ["--tokenizer-mode", "mistral"] + extras
-    use_lmo = os.environ.get("VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY", "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-    )
     if (
         _is_mistralai_ministral_line(model_id)
-        and use_lmo
-        and not _extras_has_language_model_only(extras)
+        and _ministral_auto_mm_limits_enabled()
+        and not _extras_has_mm_or_lm_only_flags(extras)
     ):
-        # vLLM 0.19+: только V1; без этого инициализация MM падает в PixtralProcessor на текстовых прогонах.
-        extras = ["--language-model-only"] + extras
+        # Эквивалент «только текст» по доке vLLM; --language-model-only в 0.19.x ломает Mistral3 (text_config.architectures=None).
+        mm_json = _ministral_limit_mm_per_prompt_json()
+        extras = ["--limit-mm-per-prompt", mm_json] + extras
         print(
-            "   ⚙️ Ministral-3: --language-model-only (только текст; для vision уберите флаг или "
-            "задайте VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0 и настройте vllm_serve_extra_args)"
+            "   ⚙️ Ministral-3: --limit-mm-per-prompt "
+            f"{mm_json!r} (текст без vision; при сбое задайте VLLM_MINISTRAL_TEXT_ONLY_MM=0 "
+            "или свой JSON в VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON)"
         )
     cmd = ["vllm", "serve", serve_arg] + local_extra + ["--host", host, "--port", str(port)]
     cmd.extend(extras)
