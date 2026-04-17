@@ -148,6 +148,8 @@ python calc_max_new_tokens.py --all-models
 
 **Если в логе `Engine core initialization failed` / процесс vLLM выходит с кодом 1:** сообщение об ошибке часто дублируется в конце файла; ищите **первую** причину выше (OOM/CUDA, несовместимость). Имеет смысл: уменьшить нагрузку на GPU, например в `models.yaml` в `hyperparameters` задать `vllm_serve_extra_args: ["--gpu-memory-utilization", "0.85"]` (или другие флаги, поддерживаемые вашей версией `vllm serve`); при проблемах с движком v1 попробовать перед запуском `export VLLM_USE_V1=0` (Linux/macOS). Дополнительные аргументы добавляются к автоматической команде после `--port`.
 
+**Квантизация vLLM в автозапуске:** задавайте явно `hyperparameters.vllm_quantization` (например `awq`, `gptq`, `bitsandbytes`) или через `vllm_serve_extra_args` c флагом `--quantization`. Если `--quantization` не задан, а `vllm_quant_tag` начинается с `Q4`, автозапуск подставляет `--quantization awq` (чтобы исключить неявный авто-режим vLLM, например fp8).
+
 **Если в логе явно: `Free memory on device cuda:N (...) is less than desired GPU memory utilization`:** на видеокарте занята почти вся память **другими процессами** (часто другой инференс, обучение, не закрытый PyTorch). Сначала освободите VRAM: `nvidia-smi`, завершите лишние PID. Понизить `--gpu-memory-utilization` имеет смысл **после** того, как под саму модель останется достаточно места; если свободно всего 2–3 GiB при карте на 40 GiB, крупная модель (например 14B bf16) всё равно не влезет — без освобождения памяти не обойтись.
 
 1) Установите vLLM (лучше в отдельном окружении):

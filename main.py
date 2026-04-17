@@ -543,9 +543,9 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
     import copy
     from vllm_autoserver import (
         clear_vllm_pid_file,
+        build_vllm_serve_extra_args,
         default_vllm_ready_timeout_sec,
         kill_stale_autovllm_if_any,
-        normalize_vllm_serve_extra_args,
         start_vllm_autoserver,
         terminate_vllm_process,
         vllm_autoserver_fingerprint,
@@ -590,9 +590,7 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
                 if (vllm_proc is None) or (vllm_proc.poll() is not None) or (active_vllm_fp != fp):
                     terminate_vllm_process(vllm_proc, reason="переключение на другую vLLM модель")
                     clear_vllm_pid_file()
-                    extras = normalize_vllm_serve_extra_args(
-                        (config.get("hyperparameters") or {}).get("vllm_serve_extra_args")
-                    )
+                    extras = build_vllm_serve_extra_args(config.get("hyperparameters"))
                     vllm_proc = start_vllm_autoserver(
                         served_model_id,
                         ready_timeout_sec=vllm_ready_timeout,

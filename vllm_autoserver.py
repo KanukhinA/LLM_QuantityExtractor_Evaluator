@@ -367,10 +367,49 @@ def normalize_vllm_serve_extra_args(raw: Any) -> list[str]:
     return [s] if s else []
 
 
+def _extras_has_quantization_flag(extras: list[str]) -> bool:
+    for a in extras:
+        al = str(a).lower()
+        if al == "--quantization" or al.startswith("--quantization="):
+            return True
+    return False
+
+
+def _infer_quantization_from_tag(vllm_quant_tag: str) -> Optional[str]:
+    """
+    Эвристика по метке в конфиге:
+    - Q4* -> awq (исторически в проекте Q4 означает запуск через awq-квант модели в vLLM)
+    Остальные значения требуют явного vllm_quantization/vllm_serve_extra_args.
+    """
+    q = (vllm_quant_tag or "").strip().upper()
+    if q.startswith("Q4"):
+        return "awq"
+    return None
+
+
+def build_vllm_serve_extra_args(hyperparameters: Optional[Mapping[str, Any]]) -> list[str]:
+    """
+    Нормализует и дополняет аргументы для `vllm serve`:
+    1) `vllm_serve_extra_args` (как есть),
+    2) если не задан `--quantization`, добавляет из `vllm_quantization`,
+    3) иначе fallback по `vllm_quant_tag` (Q4* -> awq).
+    """
+    hp = dict(hyperparameters or {})
+    extras = normalize_vllm_serve_extra_args(hp.get("vllm_serve_extra_args"))
+    if _extras_has_quantization_flag(extras):
+        return extras
+    explicit_quant = (hp.get("vllm_quantization") or "").strip()
+    if explicit_quant:
+        return ["--quantization", explicit_quant] + extras
+    inferred = _infer_quantization_from_tag(str(hp.get("vllm_quant_tag") or ""))
+    if inferred:
+        return ["--quantization", inferred] + extras
+    return extras
+
+
 def vllm_autoserver_fingerprint(model_id: str, hyperparameters: Optional[Mapping[str, Any]]) -> tuple[str, tuple[str, ...]]:
     """Одинаковый отпечаток — тот же процесс serve, можно не перезапускать."""
-    hp = dict(hyperparameters or {})
-    extra = normalize_vllm_serve_extra_args(hp.get("vllm_serve_extra_args"))
+    extra = build_vllm_serve_extra_args(hyperparameters)
     return ((model_id or "").strip(), tuple(extra))
 
 

@@ -4,8 +4,12 @@
 # - ollama_name: (опционально) тег модели в Ollama для авто-ключа <key>-ollama
 # - vllm_name: id модели для vLLM (авто-ключ <key>-vllm); для локальных моделей задан явно (совпадает с name, если не указано иное)
 # - hyperparameters:
-#   - vllm_quant_tag: метка для папки результатов при прогоне *-vllm (квантизация реально задаётся при vllm serve, напр. --quantization awq)
-#   - vllm_serve_extra_args: опционально список аргументов к автозапуску vllm serve после --port (напр. ["--gpu-memory-utilization","0.85"] или одна строка)
+#   - vllm_quant_tag: метка для папки результатов при прогоне *-vllm (Q4* также используется как fallback:
+#                     если не задана явная квантизация, автозапуск подставит --quantization awq)
+#   - vllm_quantization: явная квантизация для vllm serve (например awq/gptq/bitsandbytes); имеет приоритет над vllm_quant_tag
+#   - vllm_serve_extra_args: опционально список аргументов к автозапуску vllm serve после --port
+#                            (например ["--gpu-memory-utilization","0.85"] или одна строка);
+#                            если здесь уже есть --quantization, он имеет максимальный приоритет
 #
 # vLLM: автозапуск подставляет локальный снапшот из HF-кэша (если есть) + --served-model-name <name>;
 # для mistralai/Ministral-*: --tokenizer-mode mistral, --config-format hf, --load-format mistral, --limit-mm-per-prompt {"image":0,"video":0}, патч config.json;
