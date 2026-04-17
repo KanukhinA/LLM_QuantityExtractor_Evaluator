@@ -5,7 +5,7 @@
 Для добавления нового режима просто добавьте запись в словарь WORKFLOW_CONFIGS.
 """
 
-from typing import Dict, Callable, Any
+from typing import Dict, Callable, Any, Optional
 from prompt_config import (
     NUMERIC_FRAGMENTS_EXTRACTION_PROMPT,
     MASS_FRACTION_EXTRACTION_PROMPT,
@@ -225,6 +225,20 @@ WORKFLOW_CONFIGS: Dict[str, Dict[str, Any]] = {
         "graph_creator": "create_validation_fix_2agents_graph"
     }
 }
+
+
+def get_multi_agent_mode_description(mode: Optional[str]) -> str:
+    """
+    Человекочитаемое описание мультиагентного режима по идентификатору (для отчётов и UI).
+    Идентификатор (например `validation_fix_2agents`) — внутренний ключ; в WORKFLOW_CONFIGS
+    задано поле ``description``.
+    """
+    if not mode:
+        return ""
+    cfg = WORKFLOW_CONFIGS.get(mode)
+    if cfg and cfg.get("description"):
+        return str(cfg["description"])
+    return ""
 
 
 def get_workflow_config(mode: str) -> Dict[str, Any]:

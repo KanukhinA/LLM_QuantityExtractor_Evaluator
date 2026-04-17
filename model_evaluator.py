@@ -23,6 +23,7 @@ from config import PROMPT_TEMPLATE_NAME, MAX_INFERENCE_TIME_MINUTES, OUTPUT_DIR
 import prompt_config
 from metrics_printer import MetricsPrinter
 from file_manager import FileManager
+from workflow_config import get_multi_agent_mode_description
 import re
 
 
@@ -777,9 +778,11 @@ class ModelEvaluator:
         
         # Определяем название режима для вывода
         if multi_agent_mode:
+            _ma_desc = get_multi_agent_mode_description(multi_agent_mode)
             mode_name = f"Мультиагентный ({multi_agent_mode})"
         else:
             mode_name = "Одноагентный"
+            _ma_desc = ""
         
         print(f"\n{'='*80}")
         print(f"🚀 НАЧАЛО ОЦЕНКИ МОДЕЛИ")
@@ -787,6 +790,8 @@ class ModelEvaluator:
         print(f"📌 Модель: {model_name}")
         print(f"📌 Датасет: {len(self.texts)} текстов")
         print(f"📌 Режим: {mode_name}")
+        if _ma_desc:
+            print(f"   (суть режима: {_ma_desc})")
         print(f"📌 Гиперпараметры:")
         for key, value in hyperparameters.items():
             print(f"   • {key}: {value}")
@@ -1933,6 +1938,9 @@ class ModelEvaluator:
             "raw_output_metrics": raw_output_metrics,  # Метрики для raw output
             # Остальные поля
             "multi_agent_mode": multi_agent_mode if use_multi_agent else None,
+            "multi_agent_mode_description": (
+                get_multi_agent_mode_description(multi_agent_mode) if use_multi_agent else None
+            ),
             "gpu_info": gpu_info_before if not (is_api_model or is_ollama or is_vllm) else (
                 {"api": True} if is_api_model else ({"ollama": True} if is_ollama else {"vllm": True})
             ),

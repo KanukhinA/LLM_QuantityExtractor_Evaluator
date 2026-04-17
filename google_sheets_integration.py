@@ -10,6 +10,9 @@
   — обход папки results/, для каждой пары (модель, метод) берётся последний запуск,
   — загрузка в Google Таблицу (нужны google_sheets_credentials.json и
   GOOGLE_SHEETS_SPREADSHEET_ID в config.py или в переменной окружения).
+  Дополнительно: листы «Квантизация Ollama» и «Квантизация vLLM» — только префиксы
+  OLLAMA_* / VLLM_* (имена папок из file_manager) и локальный эталон 1.DIZB;
+  отклонения в скобках — относительно локального DETAILED_INSTR_ZEROSHOT_BASELINE.
 
 Где взять JSON для Google API:
   console.cloud.google.com -> Ваш проект -> API и сервисы -> Учётные данные ->
@@ -21,7 +24,7 @@ import os
 import json
 import glob
 import time
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from collections import defaultdict
 import re
 
@@ -29,6 +32,12 @@ import re
 SHEETS_UPLOAD_DELAY_SEC = 1.5
 
 BASELINE_KEYWORD = "BASELINE"
+
+# Базовый промпт 1.DIZB — эталон для сравнения квантизованных прогонов (локальная папка без OLLAMA_/VLLM_)
+DIZB_METHOD_FULL = "DETAILED_INSTR_ZEROSHOT_BASELINE"
+
+OLLAMA_METHOD_PREFIX = "OLLAMA_"
+VLLM_METHOD_PREFIX = "VLLM_"
 
 # Таблица алиасов методов: (полное_название, alias, описание).
 # Если метода нет в таблице, alias = акроним из первых букв частей (разделитель _), описание = полное название.
@@ -44,8 +53,8 @@ METHOD_ALIAS_TABLE: List[Tuple[str, str, str]] = [
     ("DETAILED_INSTR_ONESHOT_CD_RUS_GUIDANCE", "9.DIOCRG", "Детальный one-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
     ("MINIMAL_INSTR_FIVESHOT_CD_RUS_GUIDANCE", "10.MIFCRG", "Минимальный few-shot промпт с constrained decoding (guidance) со схемой на русском языке"),
     ("MA_SIMPLE_4AGENTS", "11.MS4", "Рабочий процесс \"Разделение обязанностей\" (4 агента)"),
-    ("MA_CRITIC_3AGENTS", "12.MC3", "Рабочий процесс critic_3agents (3 агента: генератор, критик, исправитель)"),
-    ("MA_VALIDATION_FIX_2AGENTS_DETAILED_INSTR_ZEROSHOT_BASELINE", "13.MVF2DIZB", "Режим validation_fix_2agents с базовым промптом DETAILED_INSTR_ZEROSHOT_BASELINE: генерация JSON (как в одноагентном) → программная валидация Pydantic; при ошибках — второй LLM-вызов исправителя по тексту исхода, черновику ответа и сообщениям валидации (без критика и исследователя)"),
+    ("MA_CRITIC_3AGENTS", "12.MC3", "Рабочий процесс 3 агента: генератор, критик, исправитель"),
+    ("MA_VALIDATION_FIX_2AGENTS_DETAILED_INSTR_ZEROSHOT_BASELINE", "13.MVF2DIZB", "Два агента, генерация JSON → валидация Pydantic → при ошибках второй вызов LLM-исправителя по тексту, черновику и сообщениям валидации"),
 ]
 
 
@@ -101,6 +110,90 @@ def _build_notes_rows(methods: List[str], description_line: Optional[str] = None
 def _table_header(methods: List[str]) -> List[str]:
     """Заголовок таблицы: Модель + алиасы методов."""
     return ["Модель"] + [get_method_alias(m) for m in methods]
+
+
+def _split_quant_folder_name(folder: str, backend_prefix: str) -> Tuple[str, str]:
+    """
+    Имя папки OLLAMA_<quant>_<prompt> или VLLM_<quant>_<prompt> -> (тег квантизации, полное имя промпта).
+    Если суффикс не совпадает с известным промптом, возвращает (rest, rest).
+    """
+    if not folder.startswith(backend_prefix):
+        return ("", folder)
+    rest = folder[len(backend_prefix) :]
+    full_names = sorted((f for f, _, _ in METHOD_ALIAS_TABLE), key=len, reverse=True)
+    for fn in full_names:
+        if rest.endswith(fn):
+            q = rest[: -len(fn)].rstrip("_")
+            return (q if q else "?", fn)
+    return (rest, rest)
+
+
+def _quant_column_title(method: str, backend_prefix: str) -> str:
+    """Короткий заголовок столбца для листа квантизации."""
+    if method == DIZB_METHOD_FULL:
+        return f"{get_method_alias(DIZB_METHOD_FULL)} (локальный)"
+    q, prompt_fn = _split_quant_folder_name(method, backend_prefix)
+    alias = get_method_alias(prompt_fn)
+    if backend_prefix == OLLAMA_METHOD_PREFIX:
+        return f"Ollama {q} | {alias}"
+    if backend_prefix == VLLM_METHOD_PREFIX:
+        return f"vLLM {q} | {alias}"
+    return method
+
+
+def _quant_method_sort_key(method: str, backend_prefix: str) -> Tuple:
+    """Порядок столбцов: сначала локальный 1.DIZB, затем квантизованные по номеру промпта и тегу."""
+    if method == DIZB_METHOD_FULL:
+        return (0, 0, "", "")
+    q, prompt_fn = _split_quant_folder_name(method, backend_prefix)
+    an = _alias_order_number(get_method_alias(prompt_fn))
+    return (1, an, q, method)
+
+
+def _table_header_quant(methods: List[str], backend_prefix: str) -> List[str]:
+    return ["Модель"] + [_quant_column_title(m, backend_prefix) for m in methods]
+
+
+def _filter_nested_by_quant_backend(
+    nested: Dict[str, Dict[str, Any]],
+    backend_prefix: str,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Оставляет модели, у которых есть хотя бы один метод с префиксом backend_prefix,
+    и столбцы: локальный DIZB (если есть) + все методы с этим префиксом.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for model, methods in nested.items():
+        if not isinstance(methods, dict):
+            continue
+        quant_only = [m for m in methods if m.startswith(backend_prefix)]
+        if not quant_only:
+            continue
+        kept = {m: methods[m] for m in quant_only}
+        if DIZB_METHOD_FULL in methods:
+            kept[DIZB_METHOD_FULL] = methods[DIZB_METHOD_FULL]
+        out[model] = kept
+    return out
+
+
+def _methods_ordered_for_quant_sheet(all_methods: set, backend_prefix: str) -> List[str]:
+    methods = {m for m in all_methods if m == DIZB_METHOD_FULL or m.startswith(backend_prefix)}
+    return sorted(methods, key=lambda m: _quant_method_sort_key(m, backend_prefix))
+
+
+def _has_any_quant_backend_rows(
+    all_metrics: Dict[str, Dict[str, Any]],
+    validation_data: Dict[str, Dict[str, Any]],
+    inference_time_data: Dict[str, Dict[str, Any]],
+    gpu_memory_data: Dict[str, Dict[str, Any]],
+) -> bool:
+    """Есть ли в данных хотя бы один метод с префиксом OLLAMA_ или VLLM_."""
+    for d in (all_metrics, validation_data, inference_time_data, gpu_memory_data):
+        for row in d.values():
+            if any(m.startswith(OLLAMA_METHOD_PREFIX) or m.startswith(VLLM_METHOD_PREFIX) for m in row):
+                return True
+    return False
+
 
 AVG_ROW_LABEL = "Средняя разница"
 
@@ -393,11 +486,21 @@ class GoogleSheetsIntegration:
         return dict(all_data), dict(validation_data), dict(inference_time_data), dict(gpu_memory_data)
     
     def create_table_data(
-        self, group: str = "массовая доля", all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None
+        self,
+        group: str = "массовая доля",
+        all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None,
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        header_row_for_methods: Optional[List[str]] = None,
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создает данные для таблицы F1: значение и разница с baseline в скобках.
         Лучшее значение по столбцу выделяется жирным; + зелёный, - красный.
+
+        Args:
+            baseline_method: полное имя папки метода-эталона для отклонений (по умолчанию — первый с BASELINE в имени).
+            methods_override: фиксированный порядок и набор столбцов-методов (имена папок).
+            header_row_for_methods: подписи столбцов без первой колонки «Модель» (длина = len(methods)).
 
         Returns:
             (данные таблицы, список моделей, список методов, format_info: {"green", "red", "bold"} -> список A1 ячеек)
@@ -409,11 +512,24 @@ class GoogleSheetsIntegration:
         methods_set = set()
         for model_data in all_metrics.values():
             methods_set.update(k for k in model_data.keys() if k != "_timestamp")
-        methods = _sort_methods_by_alias_number(methods_set)
-        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
+        if methods_override is not None:
+            methods = list(methods_override)
+        else:
+            methods = _sort_methods_by_alias_number(methods_set)
+        if baseline_method is not None:
+            baseline_resolved = baseline_method
+        else:
+            baseline_resolved = next(
+                (m for m in methods if BASELINE_KEYWORD.upper() in m.upper()),
+                methods[0] if methods else None,
+            )
         title_str = f"Качество извлечения: F1-мера по группе «{group}»"
         title_row = [title_str] + [""] * len(methods)
-        table_data = [title_row, _table_header(methods)]
+        if header_row_for_methods is not None and len(header_row_for_methods) == len(methods):
+            header_row = ["Модель"] + header_row_for_methods
+        else:
+            header_row = _table_header(methods)
+        table_data = [title_row, header_row]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
@@ -421,13 +537,13 @@ class GoogleSheetsIntegration:
         for row_idx, model in enumerate(models):
             row = [model]
             baseline_val = None
-            if baseline_method:
-                baseline_val = all_metrics.get(model, {}).get(baseline_method, {}).get(group)
+            if baseline_resolved:
+                baseline_val = all_metrics.get(model, {}).get(baseline_resolved, {}).get(group)
             for col_idx, method in enumerate(methods):
                 method_data = all_metrics.get(model, {}).get(method, {})
                 f1_score = method_data.get(group) if group in method_data else None
                 if f1_score is not None and (not isinstance(f1_score, (int, float)) or abs(float(f1_score)) >= 1e-6):
-                    if method == baseline_method or baseline_val is None:
+                    if method == baseline_resolved or baseline_val is None:
                         row.append(f"{f1_score:.4f}")
                     else:
                         diff = f1_score - baseline_val
@@ -458,11 +574,11 @@ class GoogleSheetsIntegration:
         for col_idx, method in enumerate(methods):
             diffs = []
             for model in models:
-                baseline_val = all_metrics.get(model, {}).get(baseline_method, {}).get(group) if baseline_method else None
+                baseline_val = all_metrics.get(model, {}).get(baseline_resolved, {}).get(group) if baseline_resolved else None
                 f1_score = all_metrics.get(model, {}).get(method, {}).get(group)
                 if (baseline_val is not None and (isinstance(baseline_val, (int, float)) and abs(float(baseline_val)) >= 1e-6)
                     and f1_score is not None and (isinstance(f1_score, (int, float)) and abs(float(f1_score)) >= 1e-6)
-                    and method != baseline_method):
+                    and method != baseline_resolved):
                     diffs.append(float(f1_score) - float(baseline_val))
             if diffs:
                 avg_diff = sum(diffs) / len(diffs)
@@ -588,7 +704,11 @@ class GoogleSheetsIntegration:
             print(line)
 
     def create_validation_table_data(
-        self, validation_data: Dict[str, Dict[str, str]]
+        self,
+        validation_data: Dict[str, Dict[str, str]],
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        header_row_for_methods: Optional[List[str]] = None,
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы validation: ячейки в формате 0.99(0.88) = parsed(raw).
@@ -608,11 +728,25 @@ class GoogleSheetsIntegration:
                 return None
 
         models = sorted(set(validation_data.keys()))
-        methods = _sort_methods_by_alias_number(set().union(*[set(validation_data[m].keys()) for m in validation_data]))
-        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
+        methods_set = set().union(*[set(validation_data[m].keys()) for m in validation_data])
+        if methods_override is not None:
+            methods = list(methods_override)
+        else:
+            methods = _sort_methods_by_alias_number(methods_set)
+        if baseline_method is not None:
+            baseline_resolved = baseline_method
+        else:
+            baseline_resolved = next(
+                (m for m in methods if BASELINE_KEYWORD.upper() in m.upper()),
+                methods[0] if methods else None,
+            )
         title_str = "Доля ответов, прошедших парсинг и валидацию (формат: после парсинга / исходный вывод)"
         title_row = [title_str] + [""] * len(methods)
-        table_data = [title_row, _table_header(methods)]
+        if header_row_for_methods is not None and len(header_row_for_methods) == len(methods):
+            header_row = ["Модель"] + header_row_for_methods
+        else:
+            header_row = _table_header(methods)
+        table_data = [title_row, header_row]
         green_cells: List[str] = []
         _first_row = 3
         for row_idx, model in enumerate(models):
@@ -631,12 +765,12 @@ class GoogleSheetsIntegration:
             table_data.append(row)
         avg_row = [AVG_ROW_LABEL]
         for method in methods:
-            if method == baseline_method:
+            if method == baseline_resolved:
                 avg_row.append("-")
                 continue
             diffs = []
             for model in models:
-                baseline_val = validation_data.get(model, {}).get(baseline_method, "") if baseline_method else ""
+                baseline_val = validation_data.get(model, {}).get(baseline_resolved, "") if baseline_resolved else ""
                 method_val = validation_data.get(model, {}).get(method, "")
                 baseline_rate = _parse_validation_rate(baseline_val)
                 method_rate = _parse_validation_rate(method_val)
@@ -653,7 +787,11 @@ class GoogleSheetsIntegration:
         return table_data, models, methods, format_info
 
     def create_inference_time_table_data(
-        self, inference_time_data: Dict[str, Dict[str, float]]
+        self,
+        inference_time_data: Dict[str, Dict[str, float]],
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        header_row_for_methods: Optional[List[str]] = None,
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы среднего времени инференса: значение и разница с baseline.
@@ -664,22 +802,36 @@ class GoogleSheetsIntegration:
             (данные таблицы, модели, методы, format_info)
         """
         models = sorted(set(inference_time_data.keys()))
-        methods = _sort_methods_by_alias_number(set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data]))
-        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
+        methods_set = set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data])
+        if methods_override is not None:
+            methods = list(methods_override)
+        else:
+            methods = _sort_methods_by_alias_number(methods_set)
+        if baseline_method is not None:
+            baseline_resolved = baseline_method
+        else:
+            baseline_resolved = next(
+                (m for m in methods if BASELINE_KEYWORD.upper() in m.upper()),
+                methods[0] if methods else None,
+            )
         title_str = "Среднее время одного ответа модели (с)"
         title_row = [title_str] + [""] * len(methods)
-        table_data = [title_row, _table_header(methods)]
+        if header_row_for_methods is not None and len(header_row_for_methods) == len(methods):
+            header_row = ["Модель"] + header_row_for_methods
+        else:
+            header_row = _table_header(methods)
+        table_data = [title_row, header_row]
         green_cells: List[str] = []
         red_cells: List[str] = []
         bold_cells: List[str] = []
         _first_row = 3
         for row_idx, model in enumerate(models):
             row = [model]
-            baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
+            baseline_val = inference_time_data.get(model, {}).get(baseline_resolved) if baseline_resolved else None
             for col_idx, method in enumerate(methods):
                 sec = inference_time_data.get(model, {}).get(method)
                 if sec is not None and (not isinstance(sec, (int, float)) or abs(float(sec)) >= 1e-6):
-                    if method == baseline_method or baseline_val is None:
+                    if method == baseline_resolved or baseline_val is None:
                         row.append(f"{sec:.3f}")
                     else:
                         diff = sec - baseline_val
@@ -708,11 +860,11 @@ class GoogleSheetsIntegration:
         for col_idx, method in enumerate(methods):
             diffs = []
             for model in models:
-                baseline_val = inference_time_data.get(model, {}).get(baseline_method) if baseline_method else None
+                baseline_val = inference_time_data.get(model, {}).get(baseline_resolved) if baseline_resolved else None
                 sec = inference_time_data.get(model, {}).get(method)
                 if (baseline_val is not None and (isinstance(baseline_val, (int, float)) and abs(float(baseline_val)) >= 1e-6)
                     and sec is not None and (isinstance(sec, (int, float)) and abs(float(sec)) >= 1e-6)
-                    and method != baseline_method):
+                    and method != baseline_resolved):
                     diffs.append(float(sec) - float(baseline_val))
             if diffs:
                 avg_diff = sum(diffs) / len(diffs)
@@ -726,7 +878,11 @@ class GoogleSheetsIntegration:
         return table_data, models, methods, format_info
 
     def create_gpu_memory_table_data(
-        self, gpu_memory_data: Dict[str, Dict[str, float]]
+        self,
+        gpu_memory_data: Dict[str, Dict[str, float]],
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        header_row_for_methods: Optional[List[str]] = None,
     ) -> Tuple[List[List], List[str], List[str], Dict[str, List[str]]]:
         """
         Создаёт данные для таблицы GPU memory during inference (GB).
@@ -736,11 +892,25 @@ class GoogleSheetsIntegration:
             (данные таблицы, модели, методы, format_info: green/red)
         """
         models = sorted(set(gpu_memory_data.keys()))
-        methods = _sort_methods_by_alias_number(set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data]))
-        baseline_method = next((m for m in methods if BASELINE_KEYWORD.upper() in m.upper()), methods[0] if methods else None)
+        methods_set = set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data])
+        if methods_override is not None:
+            methods = list(methods_override)
+        else:
+            methods = _sort_methods_by_alias_number(methods_set)
+        if baseline_method is not None:
+            baseline_resolved = baseline_method
+        else:
+            baseline_resolved = next(
+                (m for m in methods if BASELINE_KEYWORD.upper() in m.upper()),
+                methods[0] if methods else None,
+            )
         title_str = "Потребление видеопамяти в процессе инференса (ГБ)"
         title_row = [title_str] + [""] * len(methods)
-        table_data = [title_row, _table_header(methods)]
+        if header_row_for_methods is not None and len(header_row_for_methods) == len(methods):
+            header_row = ["Модель"] + header_row_for_methods
+        else:
+            header_row = _table_header(methods)
+        table_data = [title_row, header_row]
         green_cells: List[str] = []
         red_cells: List[str] = []
         _first_row = 3
@@ -758,8 +928,8 @@ class GoogleSheetsIntegration:
         for row_idx, model in enumerate(models):
             row = [model]
             baseline_val = None
-            if baseline_method:
-                bv = gpu_memory_data.get(model, {}).get(baseline_method)
+            if baseline_resolved:
+                bv = gpu_memory_data.get(model, {}).get(baseline_resolved)
                 if not _is_empty_val(bv):
                     baseline_val = float(bv)
             for col_idx, method in enumerate(methods):
@@ -768,7 +938,7 @@ class GoogleSheetsIntegration:
                     row.append("-")
                 else:
                     gb = float(gb_raw)
-                    if method == baseline_method or baseline_val is None:
+                    if method == baseline_resolved or baseline_val is None:
                         row.append(f"{gb:.2f}")
                     else:
                         diff = gb - baseline_val
@@ -787,9 +957,9 @@ class GoogleSheetsIntegration:
         for col_idx, method in enumerate(methods):
             diffs = []
             for model in models:
-                bv = gpu_memory_data.get(model, {}).get(baseline_method) if baseline_method else None
+                bv = gpu_memory_data.get(model, {}).get(baseline_resolved) if baseline_resolved else None
                 gb_raw = gpu_memory_data.get(model, {}).get(method)
-                if not _is_empty_val(bv) and not _is_empty_val(gb_raw) and method != baseline_method:
+                if not _is_empty_val(bv) and not _is_empty_val(gb_raw) and method != baseline_resolved:
                     diffs.append(float(gb_raw) - float(bv))
             if diffs:
                 avg_diff = sum(diffs) / len(diffs)
@@ -816,6 +986,11 @@ class GoogleSheetsIntegration:
         group: str = "массовая доля",
         clear_existing: bool = True,
         all_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None,
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        method_headers: Optional[List[str]] = None,
+        table_description: Optional[str] = None,
+        success_prefix: Optional[str] = None,
     ):
         """
         Загружает данные F1 в Google Таблицу.
@@ -826,16 +1001,29 @@ class GoogleSheetsIntegration:
             group: группа метрик ("массовая доля" или "прочее")
             clear_existing: очищать ли существующие данные
             all_metrics: если передан, повторный сбор метрик не выполняется
+            baseline_method: эталон для отклонений (имя папки метода)
+            methods_override: фиксированный набор столбцов
+            method_headers: подписи столбцов (без «Модель»)
         """
         self._ensure_client()
-        table_data, models, methods, format_info = self.create_table_data(group=group, all_metrics=all_metrics)
+        table_data, models, methods, format_info = self.create_table_data(
+            group=group,
+            all_metrics=all_metrics,
+            baseline_method=baseline_method,
+            methods_override=methods_override,
+            header_row_for_methods=method_headers,
+        )
+        desc = table_description or (
+            f"Показатель F1 ({group}). В скобках приведено отклонение от базового метода; "
+            "положительное значение соответствует улучшению результата."
+        )
         try:
             self._upload_table_to_sheet(
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
-                success_prefix=f"✅ Данные успешно загружены в лист '{worksheet_name}'",
+                success_prefix=success_prefix or f"✅ Данные успешно загружены в лист '{worksheet_name}'",
                 extra_lines=[f"   • Группа метрик: {group}"],
-                table_description=f"Показатель F1 ({group}). В скобках приведено отклонение от базового метода; положительное значение соответствует улучшению результата.",
+                table_description=desc,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке данных в Google Таблицу: {e}")
@@ -846,19 +1034,33 @@ class GoogleSheetsIntegration:
         worksheet_name: str,
         validation_data: Dict[str, Dict[str, str]],
         clear_existing: bool = True,
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        method_headers: Optional[List[str]] = None,
+        table_description: Optional[str] = None,
+        success_prefix: Optional[str] = None,
     ):
         """
         Загружает таблицу validation (формат 0.99(0.88) = parsed(raw)) на лист.
         Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
         self._ensure_client()
-        table_data, models, methods, format_info = self.create_validation_table_data(validation_data)
+        table_data, models, methods, format_info = self.create_validation_table_data(
+            validation_data,
+            baseline_method=baseline_method,
+            methods_override=methods_override,
+            header_row_for_methods=method_headers,
+        )
+        desc = table_description or (
+            "Доля валидных ответов в формате «после парсинга (исходный вывод)». "
+            "Отклонение в скобках не указывается; ячейки с долей 1,0 выделены зелёным."
+        )
         try:
             self._upload_table_to_sheet(
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
-                success_prefix=f"✅ Validation загружены в лист '{worksheet_name}'",
-                table_description="Доля валидных ответов в формате «после парсинга (исходный вывод)». Отклонение в скобках не указывается; ячейки с долей 1,0 выделены зелёным.",
+                success_prefix=success_prefix or f"✅ Validation загружены в лист '{worksheet_name}'",
+                table_description=desc,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
@@ -869,16 +1071,30 @@ class GoogleSheetsIntegration:
         worksheet_name: str,
         inference_time_data: Dict[str, Dict[str, float]],
         clear_existing: bool = True,
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        method_headers: Optional[List[str]] = None,
+        table_description: Optional[str] = None,
+        success_prefix: Optional[str] = None,
     ):
         """Загружает таблицу среднего времени инференса (сек/ответ) на лист с разницей к baseline и форматированием."""
         self._ensure_client()
-        table_data, models, methods, format_info = self.create_inference_time_table_data(inference_time_data)
+        table_data, models, methods, format_info = self.create_inference_time_table_data(
+            inference_time_data,
+            baseline_method=baseline_method,
+            methods_override=methods_override,
+            header_row_for_methods=method_headers,
+        )
+        desc = table_description or (
+            "Среднее время ответа (с). В скобках приведено отклонение от базового метода; "
+            "отрицательное значение соответствует ускорению."
+        )
         try:
             self._upload_table_to_sheet(
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
-                success_prefix=f"✅ Среднее время инференса загружено в лист '{worksheet_name}'",
-                table_description="Среднее время ответа (с). В скобках приведено отклонение от базового метода; отрицательное значение соответствует ускорению.",
+                success_prefix=success_prefix or f"✅ Среднее время инференса загружено в лист '{worksheet_name}'",
+                table_description=desc,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
@@ -889,19 +1105,135 @@ class GoogleSheetsIntegration:
         worksheet_name: str,
         gpu_memory_data: Dict[str, Dict[str, float]],
         clear_existing: bool = True,
+        baseline_method: Optional[str] = None,
+        methods_override: Optional[List[str]] = None,
+        method_headers: Optional[List[str]] = None,
+        table_description: Optional[str] = None,
+        success_prefix: Optional[str] = None,
     ):
         """Загружает таблицу GPU memory during inference (GB) на отдельный лист с окрашиванием относительно baseline."""
         self._ensure_client()
-        table_data, models, methods, format_info = self.create_gpu_memory_table_data(gpu_memory_data)
+        table_data, models, methods, format_info = self.create_gpu_memory_table_data(
+            gpu_memory_data,
+            baseline_method=baseline_method,
+            methods_override=methods_override,
+            header_row_for_methods=method_headers,
+        )
+        desc = table_description or (
+            "Объём видеопамяти в ходе инференса (ГБ). В скобках приведено отклонение от базового метода; "
+            "отрицательное значение соответствует снижению потребления памяти."
+        )
         try:
             self._upload_table_to_sheet(
                 spreadsheet_id, worksheet_name, table_data, models, methods, format_info,
                 clear_existing,
-                success_prefix=f"✅ GPU memory during inference загружено в лист '{worksheet_name}'",
-                table_description="Объём видеопамяти в ходе инференса (ГБ). В скобках приведено отклонение от базового метода; отрицательное значение соответствует снижению потребления памяти.",
+                success_prefix=success_prefix or f"✅ GPU memory during inference загружено в лист '{worksheet_name}'",
+                table_description=desc,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
+
+    def upload_quantization_backend_bundle(
+        self,
+        spreadsheet_id: str,
+        backend_prefix: str,
+        name_short: str,
+        all_metrics: Dict[str, Dict[str, Dict[str, float]]],
+        validation_data: Dict[str, Dict[str, str]],
+        inference_time_data: Dict[str, Dict[str, float]],
+        gpu_memory_data: Dict[str, Dict[str, float]],
+        worksheet_names: Dict[str, str],
+        clear_existing: bool = True,
+    ) -> None:
+        """
+        Листы только для Ollama или только для vLLM: локальный эталон 1.DIZB + префиксные папки.
+        Отклонения в скобках — относительно DETAILED_INSTR_ZEROSHOT_BASELINE (локальный прогон).
+        """
+        f_m = _filter_nested_by_quant_backend(all_metrics, backend_prefix)
+        f_v = _filter_nested_by_quant_backend(validation_data, backend_prefix)
+        f_t = _filter_nested_by_quant_backend(inference_time_data, backend_prefix)
+        f_g = _filter_nested_by_quant_backend(gpu_memory_data, backend_prefix)
+        if not f_m and not f_v and not f_t and not f_g:
+            return
+        union_keys: set = set()
+        for d in (f_m, f_v, f_t, f_g):
+            for row in d.values():
+                union_keys.update(row.keys())
+        methods = _methods_ordered_for_quant_sheet(union_keys, backend_prefix)
+        if not methods:
+            return
+        headers = [_quant_column_title(m, backend_prefix) for m in methods]
+        quant_note = (
+            f"Квантизация ({name_short}): столбцы с префиксом {backend_prefix} — прогон через {name_short}; "
+            f"«{get_method_alias(DIZB_METHOD_FULL)} (локальный)» — тот же промпт {get_method_alias(DIZB_METHOD_FULL)} "
+            "без Ollama/vLLM. В скобках — отклонение от локального 1.DIZB для той же модели."
+        )
+        self._ensure_client()
+        if f_m:
+            self.upload_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=worksheet_names["f1_mass"],
+                group="массовая доля",
+                clear_existing=clear_existing,
+                all_metrics=f_m,
+                baseline_method=DIZB_METHOD_FULL,
+                methods_override=methods,
+                method_headers=headers,
+                table_description=quant_note,
+                success_prefix=f"✅ [{name_short}] F1 (массовая доля) → '{worksheet_names['f1_mass']}'",
+            )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            self.upload_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=worksheet_names["f1_other"],
+                group="прочее",
+                clear_existing=clear_existing,
+                all_metrics=f_m,
+                baseline_method=DIZB_METHOD_FULL,
+                methods_override=methods,
+                method_headers=headers,
+                table_description=quant_note,
+                success_prefix=f"✅ [{name_short}] F1 (прочее) → '{worksheet_names['f1_other']}'",
+            )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+        if f_v:
+            self.upload_validation_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=worksheet_names["validation"],
+                validation_data=f_v,
+                clear_existing=clear_existing,
+                baseline_method=DIZB_METHOD_FULL,
+                methods_override=methods,
+                method_headers=headers,
+                table_description=quant_note,
+                success_prefix=f"✅ [{name_short}] Валидация → '{worksheet_names['validation']}'",
+            )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+        if f_t:
+            self.upload_inference_time_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=worksheet_names["inference"],
+                inference_time_data=f_t,
+                clear_existing=clear_existing,
+                baseline_method=DIZB_METHOD_FULL,
+                methods_override=methods,
+                method_headers=headers,
+                table_description=quant_note,
+                success_prefix=f"✅ [{name_short}] Время ответа → '{worksheet_names['inference']}'",
+            )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+        if f_g:
+            self.upload_gpu_memory_to_sheet(
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=worksheet_names["gpu"],
+                gpu_memory_data=f_g,
+                clear_existing=clear_existing,
+                baseline_method=DIZB_METHOD_FULL,
+                methods_override=methods,
+                method_headers=headers,
+                table_description=quant_note,
+                success_prefix=f"✅ [{name_short}] VRAM → '{worksheet_names['gpu']}'",
+            )
 
     def export_to_csv(self, output_path: str, group: str = "массовая доля"):
         """
@@ -934,6 +1266,22 @@ DEFAULT_WORKSHEET_OTHER = "F1 Scores (прочее)"
 DEFAULT_WORKSHEET_VALIDATION = "Валидация (после парсинга)"
 DEFAULT_WORKSHEET_INFERENCE = "Avg inference time (s)"
 DEFAULT_WORKSHEET_GPU_MEMORY = "GPU memory during inference (GB)"
+
+# Листы сравнения квантизации Ollama / vLLM с локальным 1.DIZB (отдельно по бэкенду)
+DEFAULT_QUANT_OLLAMA_WORKSHEETS = {
+    "f1_mass": "Квантизация Ollama — F1 (массовая доля)",
+    "f1_other": "Квантизация Ollama — F1 (прочее)",
+    "validation": "Квантизация Ollama — валидация",
+    "inference": "Квантизация Ollama — время ответа",
+    "gpu": "Квантизация Ollama — VRAM",
+}
+DEFAULT_QUANT_VLLM_WORKSHEETS = {
+    "f1_mass": "Квантизация vLLM — F1 (массовая доля)",
+    "f1_other": "Квантизация vLLM — F1 (прочее)",
+    "validation": "Квантизация vLLM — валидация",
+    "inference": "Квантизация vLLM — время ответа",
+    "gpu": "Квантизация vLLM — VRAM",
+}
 
 
 def _default_results_dir() -> str:
@@ -1095,6 +1443,29 @@ def main():
                 worksheet_name=DEFAULT_WORKSHEET_GPU_MEMORY,
                 gpu_memory_data=gpu_memory_data,
             )
+            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+        integration.upload_quantization_backend_bundle(
+            spreadsheet_id=spreadsheet_id,
+            backend_prefix=OLLAMA_METHOD_PREFIX,
+            name_short="Ollama",
+            all_metrics=all_metrics,
+            validation_data=validation_data,
+            inference_time_data=inference_time_data,
+            gpu_memory_data=gpu_memory_data,
+            worksheet_names=DEFAULT_QUANT_OLLAMA_WORKSHEETS,
+            clear_existing=True,
+        )
+        integration.upload_quantization_backend_bundle(
+            spreadsheet_id=spreadsheet_id,
+            backend_prefix=VLLM_METHOD_PREFIX,
+            name_short="vLLM",
+            all_metrics=all_metrics,
+            validation_data=validation_data,
+            inference_time_data=inference_time_data,
+            gpu_memory_data=gpu_memory_data,
+            worksheet_names=DEFAULT_QUANT_VLLM_WORKSHEETS,
+            clear_existing=True,
+        )
         extra = []
         if validation_data:
             extra.append("«Валидация (после парсинга)»")
@@ -1102,6 +1473,10 @@ def main():
             extra.append("«Avg inference time (s)»")
         if gpu_memory_data:
             extra.append("«GPU memory during inference (GB)»")
+        if _has_any_quant_backend_rows(
+            all_metrics, validation_data, inference_time_data, gpu_memory_data
+        ):
+            extra.append("листы квантизации Ollama и vLLM (сравнение с локальным 1.DIZB)")
         print("✅ Загружены листы: «массовая доля», «прочее»" + (", " + ", ".join(extra) + "." if extra else "."))
 
 

@@ -8,7 +8,8 @@
 #   - vllm_serve_extra_args: опционально список аргументов к автозапуску vllm serve после --port (напр. ["--gpu-memory-utilization","0.85"] или одна строка)
 #
 # vLLM: автозапуск подставляет локальный снапшот из HF-кэша (если есть) + --served-model-name <name>;
-# для mistralai/Ministral-*: --tokenizer-mode mistral, --limit-mm-per-prompt {"image":0,"video":0}, патч text_config.architectures в снапшоте при null;
+# для mistralai/Ministral-*: --tokenizer-mode mistral, --config-format hf, --load-format mistral, --limit-mm-per-prompt {"image":0,"video":0}, патч config.json;
+# VLLM_MINISTRAL_CONFIG_FORMAT / VLLM_MINISTRAL_LOAD_FORMAT / VLLM_MINISTRAL_TOOL_CALLING — см. vllm_autoserver.py;
 # VLLM_SERVE_LOCAL_SNAPSHOT=0 отключает локальный снапшот и снова передаёт id в Hub (нужен интернет/DNS).
 # Базовый URL: VLLM_BASE_URL (http://127.0.0.1:8000). Оценка: python main.py <key> --vllm | run_all_models.py --vllm
 #

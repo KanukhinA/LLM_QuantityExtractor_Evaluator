@@ -16,6 +16,12 @@
 перед запуском в снапшоте правится ``config.json`` (как во внутренней логике vLLM для Pixtral).
 Отключить: ``VLLM_SKIP_PATCH_MISTRAL3_CONFIG=1``.
 
+Для ``mistralai/Ministral-*`` дополнительно: ``--config-format`` (по умолчанию ``hf``, см. доку vLLM),
+``--load-format`` (по умолчанию ``mistral`` для consolidated safetensors). Переопределение или отмена:
+``VLLM_MINISTRAL_CONFIG_FORMAT``, ``VLLM_MINISTRAL_LOAD_FORMAT`` (пусто / none / skip — не добавлять флаг).
+Tool-calling (``--enable-auto-tool-choice``, ``--tool-call-parser mistral``): только при
+``VLLM_MINISTRAL_TOOL_CALLING=1``.
+
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
 from __future__ import annotations
@@ -69,6 +75,48 @@ def _extras_has_tokenizer_mode(extras: list[str]) -> bool:
         if a == "--tokenizer-mode" or str(a).startswith("--tokenizer-mode="):
             return True
     return False
+
+
+def _extras_has_config_format(extras: list[str]) -> bool:
+    for a in extras:
+        if a == "--config-format" or str(a).startswith("--config-format="):
+            return True
+    return False
+
+
+def _extras_has_load_format(extras: list[str]) -> bool:
+    for a in extras:
+        if a == "--load-format" or str(a).startswith("--load-format="):
+            return True
+    return False
+
+
+def _extras_has_enable_auto_tool_choice(extras: list[str]) -> bool:
+    for a in extras:
+        al = str(a).lower()
+        if al == "--enable-auto-tool-choice" or al.startswith("--enable-auto-tool-choice="):
+            return True
+    return False
+
+
+def _extras_has_tool_call_parser(extras: list[str]) -> bool:
+    for a in extras:
+        if a == "--tool-call-parser" or str(a).startswith("--tool-call-parser="):
+            return True
+    return False
+
+
+def _env_optional_cli_value(var: str, default: str) -> Optional[str]:
+    """
+    Значение для опционального флага vLLM. Если переменная не задана — default.
+    Пустая строка / none / skip — не добавлять флаг.
+    """
+    if var not in os.environ:
+        return default
+    v = os.environ[var].strip().lower()
+    if v in ("", "none", "skip", "-", "off"):
+        return None
+    return os.environ[var].strip()
 
 
 def _extras_has_mm_or_lm_only_flags(extras: list[str]) -> bool:
@@ -436,6 +484,22 @@ def start_vllm_autoserver(
     if _needs_mistral_tokenizer_mode(model_id) and not _extras_has_tokenizer_mode(extras):
         # Для Ministral/Mistral в vLLM 0.19.x это снижает риск падения на tokenizer-конвертации.
         extras = ["--tokenizer-mode", "mistral"] + extras
+    if _is_mistralai_ministral_line(model_id):
+        cf = _env_optional_cli_value("VLLM_MINISTRAL_CONFIG_FORMAT", "hf")
+        if cf and not _extras_has_config_format(extras):
+            extras = ["--config-format", cf] + extras
+        lf = _env_optional_cli_value("VLLM_MINISTRAL_LOAD_FORMAT", "mistral")
+        if lf and not _extras_has_load_format(extras):
+            extras = ["--load-format", lf] + extras
+        if os.environ.get("VLLM_MINISTRAL_TOOL_CALLING", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            if not _extras_has_enable_auto_tool_choice(extras):
+                extras = ["--enable-auto-tool-choice"] + extras
+            if not _extras_has_tool_call_parser(extras):
+                extras = ["--tool-call-parser", "mistral"] + extras
     if (
         _is_mistralai_ministral_line(model_id)
         and _ministral_auto_mm_limits_enabled()
