@@ -375,35 +375,25 @@ def _extras_has_quantization_flag(extras: list[str]) -> bool:
     return False
 
 
-def _infer_quantization_from_tag(vllm_quant_tag: str) -> Optional[str]:
-    """
-    Эвристика по метке в конфиге:
-    - Q4* -> awq (исторически в проекте Q4 означает запуск через awq-квант модели в vLLM)
-    Остальные значения требуют явного vllm_quantization/vllm_serve_extra_args.
-    """
-    q = (vllm_quant_tag or "").strip().upper()
-    if q.startswith("Q4"):
-        return "awq"
-    return None
-
-
 def build_vllm_serve_extra_args(hyperparameters: Optional[Mapping[str, Any]]) -> list[str]:
     """
     Нормализует и дополняет аргументы для `vllm serve`:
     1) `vllm_serve_extra_args` (как есть),
-    2) если не задан `--quantization`, добавляет из `vllm_quantization`,
-    3) иначе fallback по `vllm_quant_tag` (Q4* -> awq).
+    2) если не задан `--quantization`, добавляет из `vllm_quantization` (только явно).
+
+    ``vllm_quant_tag`` используется в проекте для имён папок результатов и не подставляет
+    ``--quantization`` автоматически: для обычного HF-чекпойнта (bf16/fp16) флаг ``awq``/``gptq``
+    ломает загрузку; квантизация задаётся только если веса реально в этом формате.
     """
     hp = dict(hyperparameters or {})
     extras = normalize_vllm_serve_extra_args(hp.get("vllm_serve_extra_args"))
     if _extras_has_quantization_flag(extras):
         return extras
     explicit_quant = (hp.get("vllm_quantization") or "").strip()
+    if explicit_quant and explicit_quant.lower() in ("none", "null", "off", "-", "skip"):
+        return extras
     if explicit_quant:
         return ["--quantization", explicit_quant] + extras
-    inferred = _infer_quantization_from_tag(str(hp.get("vllm_quant_tag") or ""))
-    if inferred:
-        return ["--quantization", inferred] + extras
     return extras
 
 
