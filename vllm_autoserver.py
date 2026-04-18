@@ -22,10 +22,9 @@
 Tool-calling (``--enable-auto-tool-choice``, ``--tool-call-parser mistral``): только при
 ``VLLM_MINISTRAL_TOOL_CALLING=1``.
 
-Для ``mistralai/Ministral-*`` по умолчанию выставляется ``VLLM_USE_V1=0`` (если в окружении
-процесса оценки переменная не задана): на части связок vLLM 0.19 + Python 3.13 движок v1 даёт
-SIGSEGV при инспекции ``Mistral3ForConditionalGeneration``. Отключить автоподстановку:
-``VLLM_MINISTRAL_PREFER_V0=0``; явно задать движок: ``VLLM_USE_V1=0`` или ``1``.
+Для ``mistralai/Ministral-*`` процессу ``vllm serve`` всегда задаётся ``VLLM_USE_V1=0`` (пока
+``VLLM_MINISTRAL_PREFER_V0`` не в ``0/false``), независимо от переменных в родительском shell —
+иначе наследуется ``VLLM_USE_V1=1`` и возможен SIGSEGV при инспекции ``Mistral3ForConditionalGeneration``.
 
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
@@ -33,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import signal
 import shutil
 import socket
@@ -547,8 +547,13 @@ def start_vllm_autoserver(
             f"{mm_json!r} (текст без vision; при сбое задайте VLLM_MINISTRAL_TEXT_ONLY_MM=0 "
             "или свой JSON в VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON)"
         )
-    cmd = ["vllm", "serve", serve_arg] + local_extra + ["--host", host, "--port", str(port)]
-    cmd.extend(extras)
+    # --host/--port в конце: у части версий vLLM иначе парсер рвёт цепочку опций после пути к модели.
+    cmd = (
+        ["vllm", "serve", serve_arg]
+        + local_extra
+        + extras
+        + ["--host", host, "--port", str(port)]
+    )
     log_path = _vllm_log_path()
     if env_updates:
         print(f"   📁 vLLM: локальный снапшот HF → {serve_arg}")
@@ -557,6 +562,7 @@ def start_vllm_autoserver(
             "HF_HUB_OFFLINE=1 — без запросов к Hugging Face Hub"
         )
     print(f"   🚀 Запуск vLLM автосервера: {' '.join(cmd)}")
+    print(f"   📋 Та же команда для shell (с кавычками): {shlex.join(cmd)}")
     print(f"   📝 Лог stdout/stderr vLLM: {log_path}")
     print(f"   ⏱ Ожидание готовности до {ready_timeout_sec} с (переменная окружения VLLM_READY_TIMEOUT_SEC)")
     log_fp = open(log_path, "a", encoding="utf-8")
@@ -565,6 +571,7 @@ def start_vllm_autoserver(
         if serve_arg != (model_id or "").strip():
             log_fp.write(f"(локальный путь: {serve_arg})\n")
         log_fp.write(" ".join(cmd) + "\n")
+        log_fp.write(f"# shell (с кавычками): {shlex.join(cmd)}\n")
         log_fp.flush()
         child_env = os.environ.copy()
         child_env.update(env_updates)
@@ -575,13 +582,12 @@ def start_vllm_autoserver(
                 "no",
                 "off",
             ):
-                if "VLLM_USE_V1" not in os.environ:
-                    child_env["VLLM_USE_V1"] = "0"
-                    print(
-                        "   ⚙️ Ministral-3: для процесса vLLM задано VLLM_USE_V1=0 "
-                        "(снижает риск SIGSEGV при инспекции Mistral3; иначе задайте VLLM_USE_V1 вручную "
-                        "или VLLM_MINISTRAL_PREFER_V0=0, чтобы не подставлять)"
-                    )
+                # Всегда для дочернего vllm: родитель мог экспортировать VLLM_USE_V1=1.
+                child_env["VLLM_USE_V1"] = "0"
+                print(
+                    "   ⚙️ Ministral-3: процессу vLLM задано VLLM_USE_V1=0 "
+                    "(снижает риск SIGSEGV; отключить: VLLM_MINISTRAL_PREFER_V0=0)"
+                )
         popen_kw: dict = {
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,
