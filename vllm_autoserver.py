@@ -6,11 +6,10 @@
 ``TRANSFORMERS_OFFLINE=1``, чтобы не вызывать Hub (list_repo_files / DNS). Отключить:
 ``VLLM_SERVE_LOCAL_SNAPSHOT=0``.
 
-Для ``mistralai/Ministral-*`` по умолчанию добавляется ``--limit-mm-per-prompt`` с нулевыми лимитами
-(эквивалент «только текст» по документации vLLM, без бага ``--language-model-only`` в 0.19.x, когда
-``text_config.architectures`` остаётся None и падает загрузка весов). JSON можно задать в
-``VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON``. Отключить автодобавление:
-``VLLM_MINISTRAL_TEXT_ONLY_MM=0`` (или устар. ``VLLM_MINISTRAL_LANGUAGE_MODEL_ONLY=0``).
+Для текстового ``mistralai/Ministral-*`` **не** подставляем ``--limit-mm-per-prompt``: в vLLM 0.19+
+это поле только для **мультимодальных** моделей, иначе ``ValueError: ... only supported for multimodal``.
+Опционально включить лимиты: ``VLLM_MINISTRAL_TEXT_ONLY_MM=1`` (формат ``KEY=VALUE``, см.
+``VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON``). Обычно достаточно флагов ``--config-format`` / ``--load-format`` / ``--tokenizer-mode``.
 
 Если в кэше у Mistral3 в ``text_config`` стоит ``"architectures": null`` (типично для Ministral в HF),
 перед запуском в снапшоте правится ``config.json`` (как во внутренней логике vLLM для Pixtral).
@@ -152,19 +151,34 @@ def _ministral_auto_mm_limits_enabled() -> bool:
             "no",
             "off",
         )
-    return True
+    # По умолчанию не добавляем limit-mm: для текстового Ministral vLLM — не multimodal → ValueError.
+    return False
 
 
-def _ministral_limit_mm_per_prompt_json() -> str:
-    default = '{"image":0,"video":0}'
+def _ministral_limit_mm_per_prompt_cli_tokens() -> list[str]:
+    """
+    vLLM 0.19+: ``--limit-mm-per-prompt`` — элементы вида ``KEY=VALUE`` (ошибка про JSON в одном argv).
+    Возвращает чередование: --limit-mm-per-prompt, image=0, --limit-mm-per-prompt, video=0, ...
+    """
+    default: dict[str, int] = {"image": 0, "video": 0}
     raw = (os.environ.get("VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON") or "").strip()
-    if not raw:
-        return default
-    try:
-        json.loads(raw)
-        return raw
-    except Exception:
-        return default
+    spec = default
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and data:
+                flat: dict[str, int] = {}
+                for k, v in data.items():
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        flat[str(k)] = int(v)
+                if flat:
+                    spec = flat
+        except Exception:
+            spec = default
+    out: list[str] = []
+    for key, val in spec.items():
+        out.extend(["--limit-mm-per-prompt", f"{key}={val}"])
+    return out if out else ["--limit-mm-per-prompt", "image=0", "--limit-mm-per-prompt", "video=0"]
 
 
 def _patch_mistral3_text_config_architectures(snapshot_dir: str) -> bool:
@@ -540,12 +554,12 @@ def start_vllm_autoserver(
         and not _extras_has_mm_or_lm_only_flags(extras)
     ):
         # Эквивалент «только текст» по доке vLLM; --language-model-only в 0.19.x ломает Mistral3 (text_config.architectures=None).
-        mm_json = _ministral_limit_mm_per_prompt_json()
-        extras = ["--limit-mm-per-prompt", mm_json] + extras
+        mm_cli = _ministral_limit_mm_per_prompt_cli_tokens()
+        extras = mm_cli + extras
         print(
-            "   ⚙️ Ministral-3: --limit-mm-per-prompt "
-            f"{mm_json!r} (текст без vision; при сбое задайте VLLM_MINISTRAL_TEXT_ONLY_MM=0 "
-            "или свой JSON в VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON)"
+            "   ⚙️ Ministral-3: лимиты MM (0.19+ KEY=VALUE): "
+            + " ".join(mm_cli)
+            + " (только если модель multimodal у vLLM; JSON: VLLM_MINISTRAL_LIMIT_MM_PER_PROMPT_JSON; выкл: unset или TEXT_ONLY_MM=0)"
         )
     # --host/--port в конце: у части версий vLLM иначе парсер рвёт цепочку опций после пути к модели.
     cmd = (
