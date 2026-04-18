@@ -22,6 +22,11 @@
 Tool-calling (``--enable-auto-tool-choice``, ``--tool-call-parser mistral``): только при
 ``VLLM_MINISTRAL_TOOL_CALLING=1``.
 
+Для ``mistralai/Ministral-*`` по умолчанию выставляется ``VLLM_USE_V1=0`` (если в окружении
+процесса оценки переменная не задана): на части связок vLLM 0.19 + Python 3.13 движок v1 даёт
+SIGSEGV при инспекции ``Mistral3ForConditionalGeneration``. Отключить автоподстановку:
+``VLLM_MINISTRAL_PREFER_V0=0``; явно задать движок: ``VLLM_USE_V1=0`` или ``1``.
+
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
 from __future__ import annotations
@@ -563,6 +568,20 @@ def start_vllm_autoserver(
         log_fp.flush()
         child_env = os.environ.copy()
         child_env.update(env_updates)
+        if _is_mistralai_ministral_line(model_id):
+            if os.environ.get("VLLM_MINISTRAL_PREFER_V0", "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+            ):
+                if "VLLM_USE_V1" not in os.environ:
+                    child_env["VLLM_USE_V1"] = "0"
+                    print(
+                        "   ⚙️ Ministral-3: для процесса vLLM задано VLLM_USE_V1=0 "
+                        "(снижает риск SIGSEGV при инспекции Mistral3; иначе задайте VLLM_USE_V1 вручную "
+                        "или VLLM_MINISTRAL_PREFER_V0=0, чтобы не подставлять)"
+                    )
         popen_kw: dict = {
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,
