@@ -390,6 +390,71 @@ def _a1_range_to_grid_range(sheet_id: int, a1_range: str) -> dict:
     }
 
 
+def _unmerge_merges_overlapping_region(
+    spreadsheet: Any,
+    worksheet: Any,
+    row_start_1based: int,
+    row_end_inclusive_1based: int,
+    col_start_1based: int,
+    col_end_inclusive_1based: int,
+) -> None:
+    """
+    Снимает на листе только те объединения ячеек, которые пересекаются с прямоугольником.
+
+    Один общий unmerge по A1:F50 недопустим: API требует, чтобы диапазон точно совпадал
+    с существующим merged range (иначе 400: unmergeCells ... You must select all cells...).
+    """
+    if row_end_inclusive_1based < row_start_1based or col_end_inclusive_1based < col_start_1based:
+        return
+    sheet_id = worksheet.id
+    fetch = getattr(spreadsheet, "fetch_sheet_metadata", None)
+    if not callable(fetch):
+        return
+    try:
+        meta = fetch(params={"fields": "sheets(merges,properties(sheetId))"})
+    except Exception:
+        return
+    merges: List[dict] = []
+    for sh in meta.get("sheets") or []:
+        if sh.get("properties", {}).get("sheetId") != sheet_id:
+            continue
+        merges = sh.get("merges") or []
+        break
+    if not merges:
+        return
+    # Область интереса в тех же 0-based полуинтервалах, что и GridRange в API
+    rs0 = row_start_1based - 1
+    re0 = row_end_inclusive_1based
+    cs0 = col_start_1based - 1
+    ce0 = col_end_inclusive_1based
+    requests: List[dict] = []
+    for gr in merges:
+        ms = gr.get("startRowIndex", 0)
+        me = gr.get("endRowIndex", 0)
+        gcs = gr.get("startColumnIndex", 0)
+        gce = gr.get("endColumnIndex", 0)
+        if me <= rs0 or ms >= re0:
+            continue
+        if gce <= cs0 or gcs >= ce0:
+            continue
+        gid = gr.get("sheetId", sheet_id)
+        requests.append(
+            {
+                "unmergeCells": {
+                    "range": {
+                        "sheetId": gid,
+                        "startRowIndex": ms,
+                        "endRowIndex": me,
+                        "startColumnIndex": gcs,
+                        "endColumnIndex": gce,
+                    }
+                }
+            }
+        )
+    if requests:
+        _sheets_write(lambda: spreadsheet.batch_update({"requests": requests}))
+
+
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -768,10 +833,13 @@ class GoogleSheetsIntegration:
         num_cols = len(methods)
         last_col_letter = _col_letter_1based(1 + num_cols) if num_cols > 0 else "A"
         update_range = f"A1:{last_col_letter}{len(table_data)}"
-        _sheets_write(
-            lambda: spreadsheet.batch_update(
-                {"requests": [{"unmergeCells": {"range": _a1_range_to_grid_range(worksheet.id, update_range)}}]}
-            )
+        _unmerge_merges_overlapping_region(
+            spreadsheet,
+            worksheet,
+            row_start_1based=1,
+            row_end_inclusive_1based=len(table_data),
+            col_start_1based=1,
+            col_end_inclusive_1based=1 + num_cols,
         )
         _sheets_write(lambda: worksheet.update(values=table_data, range_name=update_range))
         has_title_row = (
@@ -822,8 +890,16 @@ class GoogleSheetsIntegration:
             notes = _build_notes_rows(methods, description_line=table_description)
         if notes:
             start_row = len(table_data) + 1
-            _sheets_write(lambda: worksheet.update(values=notes, range_name=f"A{start_row}"))
             num_table_cols = 1 + len(methods)
+            _unmerge_merges_overlapping_region(
+                spreadsheet,
+                worksheet,
+                row_start_1based=start_row,
+                row_end_inclusive_1based=start_row + len(notes) - 1,
+                col_start_1based=1,
+                col_end_inclusive_1based=num_table_cols,
+            )
+            _sheets_write(lambda: worksheet.update(values=notes, range_name=f"A{start_row}"))
             last_col_letter = _col_letter_1based(num_table_cols)
             merge_requests = []
             for i in range(len(notes)):
