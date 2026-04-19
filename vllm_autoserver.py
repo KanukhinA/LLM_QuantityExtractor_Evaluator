@@ -30,8 +30,11 @@ Tool-calling (``--enable-auto-tool-choice``, ``--tool-call-parser mistral``): т
 ``VLLM_FORCE_V1_ENV_FOR_MINISTRAL=1``.
 
 Локальный **GGUF** (например Q4_K_M): в ``hyperparameters.vllm_serve_model_path`` укажите путь к **файлу**
-``.gguf``; vLLM подставляет ``--load-format gguf``, ``--tokenizer`` (по умолчанию тот же id, что ``name``),
-``--tokenizer-mode mistral``, ``--served-model-name`` = id для API. Нужен **vLLM >= 0.12** (см. карточку HF).
+``.gguf``, либо ``auto`` — сначала кэш HF, иначе **автозагрузка** через ``hf_hub_download`` (нужен
+интернет; отключить: ``VLLM_SKIP_GGUF_DOWNLOAD=1`` или офлайн без файла в кэше — ошибка).
+Значение ``off`` — не использовать GGUF, грузить снапшот safetensors.
+vLLM подставляет ``--load-format gguf``, ``--tokenizer``, ``--tokenizer-mode mistral``,
+``--served-model-name`` = id для API. Нужен **vLLM >= 0.12** (см. карточку HF).
 
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
@@ -107,6 +110,101 @@ def _local_hf_snapshot_dir(repo_id: str) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+# Ministral-3 Instruct: репозиторий GGUF на Hub и имя файла Q4_K_M (vllm_serve_model_path: auto).
+_MINISTRAL_INSTRUCT_GGUF_Q4: dict[str, tuple[str, str]] = {
+    "mistralai/ministral-3-14b-instruct-2512": (
+        "mistralai/Ministral-3-14B-Instruct-2512-GGUF",
+        "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf",
+    ),
+    "mistralai/ministral-3-8b-instruct-2512": (
+        "mistralai/Ministral-3-8B-Instruct-2512-GGUF",
+        "Ministral-3-8B-Instruct-2512-Q4_K_M.gguf",
+    ),
+}
+
+
+def _ministral_instruct_gguf_q4_pair(model_id: str) -> Optional[tuple[str, str]]:
+    return _MINISTRAL_INSTRUCT_GGUF_Q4.get((model_id or "").strip().lower())
+
+
+def _try_hf_cache_gguf_file(repo_id: str, filename: str) -> Optional[str]:
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        p = try_to_load_from_cache(repo_id=repo_id, filename=filename)
+        if p and os.path.isfile(p):
+            return p
+    except Exception:
+        pass
+    return None
+
+
+def _hf_hub_offline() -> bool:
+    return os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in ("1", "true", "yes") or os.environ.get(
+        "TRANSFORMERS_OFFLINE", ""
+    ).strip().lower() in ("1", "true", "yes")
+
+
+def _ensure_hf_gguf_local(repo_id: str, filename: str) -> str:
+    """
+    Путь к ``filename`` в кэше HF; если файла нет — скачивание через ``hf_hub_download``
+    (кроме ``HF_HUB_OFFLINE`` / ``VLLM_SKIP_GGUF_DOWNLOAD``).
+    """
+    p = _try_hf_cache_gguf_file(repo_id, filename)
+    if p:
+        return p
+    if os.environ.get("VLLM_SKIP_GGUF_DOWNLOAD", "").strip().lower() in ("1", "true", "yes"):
+        raise RuntimeError(
+            f"VLLM_SKIP_GGUF_DOWNLOAD=1: автозагрузка GGUF отключена, а {filename!r} нет в кэше ({repo_id}). "
+            f"Скачайте вручную: huggingface-cli download {repo_id} {filename}"
+        )
+    if _hf_hub_offline():
+        raise RuntimeError(
+            f"GGUF {filename!r} нет в кэше Hugging Face, включён офлайн-режим (HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE). "
+            f"Скачайте при доступе в сеть: huggingface-cli download {repo_id} {filename} "
+            "или укажите vllm_serve_model_path: off для safetensors."
+        )
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as e:
+        raise RuntimeError(
+            "Нужен пакет huggingface_hub для автозагрузки GGUF: pip install huggingface_hub"
+        ) from e
+    print(f"   ⬇️ Скачиваю GGUF {filename!r} с Hugging Face ({repo_id}) …")
+    try:
+        out = hf_hub_download(repo_id=repo_id, filename=filename)
+    except Exception as e:
+        raise RuntimeError(
+            f"Не удалось скачать {filename!r} из {repo_id}: {e}. "
+            "Проверьте сеть, токен (gated repo: huggingface-cli login) или задайте явный путь к .gguf."
+        ) from e
+    if not out or not os.path.isfile(out):
+        raise RuntimeError(f"hf_hub_download не вернул локальный путь к {filename!r}")
+    return out
+
+
+def _normalize_vllm_serve_gguf_path(model_id: str, raw: str) -> str:
+    """
+    Разрешение ``vllm_serve_model_path``: ``auto`` / ``q4`` → Q4_K_M.gguf (кэш или загрузка с Hub);
+    ``off`` / ``safetensors`` → пусто (vLLM грузит обычный снапшот safetensors).
+    """
+    r = (raw or "").strip()
+    rl = r.lower()
+    if rl in ("off", "none", "safetensors", "false", "0", "-", "no"):
+        return ""
+    if rl in ("auto", "hf", "q4", "q4_k_m", "q4km"):
+        pair = _ministral_instruct_gguf_q4_pair(model_id)
+        if not pair:
+            raise RuntimeError(
+                f"vllm_serve_model_path={raw!r} поддерживается только для Ministral-3 Instruct "
+                f"(известные id: {list(_MINISTRAL_INSTRUCT_GGUF_Q4.keys())!r}); "
+                "для этой модели задайте явный путь к .gguf."
+            )
+        repo, fn = pair
+        return _ensure_hf_gguf_local(repo, fn)
+    return r
 
 
 def _extras_has_served_model_name(extras: list[str]) -> bool:
@@ -357,8 +455,8 @@ def _resolve_vllm_serve_args(
     (через --served-model-name), чтобы совпадало с models.yaml и check_vllm_models.
 
     Локальный GGUF (Q4_K_M и т.д.): ``hyperparameters.vllm_serve_model_path`` — путь к **файлу** ``.gguf``
-    (vLLM не подтягивает GGUF с Hub по id репозитория). Тогда первый аргумент — этот файл,
-    ``--served-model-name`` — ``model_id`` (HF id для API).
+    или ``auto`` (разрешение через кэш HF, см. ``_normalize_vllm_serve_gguf_path``).
+    Тогда первый аргумент — этот файл, ``--served-model-name`` — ``model_id`` (HF id для API).
 
     Отключить: VLLM_SERVE_LOCAL_SNAPSHOT=0
     """
@@ -643,7 +741,10 @@ def start_vllm_autoserver(
     wait_until_vllm_port_free(host, port)
     hp = dict(hyperparameters or {})
     extras = normalize_vllm_serve_extra_args(extra_args)
-    serve_gguf = (hp.get("vllm_serve_model_path") or "").strip()
+    serve_gguf = _normalize_vllm_serve_gguf_path(
+        model_id,
+        (hp.get("vllm_serve_model_path") or "").strip(),
+    )
     serve_arg, local_extra, env_updates = _resolve_vllm_serve_args(
         model_id,
         serve_model_path=serve_gguf or None,

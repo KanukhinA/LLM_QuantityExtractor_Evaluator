@@ -10,8 +10,8 @@
 #   - vllm_serve_extra_args: опционально список аргументов к автозапуску vllm serve после --port
 #                            (например ["--gpu-memory-utilization","0.85"] или одна строка);
 #                            если здесь уже есть --quantization, он имеет максимальный приоритет
-#   - vllm_serve_model_path: локальный путь к файлу .gguf (Q4_K_M и т.д.); vLLM не тянет GGUF с Hub по id —
-#     скачайте файл, укажите путь; --served-model-name остаётся name/vllm_name (HF id для API).
+#   - vllm_serve_model_path: путь к .gguf ИЛИ auto (Q4_K_M: кэш HF или автозагрузка с Hub) ИЛИ off
+#     (safetensors). Автозагрузку отключить: VLLM_SKIP_GGUF_DOWNLOAD=1
 #   - vllm_gguf_tokenizer_id: при vllm_serve_model_path — HF id с tokenizer (по умолчанию = тот же id, что name/vllm_name).
 #   - vllm_gguf_hf_config_path: опционально --hf-config-path для капризных сборок vLLM (обычно не нужен).
 #
@@ -159,10 +159,8 @@ models:
       do_sample: false
       torch_dtype: "bfloat16"
       vllm_quant_tag: "Q4"
-      # Локальный Q4_K_M GGUF (vLLM >= 0.12): скачать с
-      # https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-GGUF
-      # файл Ministral-3-14B-Instruct-2512-Q4_K_M.gguf (~8.2 GiB) и раскомментировать:
-      # vllm_serve_model_path: "/ABS/PATH/TO/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf"
+      # vLLM --vllm: Q4_K_M GGUF — из кэша или автозагрузка с HF; off = safetensors; явный путь = свой .gguf
+      vllm_serve_model_path: auto
 
   mistral-3-3b-reasoning:
     name: "mistralai/Ministral-3-3B-Reasoning-2512"
