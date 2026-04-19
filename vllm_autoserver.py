@@ -15,15 +15,23 @@
 перед запуском в снапшоте правится ``config.json`` (как во внутренней логике vLLM для Pixtral).
 Отключить: ``VLLM_SKIP_PATCH_MISTRAL3_CONFIG=1``.
 
+Для Ministral при старом vLLM (напр. 0.7.x) без нативной модели возможен fallback на Transformers с ошибкой
+``Mistral3Config has no attribute vocab_size``: тогда в корень ``config.json`` копируется ``vocab_size`` из ``text_config``.
+
 Для ``mistralai/Ministral-*`` дополнительно: ``--config-format`` (по умолчанию ``hf``, см. доку vLLM),
 ``--load-format`` (по умолчанию ``mistral`` для consolidated safetensors). Переопределение или отмена:
 ``VLLM_MINISTRAL_CONFIG_FORMAT``, ``VLLM_MINISTRAL_LOAD_FORMAT`` (пусто / none / skip — не добавлять флаг).
 Tool-calling (``--enable-auto-tool-choice``, ``--tool-call-parser mistral``): только при
 ``VLLM_MINISTRAL_TOOL_CALLING=1``.
 
-Для ``mistralai/Ministral-*`` процессу ``vllm serve`` всегда задаётся ``VLLM_USE_V1=0`` (пока
-``VLLM_MINISTRAL_PREFER_V0`` не в ``0/false``), независимо от переменных в родительском shell —
-иначе наследуется ``VLLM_USE_V1=1`` и возможен SIGSEGV при инспекции ``Mistral3ForConditionalGeneration``.
+Для ``mistralai/Ministral-*`` на **vLLM < 0.19** процессу ``vllm serve`` задаётся ``VLLM_USE_V1=0`` (пока
+``VLLM_MINISTRAL_PREFER_V0`` не в ``0/false``). На **0.19+** эта переменная в движке не используется
+(лог «Unknown … VLLM_USE_V1») — не задаём и убираем из наследуемого окружения, если не задано
+``VLLM_FORCE_V1_ENV_FOR_MINISTRAL=1``.
+
+Локальный **GGUF** (например Q4_K_M): в ``hyperparameters.vllm_serve_model_path`` укажите путь к **файлу**
+``.gguf``; vLLM подставляет ``--load-format gguf``, ``--tokenizer`` (по умолчанию тот же id, что ``name``),
+``--tokenizer-mode mistral``, ``--served-model-name`` = id для API. Нужен **vLLM >= 0.12** (см. карточку HF).
 
 PID и лог: ``OUTPUT_DIR/.vllm_autoserver.pid``, ``OUTPUT_DIR/vllm_autoserver.log``.
 """
@@ -42,6 +50,40 @@ from typing import Any, Mapping, Optional
 from urllib.parse import urlparse
 
 from config import OUTPUT_DIR
+
+
+def _vllm_version_tuple() -> tuple[int, int, int]:
+    """Грубый разбор версии vllm для условной логики (например VLLM_USE_V1 только на старых релизах)."""
+    try:
+        from importlib.metadata import version as pkg_version
+
+        v = pkg_version("vllm")
+    except Exception:
+        return (0, 0, 0)
+    parts: list[int] = []
+    for seg in v.split(".")[:3]:
+        num = ""
+        for c in seg:
+            if c.isdigit():
+                num += c
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return (parts[0], parts[1], parts[2])
+
+
+def _vllm_uses_legacy_v1_env_var() -> bool:
+    """True только для версий, где VLLM_USE_V1 ещё осмысленна (до 0.19)."""
+    if os.environ.get("VLLM_FORCE_V1_ENV_FOR_MINISTRAL", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return True
+    return _vllm_version_tuple() < (0, 19, 0)
+
 
 _VLLM_PID_FILENAME = ".vllm_autoserver.pid"
 _VLLM_LOG_FILENAME = "vllm_autoserver.log"
@@ -106,6 +148,21 @@ def _extras_has_enable_auto_tool_choice(extras: list[str]) -> bool:
 def _extras_has_tool_call_parser(extras: list[str]) -> bool:
     for a in extras:
         if a == "--tool-call-parser" or str(a).startswith("--tool-call-parser="):
+            return True
+    return False
+
+
+def _extras_has_tokenizer(extras: list[str]) -> bool:
+    for a in extras:
+        if a == "--tokenizer" or str(a).startswith("--tokenizer="):
+            return True
+    return False
+
+
+def _extras_has_hf_config_path(extras: list[str]) -> bool:
+    for a in extras:
+        al = str(a).lower()
+        if al == "--hf-config-path" or al.startswith("--hf-config-path="):
             return True
     return False
 
@@ -239,6 +296,46 @@ def _patch_mistral3_text_config_architectures(snapshot_dir: str) -> bool:
     return True
 
 
+def _patch_mistral3_root_vocab_size(snapshot_dir: str) -> bool:
+    """
+    vLLM 0.7.x: fallback Transformers для Mistral3 читает ``config.vocab_size`` у корня HF-конфига;
+    у ``Mistral3Config`` размер часто только в ``text_config`` → AttributeError. Дублируем в корень JSON.
+    """
+    if os.environ.get("VLLM_SKIP_PATCH_MISTRAL3_CONFIG", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    cfg_path = os.path.join(snapshot_dir, "config.json")
+    if not os.path.isfile(cfg_path):
+        return False
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    top_arch = data.get("architectures")
+    if not isinstance(top_arch, list) or not any("Mistral3" in str(a) for a in top_arch):
+        return False
+    if data.get("vocab_size") is not None:
+        return False
+    tc = data.get("text_config")
+    if not isinstance(tc, dict):
+        return False
+    vs = tc.get("vocab_size")
+    if vs is None:
+        return False
+    try:
+        data["vocab_size"] = int(vs)
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except Exception:
+        return False
+    print(
+        f"   ⚙️ Патч {cfg_path}: vocab_size={data['vocab_size']} (из text_config в корень; "
+        "нужно для Transformers fallback в старых vLLM). VLLM_SKIP_PATCH_MISTRAL3_CONFIG=1 — отключить."
+    )
+    return True
+
+
 def _needs_mistral_tokenizer_mode(model_id: str) -> bool:
     s = (model_id or "").strip().lower()
     return s.startswith("mistralai/ministral-") or s.startswith("mistralai/mistral-")
@@ -250,17 +347,36 @@ def _is_mistralai_ministral_line(model_id: str) -> bool:
     return s.startswith("mistralai/ministral-")
 
 
-def _resolve_vllm_serve_args(model_id: str) -> tuple[str, list[str], dict[str, str]]:
+def _resolve_vllm_serve_args(
+    model_id: str,
+    serve_model_path: Optional[str] = None,
+) -> tuple[str, list[str], dict[str, str]]:
     """
     Если в кэше HF уже есть снапшот — передаём в vLLM локальный путь и выставляем offline для Hub,
     чтобы не было list_repo_files / DNS к huggingface.co. Имя в API — исходный repo id
     (через --served-model-name), чтобы совпадало с models.yaml и check_vllm_models.
+
+    Локальный GGUF (Q4_K_M и т.д.): ``hyperparameters.vllm_serve_model_path`` — путь к **файлу** ``.gguf``
+    (vLLM не подтягивает GGUF с Hub по id репозитория). Тогда первый аргумент — этот файл,
+    ``--served-model-name`` — ``model_id`` (HF id для API).
 
     Отключить: VLLM_SERVE_LOCAL_SNAPSHOT=0
     """
     logical = (model_id or "").strip()
     if not logical:
         return logical, [], {}
+
+    sp = (serve_model_path or "").strip()
+    if sp:
+        if not sp.lower().endswith(".gguf"):
+            raise RuntimeError(
+                f"vllm_serve_model_path: ожидается файл .gguf, получено: {sp!r}"
+            )
+        if not os.path.isfile(sp):
+            raise RuntimeError(
+                f"vllm_serve_model_path: файл не найден (скачайте GGUF с Hugging Face локально): {sp}"
+            )
+        return sp, ["--served-model-name", logical], {}
 
     if os.path.isdir(logical) and os.path.isfile(os.path.join(logical, "config.json")):
         return logical, [], {}
@@ -416,10 +532,11 @@ def build_vllm_serve_extra_args(hyperparameters: Optional[Mapping[str, Any]]) ->
     return extras
 
 
-def vllm_autoserver_fingerprint(model_id: str, hyperparameters: Optional[Mapping[str, Any]]) -> tuple[str, tuple[str, ...]]:
+def vllm_autoserver_fingerprint(model_id: str, hyperparameters: Optional[Mapping[str, Any]]) -> tuple[str, tuple[str, ...], str]:
     """Одинаковый отпечаток — тот же процесс serve, можно не перезапускать."""
     extra = build_vllm_serve_extra_args(hyperparameters)
-    return ((model_id or "").strip(), tuple(extra))
+    gguf_path = str((hyperparameters or {}).get("vllm_serve_model_path") or "").strip()
+    return ((model_id or "").strip(), tuple(extra), gguf_path)
 
 
 _VLLM_FAIL_HINT = (
@@ -518,21 +635,40 @@ def start_vllm_autoserver(
     model_id: str,
     ready_timeout_sec: int,
     extra_args: Optional[list[str]] = None,
+    hyperparameters: Optional[Mapping[str, Any]] = None,
 ) -> subprocess.Popen:
     if not shutil.which("vllm"):
         raise RuntimeError("Команда 'vllm' не найдена в PATH. Установите vllm и повторите запуск.")
     host, port = _vllm_host_port()
     wait_until_vllm_port_free(host, port)
+    hp = dict(hyperparameters or {})
     extras = normalize_vllm_serve_extra_args(extra_args)
-    serve_arg, local_extra, env_updates = _resolve_vllm_serve_args(model_id)
+    serve_gguf = (hp.get("vllm_serve_model_path") or "").strip()
+    serve_arg, local_extra, env_updates = _resolve_vllm_serve_args(
+        model_id,
+        serve_model_path=serve_gguf or None,
+    )
+    is_gguf = serve_arg.lower().endswith(".gguf") and os.path.isfile(serve_arg)
+    if is_gguf:
+        if not _extras_has_load_format(extras):
+            extras = ["--load-format", "gguf"] + extras
+        tok = (hp.get("vllm_gguf_tokenizer_id") or model_id or "").strip()
+        if tok and not _extras_has_tokenizer(extras):
+            extras = ["--tokenizer", tok] + extras
+        if not _extras_has_tokenizer_mode(extras):
+            extras = ["--tokenizer-mode", "mistral"] + extras
+        hcfg = (hp.get("vllm_gguf_hf_config_path") or "").strip()
+        if hcfg and not _extras_has_hf_config_path(extras):
+            extras = ["--hf-config-path", hcfg] + extras
     if os.path.isdir(serve_arg) and os.path.isfile(os.path.join(serve_arg, "config.json")):
         _patch_mistral3_text_config_architectures(serve_arg)
+        _patch_mistral3_root_vocab_size(serve_arg)
     if _extras_has_served_model_name(extras):
         local_extra = []
     if _needs_mistral_tokenizer_mode(model_id) and not _extras_has_tokenizer_mode(extras):
         # Для Ministral/Mistral в vLLM 0.19.x это снижает риск падения на tokenizer-конвертации.
         extras = ["--tokenizer-mode", "mistral"] + extras
-    if _is_mistralai_ministral_line(model_id):
+    if _is_mistralai_ministral_line(model_id) and not is_gguf:
         cf = _env_optional_cli_value("VLLM_MINISTRAL_CONFIG_FORMAT", "hf")
         if cf and not _extras_has_config_format(extras):
             extras = ["--config-format", cf] + extras
@@ -550,6 +686,7 @@ def start_vllm_autoserver(
                 extras = ["--tool-call-parser", "mistral"] + extras
     if (
         _is_mistralai_ministral_line(model_id)
+        and not is_gguf
         and _ministral_auto_mm_limits_enabled()
         and not _extras_has_mm_or_lm_only_flags(extras)
     ):
@@ -569,7 +706,10 @@ def start_vllm_autoserver(
         + ["--host", host, "--port", str(port)]
     )
     log_path = _vllm_log_path()
-    if env_updates:
+    if is_gguf:
+        print(f"   📁 vLLM: локальный GGUF → {serve_arg}")
+        print(f"      Имя в API: «{model_id.strip()}» (--served-model-name)")
+    elif env_updates:
         print(f"   📁 vLLM: локальный снапшот HF → {serve_arg}")
         print(
             f"      Имя в API: «{model_id.strip()}» (--served-model-name); "
@@ -589,19 +729,37 @@ def start_vllm_autoserver(
         log_fp.flush()
         child_env = os.environ.copy()
         child_env.update(env_updates)
-        if _is_mistralai_ministral_line(model_id):
+        _use_v0 = False
+        if _is_mistralai_ministral_line(model_id) and not is_gguf:
             if os.environ.get("VLLM_MINISTRAL_PREFER_V0", "1").strip().lower() not in (
                 "0",
                 "false",
                 "no",
                 "off",
             ):
-                # Всегда для дочернего vllm: родитель мог экспортировать VLLM_USE_V1=1.
-                child_env["VLLM_USE_V1"] = "0"
+                _use_v0 = True
+        if is_gguf and os.environ.get("VLLM_GGUF_USE_V0", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        ):
+            _use_v0 = True
+        if _use_v0 and _vllm_uses_legacy_v1_env_var():
+            # Для vLLM < 0.19: родитель мог экспортировать VLLM_USE_V1=1.
+            child_env["VLLM_USE_V1"] = "0"
+            if is_gguf:
+                print(
+                    "   ⚙️ GGUF: процессу vLLM задано VLLM_USE_V1=0 "
+                    "(типично для serve .gguf; отключить: VLLM_GGUF_USE_V0=0)"
+                )
+            else:
                 print(
                     "   ⚙️ Ministral-3: процессу vLLM задано VLLM_USE_V1=0 "
                     "(снижает риск SIGSEGV; отключить: VLLM_MINISTRAL_PREFER_V0=0)"
                 )
+        elif _use_v0 and not _vllm_uses_legacy_v1_env_var():
+            child_env.pop("VLLM_USE_V1", None)
         popen_kw: dict = {
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,

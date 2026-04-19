@@ -595,6 +595,7 @@ def _run_evaluation_loop(model_keys, multi_agent_mode, structured_output, use_ou
                         served_model_id,
                         ready_timeout_sec=vllm_ready_timeout,
                         extra_args=extras,
+                        hyperparameters=config.get("hyperparameters"),
                     )
                     active_vllm_fp = fp
             else:

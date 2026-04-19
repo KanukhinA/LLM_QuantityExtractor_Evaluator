@@ -152,6 +152,7 @@ def run_all_models(local_only: bool = False, multi_agent_mode: str = None,
                             served_model_id,
                             ready_timeout_sec=vllm_ready_timeout,
                             extra_args=extras,
+                            hyperparameters=config.get("hyperparameters"),
                         )
                         active_vllm_fp = fp
                 else:
