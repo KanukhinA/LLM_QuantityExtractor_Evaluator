@@ -29,10 +29,8 @@ Tool-calling (``--enable-auto-tool-choice``, ``--tool-call-parser mistral``): т
 (лог «Unknown … VLLM_USE_V1») — не задаём и убираем из наследуемого окружения, если не задано
 ``VLLM_FORCE_V1_ENV_FOR_MINISTRAL=1``.
 
-Локальный **GGUF** (например Q4_K_M): в ``hyperparameters.vllm_serve_model_path`` укажите путь к **файлу**
-``.gguf``, либо ``auto`` — сначала кэш HF, иначе **автозагрузка** через ``hf_hub_download`` (нужен
-интернет; отключить: ``VLLM_SKIP_GGUF_DOWNLOAD=1`` или офлайн без файла в кэше — ошибка).
-Значение ``off`` — не использовать GGUF, грузить снапшот safetensors.
+**GGUF Ministral-3** с **vLLM** не использовать: Transformers не загружает GGUF с архитектурой ``mistral3``.
+Поле ``vllm_serve_model_path`` для Ministral: ``off`` (чекпойнт HF). Q4_K_M GGUF — **Ollama** / llama.cpp.
 vLLM подставляет ``--load-format gguf``, ``--tokenizer``, ``--tokenizer-mode mistral``,
 ``--served-model-name`` = id для API. Нужен **vLLM >= 0.12** (см. карточку HF).
 
@@ -112,7 +110,7 @@ def _local_hf_snapshot_dir(repo_id: str) -> Optional[str]:
     return None
 
 
-# Ministral-3 Instruct: репозиторий GGUF на Hub и имя файла Q4_K_M (vllm_serve_model_path: auto).
+# Ministral-3 Instruct: профили для vllm_serve_model_path=auto (сейчас auto для GGUF отключён — см. константу ниже).
 _MINISTRAL_INSTRUCT_GGUF_Q4: dict[str, tuple[str, str]] = {
     "mistralai/ministral-3-14b-instruct-2512": (
         "mistralai/Ministral-3-14B-Instruct-2512-GGUF",
@@ -124,70 +122,22 @@ _MINISTRAL_INSTRUCT_GGUF_Q4: dict[str, tuple[str, str]] = {
     ),
 }
 
+# Transformers: modeling_gguf_pytorch_utils.load_gguf_checkpoint — архитектура mistral3 в GGUF не поддерживается.
+_MINISTRAL_GGUF_VLLM_UNSUPPORTED_MSG = (
+    "GGUF с архитектурой mistral3 не поддерживается в Transformers при vLLM "
+    "(ValueError: GGUF model with architecture mistral3 is not supported yet). "
+    "Задайте vllm_serve_model_path: off — чекпойнт Hugging Face (FP8/safetensors). "
+    "Для Q4_K_M в GGUF используйте суффикс -ollama или llama.cpp, не --vllm."
+)
+
 
 def _ministral_instruct_gguf_q4_pair(model_id: str) -> Optional[tuple[str, str]]:
     return _MINISTRAL_INSTRUCT_GGUF_Q4.get((model_id or "").strip().lower())
 
 
-def _try_hf_cache_gguf_file(repo_id: str, filename: str) -> Optional[str]:
-    try:
-        from huggingface_hub import try_to_load_from_cache
-
-        p = try_to_load_from_cache(repo_id=repo_id, filename=filename)
-        if p and os.path.isfile(p):
-            return p
-    except Exception:
-        pass
-    return None
-
-
-def _hf_hub_offline() -> bool:
-    return os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in ("1", "true", "yes") or os.environ.get(
-        "TRANSFORMERS_OFFLINE", ""
-    ).strip().lower() in ("1", "true", "yes")
-
-
-def _ensure_hf_gguf_local(repo_id: str, filename: str) -> str:
-    """
-    Путь к ``filename`` в кэше HF; если файла нет — скачивание через ``hf_hub_download``
-    (кроме ``HF_HUB_OFFLINE`` / ``VLLM_SKIP_GGUF_DOWNLOAD``).
-    """
-    p = _try_hf_cache_gguf_file(repo_id, filename)
-    if p:
-        return p
-    if os.environ.get("VLLM_SKIP_GGUF_DOWNLOAD", "").strip().lower() in ("1", "true", "yes"):
-        raise RuntimeError(
-            f"VLLM_SKIP_GGUF_DOWNLOAD=1: автозагрузка GGUF отключена, а {filename!r} нет в кэше ({repo_id}). "
-            f"Скачайте вручную: huggingface-cli download {repo_id} {filename}"
-        )
-    if _hf_hub_offline():
-        raise RuntimeError(
-            f"GGUF {filename!r} нет в кэше Hugging Face, включён офлайн-режим (HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE). "
-            f"Скачайте при доступе в сеть: huggingface-cli download {repo_id} {filename} "
-            "или укажите vllm_serve_model_path: off для safetensors."
-        )
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as e:
-        raise RuntimeError(
-            "Нужен пакет huggingface_hub для автозагрузки GGUF: pip install huggingface_hub"
-        ) from e
-    print(f"   ⬇️ Скачиваю GGUF {filename!r} с Hugging Face ({repo_id}) …")
-    try:
-        out = hf_hub_download(repo_id=repo_id, filename=filename)
-    except Exception as e:
-        raise RuntimeError(
-            f"Не удалось скачать {filename!r} из {repo_id}: {e}. "
-            "Проверьте сеть, токен (gated repo: huggingface-cli login) или задайте явный путь к .gguf."
-        ) from e
-    if not out or not os.path.isfile(out):
-        raise RuntimeError(f"hf_hub_download не вернул локальный путь к {filename!r}")
-    return out
-
-
 def _normalize_vllm_serve_gguf_path(model_id: str, raw: str) -> str:
     """
-    Разрешение ``vllm_serve_model_path``: ``auto`` / ``q4`` → Q4_K_M.gguf (кэш или загрузка с Hub);
+    Разрешение ``vllm_serve_model_path``: ``auto`` зарезервировано (Ministral GGUF + vLLM недоступны);
     ``off`` / ``safetensors`` → пусто (vLLM грузит обычный снапшот safetensors).
     """
     r = (raw or "").strip()
@@ -196,14 +146,11 @@ def _normalize_vllm_serve_gguf_path(model_id: str, raw: str) -> str:
         return ""
     if rl in ("auto", "hf", "q4", "q4_k_m", "q4km"):
         pair = _ministral_instruct_gguf_q4_pair(model_id)
-        if not pair:
-            raise RuntimeError(
-                f"vllm_serve_model_path={raw!r} поддерживается только для Ministral-3 Instruct "
-                f"(известные id: {list(_MINISTRAL_INSTRUCT_GGUF_Q4.keys())!r}); "
-                "для этой модели задайте явный путь к .gguf."
-            )
-        repo, fn = pair
-        return _ensure_hf_gguf_local(repo, fn)
+        if pair:
+            raise RuntimeError(_MINISTRAL_GGUF_VLLM_UNSUPPORTED_MSG)
+        raise RuntimeError(
+            f"vllm_serve_model_path={raw!r}: нет профиля auto для model_id={model_id!r}."
+        )
     return r
 
 
@@ -614,9 +561,8 @@ def build_vllm_serve_extra_args(hyperparameters: Optional[Mapping[str, Any]]) ->
     1) `vllm_serve_extra_args` (как есть),
     2) если не задан `--quantization`, добавляет из `vllm_quantization` (только явно).
 
-    ``vllm_quant_tag`` используется в проекте для имён папок результатов и не подставляет
-    ``--quantization`` автоматически: для обычного HF-чекпойнта (bf16/fp16) флаг ``awq``/``gptq``
-    ломает загрузку; квантизация задаётся только если веса реально в этом формате.
+    Для обычного HF-чекпойнта (bf16/fp16) флаг ``awq``/``gptq`` ломает загрузку;
+    квантизация задаётся только если веса реально в этом формате.
     """
     hp = dict(hyperparameters or {})
     extras = normalize_vllm_serve_extra_args(hp.get("vllm_serve_extra_args"))
@@ -750,6 +696,8 @@ def start_vllm_autoserver(
         serve_model_path=serve_gguf or None,
     )
     is_gguf = serve_arg.lower().endswith(".gguf") and os.path.isfile(serve_arg)
+    if is_gguf and _is_mistralai_ministral_line(model_id):
+        raise RuntimeError(_MINISTRAL_GGUF_VLLM_UNSUPPORTED_MSG)
     if is_gguf:
         if not _extras_has_load_format(extras):
             extras = ["--load-format", "gguf"] + extras

@@ -259,7 +259,6 @@ def load_model_configs():
 
             derived_hp = _copy.deepcopy(configs[base_model_key].get("hyperparameters", {}))
             derived_hp["vllm"] = True
-            derived_hp.setdefault("vllm_quant_tag", "Q4")
             derived_hp.pop("ollama", None)
 
             vname = (base_model_config.get("vllm_name") or "").strip()

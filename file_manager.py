@@ -372,10 +372,9 @@ class FileManager:
             quant = FileManager._extract_ollama_quantization(ollama_model_name)
             prompt_folder_name = f"OLLAMA_{quant}_{prompt_folder_name}"
 
-        # vLLM: отдельный префикс (квантизация задаётся при vllm serve; по умолчанию Q4 в hyperparameters)
+        # vLLM: префикс папки (модель уже в ключе *-vllm)
         if is_vllm:
-            vq = (hyperparameters.get("vllm_quant_tag") or "Q4").strip() or "Q4"
-            prompt_folder_name = f"VLLM_{vq}_{prompt_folder_name}"
+            prompt_folder_name = f"VLLM_{prompt_folder_name}"
 
         # Ollama: не создаём отдельную папку уровня модели (*-ollama) — результаты рядом с локальным прогоном той же модели.
         storage_model_key = model_key

@@ -10,6 +10,8 @@
   — обход папки results/, для каждой пары (модель, метод) берётся последний запуск,
   — загрузка в Google Таблицу (нужны google_sheets_credentials.json и
   GOOGLE_SHEETS_SPREADSHEET_ID в config.py или в переменной окружения).
+  При 429 (write quota): GOOGLE_SHEETS_WRITE_DELAY_SEC и GOOGLE_SHEETS_BETWEEN_API_CALLS_SEC.
+  Прогоны OLLAMA_* / VLLM_* не попадают в основные листы F1/валидации/время/VRAM — только в листы квантизации.
   Дополнительно: листы «Квантизация Ollama» и «Квантизация vLLM» — только префиксы
   OLLAMA_* / VLLM_* (имена папок из file_manager) и локальный эталон 1.DIZB;
   отклонения в скобках — относительно локального DETAILED_INSTR_ZEROSHOT_BASELINE.
@@ -24,12 +26,69 @@ import os
 import json
 import glob
 import time
-from typing import Any, Dict, List, Tuple, Optional
-from collections import defaultdict
+from typing import Any, Callable, Dict, List, Tuple, Optional
+from collections import Counter, defaultdict
 import re
 
-# Пауза (сек) между загрузками листов, чтобы не превысить лимит Write requests per minute (Sheets API)
-SHEETS_UPLOAD_DELAY_SEC = 1.5
+# Пауза (сек) между полными загрузками разных листов (Write requests per minute).
+# Переопределение: GOOGLE_SHEETS_WRITE_DELAY_SEC.
+SHEETS_UPLOAD_DELAY_SEC = 3.0
+# Пауза между отдельными вызовами API внутри одной загрузки (unmerge, update, format, merge…).
+# Переопределение: GOOGLE_SHEETS_BETWEEN_API_CALLS_SEC.
+SHEETS_BETWEEN_API_CALLS_SEC = 0.6
+
+
+def _is_sheets_write_rate_limit(exc: BaseException) -> bool:
+    resp = getattr(exc, "response", None)
+    if resp is not None and getattr(resp, "status_code", None) == 429:
+        return True
+    s = str(exc).lower()
+    return "429" in s and ("quota" in s or "rate" in s or "exceeded" in s or "resource_exhausted" in s)
+
+
+def _sheets_between_api_calls_sec() -> float:
+    raw = os.environ.get("GOOGLE_SHEETS_BETWEEN_API_CALLS_SEC")
+    if raw is not None and str(raw).strip():
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return float(SHEETS_BETWEEN_API_CALLS_SEC)
+
+
+def _sheets_write_delay_sec() -> float:
+    raw = os.environ.get("GOOGLE_SHEETS_WRITE_DELAY_SEC")
+    if raw is not None and str(raw).strip():
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return float(SHEETS_UPLOAD_DELAY_SEC)
+
+
+def _sleep_after_sheets_api_call() -> None:
+    time.sleep(_sheets_between_api_calls_sec())
+
+
+def _sleep_between_sheet_uploads() -> None:
+    time.sleep(_sheets_write_delay_sec())
+
+
+def _sheets_write(op: Callable[[], Any], max_attempts: int = 8) -> Any:
+    """Одна операция записи в Sheets API: пауза после успеха; при 429 — экспоненциальная задержка и повтор."""
+    base_delay = 4.0
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_attempts):
+        try:
+            result = op()
+            _sleep_after_sheets_api_call()
+            return result
+        except BaseException as e:
+            last_exc = e
+            if not _is_sheets_write_rate_limit(e) or attempt == max_attempts - 1:
+                raise
+            time.sleep(base_delay * (2 ** attempt))
+    raise last_exc  # pragma: no cover
 
 BASELINE_KEYWORD = "BASELINE"
 
@@ -38,6 +97,27 @@ DIZB_METHOD_FULL = "DETAILED_INSTR_ZEROSHOT_BASELINE"
 
 OLLAMA_METHOD_PREFIX = "OLLAMA_"
 VLLM_METHOD_PREFIX = "VLLM_"
+
+
+def _is_backend_quant_method(method_name: str) -> bool:
+    """Прогоны через Ollama/vLLM (папки OLLAMA_* / VLLM_*) — только в листах квантизации, не в основной таблице."""
+    return method_name.startswith(OLLAMA_METHOD_PREFIX) or method_name.startswith(VLLM_METHOD_PREFIX)
+
+
+def _filter_main_table_nested(nested: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Убирает из строк методы OLLAMA_* / VLLM_*; выкидывает модели без оставшихся методов."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for model, row in nested.items():
+        if not isinstance(row, dict):
+            continue
+        new_row = {
+            k: v
+            for k, v in row.items()
+            if k == "_timestamp" or not _is_backend_quant_method(k)
+        }
+        if any(k != "_timestamp" for k in new_row):
+            out[model] = new_row
+    return out
 
 # Таблица алиасов методов: (полное_название, alias, описание).
 # Если метода нет в таблице, alias = акроним из первых букв частей (разделитель _), описание = полное название.
@@ -107,6 +187,31 @@ def _build_notes_rows(methods: List[str], description_line: Optional[str] = None
     return rows
 
 
+def _build_notes_rows_quant(
+    methods: List[str],
+    backend_prefix: str,
+    description_line: Optional[str],
+    column_titles: List[str],
+) -> List[List[str]]:
+    """Примечания для листа квантизации: как основная таблица, но заголовок столбца — Baseline / Q4_k_m, без акронимов в шапке."""
+    if not methods and not description_line:
+        return []
+    rows = [["Примечания"]]
+    if description_line:
+        rows.append([description_line])
+    if methods and column_titles and len(methods) == len(column_titles):
+        parts: List[str] = []
+        for m, col_title in zip(methods, column_titles):
+            if m == DIZB_METHOD_FULL:
+                desc = get_method_description(DIZB_METHOD_FULL)
+            else:
+                _, prompt_fn = _split_quant_folder_name(m, backend_prefix)
+                desc = get_method_description(prompt_fn)
+            parts.append(f"{col_title} — {desc}")
+        rows.append(["; ".join(parts)])
+    return rows
+
+
 def _table_header(methods: List[str]) -> List[str]:
     """Заголовок таблицы: Модель + алиасы методов."""
     return ["Модель"] + [get_method_alias(m) for m in methods]
@@ -114,8 +219,8 @@ def _table_header(methods: List[str]) -> List[str]:
 
 def _split_quant_folder_name(folder: str, backend_prefix: str) -> Tuple[str, str]:
     """
-    Имя папки OLLAMA_<quant>_<prompt> или VLLM_<quant>_<prompt> -> (тег квантизации, полное имя промпта).
-    Если суффикс не совпадает с известным промптом, возвращает (rest, rest).
+    Имя папки OLLAMA_<quant>_<prompt> или VLLM_<опц. тег>_<prompt> / VLLM_<prompt> -> (тег, полное имя промпта).
+    Для vLLM без тега квантизации тег пустой. Если суффикс не совпадает с известным промптом, (rest, rest).
     """
     if not folder.startswith(backend_prefix):
         return ("", folder)
@@ -124,21 +229,47 @@ def _split_quant_folder_name(folder: str, backend_prefix: str) -> Tuple[str, str
     for fn in full_names:
         if rest.endswith(fn):
             q = rest[: -len(fn)].rstrip("_")
-            return (q if q else "?", fn)
+            return (q, fn)
     return (rest, rest)
 
 
-def _quant_column_title(method: str, backend_prefix: str) -> str:
-    """Короткий заголовок столбца для листа квантизации."""
+def _format_quant_tag_for_header(q: str) -> str:
+    """Тег квантизации из имени папки → короткий заголовок (напр. q4_K_M → Q4_k_m)."""
+    s = (q or "").strip()
+    if not s:
+        return ""
+    parts = [p for p in s.split("_") if p != ""]
+    if not parts:
+        return s
+    head = parts[0]
+    head = head[0].upper() + head[1:].lower() if head else ""
+    tail = "_".join(p.lower() for p in parts[1:])
+    return f"{head}_{tail}" if tail else head
+
+
+def _quant_column_title_base(method: str, backend_prefix: str) -> str:
+    """Один столбец листа квантизации: Baseline или короткий тег квантизации (без акронимов промптов)."""
     if method == DIZB_METHOD_FULL:
-        return f"{get_method_alias(DIZB_METHOD_FULL)} (локальный)"
+        return "Baseline"
     q, prompt_fn = _split_quant_folder_name(method, backend_prefix)
-    alias = get_method_alias(prompt_fn)
-    if backend_prefix == OLLAMA_METHOD_PREFIX:
-        return f"Ollama {q} | {alias}"
-    if backend_prefix == VLLM_METHOD_PREFIX:
-        return f"vLLM {q} | {alias}"
-    return method
+    if q.strip():
+        return _format_quant_tag_for_header(q)
+    label = "vLLM" if backend_prefix == VLLM_METHOD_PREFIX else "Ollama"
+    return f"{label} · {prompt_fn}"
+
+
+def _quant_column_titles_disambiguated(methods: List[str], backend_prefix: str) -> List[str]:
+    """Заголовки столбцов; при конфликте имён добавляется полное имя папки промпта (не акроним)."""
+    bases = [_quant_column_title_base(m, backend_prefix) for m in methods]
+    cnt = Counter(bases)
+    result: List[str] = []
+    for m, b in zip(methods, bases):
+        if cnt[b] > 1:
+            _, prompt_fn = _split_quant_folder_name(m, backend_prefix)
+            result.append(f"{b} · {prompt_fn}")
+        else:
+            result.append(b)
+    return result
 
 
 def _quant_method_sort_key(method: str, backend_prefix: str) -> Tuple:
@@ -151,7 +282,7 @@ def _quant_method_sort_key(method: str, backend_prefix: str) -> Tuple:
 
 
 def _table_header_quant(methods: List[str], backend_prefix: str) -> List[str]:
-    return ["Модель"] + [_quant_column_title(m, backend_prefix) for m in methods]
+    return ["Модель"] + _quant_column_titles_disambiguated(methods, backend_prefix)
 
 
 def _filter_nested_by_quant_backend(
@@ -507,7 +638,9 @@ class GoogleSheetsIntegration:
         """
         if all_metrics is None:
             all_metrics, _, _, _ = self.collect_all_metrics()
-        
+        if methods_override is None:
+            all_metrics = _filter_main_table_nested(all_metrics)
+
         models = sorted(set(all_metrics.keys()))
         methods_set = set()
         for model_data in all_metrics.values():
@@ -600,18 +733,18 @@ class GoogleSheetsIntegration:
         red = format_info.get("red") or []
         bold = format_info.get("bold") or []
         if green:
-            worksheet.format(green, {"backgroundColor": {"red": 0.7, "green": 1.0, "blue": 0.7}, "textFormat": table_font})
+            _sheets_write(lambda: worksheet.format(green, {"backgroundColor": {"red": 0.7, "green": 1.0, "blue": 0.7}, "textFormat": table_font}))
         if red:
-            worksheet.format(red, {"backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7}, "textFormat": table_font})
+            _sheets_write(lambda: worksheet.format(red, {"backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7}, "textFormat": table_font}))
         if bold:
-            worksheet.format(bold, {"textFormat": {"bold": True, **table_font}})
+            _sheets_write(lambda: worksheet.format(bold, {"textFormat": {"bold": True, **table_font}}))
 
     def _get_or_create_worksheet(self, spreadsheet, worksheet_name: str):
         """Возвращает лист по имени; создаёт с rows=100, cols=20, если не найден."""
         try:
             return spreadsheet.worksheet(worksheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            return spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20)
+            return _sheets_write(lambda: spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=20))
 
     def _upload_table_to_sheet(
         self,
@@ -625,17 +758,22 @@ class GoogleSheetsIntegration:
         success_prefix: str,
         extra_lines: Optional[List[str]] = None,
         table_description: Optional[str] = None,
+        notes_builder: Optional[Callable[[List[str], Optional[str]], List[List[str]]]] = None,
     ) -> None:
         """Общая загрузка таблицы на лист: данные, форматирование заголовка и ячеек, примечания, вывод в консоль."""
         spreadsheet = self.client.open_by_key(spreadsheet_id)
         worksheet = self._get_or_create_worksheet(spreadsheet, worksheet_name)
         if clear_existing:
-            worksheet.clear()
+            _sheets_write(lambda: worksheet.clear())
         num_cols = len(methods)
         last_col_letter = _col_letter_1based(1 + num_cols) if num_cols > 0 else "A"
         update_range = f"A1:{last_col_letter}{len(table_data)}"
-        spreadsheet.batch_update({"requests": [{"unmergeCells": {"range": _a1_range_to_grid_range(worksheet.id, update_range)}}]})
-        worksheet.update(values=table_data, range_name=update_range)
+        _sheets_write(
+            lambda: spreadsheet.batch_update(
+                {"requests": [{"unmergeCells": {"range": _a1_range_to_grid_range(worksheet.id, update_range)}}]}
+            )
+        )
+        _sheets_write(lambda: worksheet.update(values=table_data, range_name=update_range))
         has_title_row = (
             len(table_data) > 0 and num_cols > 0 and len(table_data[0]) == 1 + num_cols
             and table_data[0][0] and all(c == "" for c in table_data[0][1:])
@@ -644,44 +782,47 @@ class GoogleSheetsIntegration:
         if has_title_row and num_cols > 0:
             merge_requests.append({"mergeCells": {"range": _a1_range_to_grid_range(worksheet.id, f"A1:{last_col_letter}1"), "mergeType": "MERGE_ALL"}})
         if merge_requests:
-            spreadsheet.batch_update({"requests": merge_requests})
+            _sheets_write(lambda: spreadsheet.batch_update({"requests": merge_requests}))
         table_font = {"fontFamily": "Times New Roman"}
         if has_title_row:
-            worksheet.format("A1", {
+            _sheets_write(lambda: worksheet.format("A1", {
                 "wrapStrategy": "WRAP",
                 "horizontalAlignment": "CENTER",
                 "verticalAlignment": "MIDDLE",
                 "textFormat": {"bold": True, **table_font},
                 "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 1},
-            })
-            worksheet.format(f"A2:{last_col_letter}2", {
+            }))
+            _sheets_write(lambda: worksheet.format(f"A2:{last_col_letter}2", {
                 "textFormat": {"bold": True, **table_font},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
-            })
+            }))
             if num_cols > 0 and len(table_data) > 2:
                 metrics_range = f"A3:{last_col_letter}{len(table_data)}"
-                worksheet.format(metrics_range, {
+                _sheets_write(lambda: worksheet.format(metrics_range, {
                     "horizontalAlignment": "CENTER",
                     "backgroundColor": {"red": 1, "green": 1, "blue": 1},
                     "textFormat": {"bold": False, **table_font},
-                })
+                }))
         else:
-            worksheet.format("A1:Z1", {
+            _sheets_write(lambda: worksheet.format("A1:Z1", {
                 "textFormat": {"bold": True, **table_font},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
-            })
+            }))
             if num_cols > 0 and len(table_data) > 1:
                 metrics_range = f"A2:{last_col_letter}{len(table_data)}"
-                worksheet.format(metrics_range, {
+                _sheets_write(lambda: worksheet.format(metrics_range, {
                     "horizontalAlignment": "CENTER",
                     "backgroundColor": {"red": 1, "green": 1, "blue": 1},
                     "textFormat": {"bold": False, **table_font},
-                })
+                }))
         self._apply_cell_format(worksheet, format_info)
-        notes = _build_notes_rows(methods, description_line=table_description)
+        if notes_builder is not None:
+            notes = notes_builder(methods, table_description)
+        else:
+            notes = _build_notes_rows(methods, description_line=table_description)
         if notes:
             start_row = len(table_data) + 1
-            worksheet.update(values=notes, range_name=f"A{start_row}")
+            _sheets_write(lambda: worksheet.update(values=notes, range_name=f"A{start_row}"))
             num_table_cols = 1 + len(methods)
             last_col_letter = _col_letter_1based(num_table_cols)
             merge_requests = []
@@ -691,12 +832,12 @@ class GoogleSheetsIntegration:
                 grid = _a1_range_to_grid_range(worksheet.id, merge_range)
                 merge_requests.append({"mergeCells": {"range": grid, "mergeType": "MERGE_ALL"}})
             if merge_requests:
-                spreadsheet.batch_update({"requests": merge_requests})
+                _sheets_write(lambda: spreadsheet.batch_update({"requests": merge_requests}))
             notes_range = f"A{start_row}:{last_col_letter}{start_row + len(notes) - 1}"
-            worksheet.format(notes_range, {
+            _sheets_write(lambda: worksheet.format(notes_range, {
                 "textFormat": {"fontFamily": "Times New Roman", "fontSize": 9},
                 "wrapStrategy": "WRAP",
-            })
+            }))
         print(success_prefix)
         print(f"   • Моделей: {len(models)}")
         print(f"   • Методов: {len(methods)}")
@@ -716,6 +857,9 @@ class GoogleSheetsIntegration:
         Строка «Средняя разница»: средняя разница parsed rate с baseline (method - baseline), как в остальных таблицах.
         Ячейки с parsed rate == 1.0 выделяются зелёным.
         """
+        if methods_override is None:
+            validation_data = _filter_main_table_nested(validation_data)
+
         def _parse_validation_rate(val: str) -> Optional[float]:
             if not val or (isinstance(val, str) and val.strip() in ("", "-")):
                 return None
@@ -801,6 +945,9 @@ class GoogleSheetsIntegration:
         Returns:
             (данные таблицы, модели, методы, format_info)
         """
+        if methods_override is None:
+            inference_time_data = _filter_main_table_nested(inference_time_data)
+
         models = sorted(set(inference_time_data.keys()))
         methods_set = set().union(*[set(inference_time_data[m].keys()) for m in inference_time_data])
         if methods_override is not None:
@@ -891,6 +1038,9 @@ class GoogleSheetsIntegration:
         Returns:
             (данные таблицы, модели, методы, format_info: green/red)
         """
+        if methods_override is None:
+            gpu_memory_data = _filter_main_table_nested(gpu_memory_data)
+
         models = sorted(set(gpu_memory_data.keys()))
         methods_set = set().union(*[set(gpu_memory_data[m].keys()) for m in gpu_memory_data])
         if methods_override is not None:
@@ -991,6 +1141,7 @@ class GoogleSheetsIntegration:
         method_headers: Optional[List[str]] = None,
         table_description: Optional[str] = None,
         success_prefix: Optional[str] = None,
+        notes_builder: Optional[Callable[[List[str], Optional[str]], List[List[str]]]] = None,
     ):
         """
         Загружает данные F1 в Google Таблицу.
@@ -1004,6 +1155,7 @@ class GoogleSheetsIntegration:
             baseline_method: эталон для отклонений (имя папки метода)
             methods_override: фиксированный набор столбцов
             method_headers: подписи столбцов (без «Модель»)
+            notes_builder: кастомный блок примечаний (для листов квантизации)
         """
         self._ensure_client()
         table_data, models, methods, format_info = self.create_table_data(
@@ -1024,6 +1176,7 @@ class GoogleSheetsIntegration:
                 success_prefix=success_prefix or f"✅ Данные успешно загружены в лист '{worksheet_name}'",
                 extra_lines=[f"   • Группа метрик: {group}"],
                 table_description=desc,
+                notes_builder=notes_builder,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке данных в Google Таблицу: {e}")
@@ -1039,6 +1192,7 @@ class GoogleSheetsIntegration:
         method_headers: Optional[List[str]] = None,
         table_description: Optional[str] = None,
         success_prefix: Optional[str] = None,
+        notes_builder: Optional[Callable[[List[str], Optional[str]], List[List[str]]]] = None,
     ):
         """
         Загружает таблицу validation (формат 0.99(0.88) = parsed(raw)) на лист.
@@ -1061,6 +1215,7 @@ class GoogleSheetsIntegration:
                 clear_existing,
                 success_prefix=success_prefix or f"✅ Validation загружены в лист '{worksheet_name}'",
                 table_description=desc,
+                notes_builder=notes_builder,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке validation в Google Таблицу: {e}")
@@ -1076,6 +1231,7 @@ class GoogleSheetsIntegration:
         method_headers: Optional[List[str]] = None,
         table_description: Optional[str] = None,
         success_prefix: Optional[str] = None,
+        notes_builder: Optional[Callable[[List[str], Optional[str]], List[List[str]]]] = None,
     ):
         """Загружает таблицу среднего времени инференса (сек/ответ) на лист с разницей к baseline и форматированием."""
         self._ensure_client()
@@ -1095,6 +1251,7 @@ class GoogleSheetsIntegration:
                 clear_existing,
                 success_prefix=success_prefix or f"✅ Среднее время инференса загружено в лист '{worksheet_name}'",
                 table_description=desc,
+                notes_builder=notes_builder,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке времени инференса в Google Таблицу: {e}")
@@ -1110,6 +1267,7 @@ class GoogleSheetsIntegration:
         method_headers: Optional[List[str]] = None,
         table_description: Optional[str] = None,
         success_prefix: Optional[str] = None,
+        notes_builder: Optional[Callable[[List[str], Optional[str]], List[List[str]]]] = None,
     ):
         """Загружает таблицу GPU memory during inference (GB) на отдельный лист с окрашиванием относительно baseline."""
         self._ensure_client()
@@ -1129,6 +1287,7 @@ class GoogleSheetsIntegration:
                 clear_existing,
                 success_prefix=success_prefix or f"✅ GPU memory during inference загружено в лист '{worksheet_name}'",
                 table_description=desc,
+                notes_builder=notes_builder,
             )
         except Exception as e:
             raise Exception(f"Ошибка при загрузке GPU memory в Google Таблицу: {e}")
@@ -1162,12 +1321,16 @@ class GoogleSheetsIntegration:
         methods = _methods_ordered_for_quant_sheet(union_keys, backend_prefix)
         if not methods:
             return
-        headers = [_quant_column_title(m, backend_prefix) for m in methods]
+        headers = _quant_column_titles_disambiguated(methods, backend_prefix)
         quant_note = (
             f"Квантизация ({name_short}): столбцы с префиксом {backend_prefix} — прогон через {name_short}; "
-            f"«{get_method_alias(DIZB_METHOD_FULL)} (локальный)» — тот же промпт {get_method_alias(DIZB_METHOD_FULL)} "
-            "без Ollama/vLLM. В скобках — отклонение от локального 1.DIZB для той же модели."
+            f"«Baseline» — тот же промпт, что у локального эталона (папка {DIZB_METHOD_FULL}), без {name_short}. "
+            "В скобках — отклонение от локального Baseline для той же модели."
         )
+
+        def _quant_notes_builder(ms: List[str], desc: Optional[str]) -> List[List[str]]:
+            return _build_notes_rows_quant(ms, backend_prefix, desc, headers)
+
         self._ensure_client()
         if f_m:
             self.upload_to_sheet(
@@ -1181,8 +1344,9 @@ class GoogleSheetsIntegration:
                 method_headers=headers,
                 table_description=quant_note,
                 success_prefix=f"✅ [{name_short}] F1 (массовая доля) → '{worksheet_names['f1_mass']}'",
+                notes_builder=_quant_notes_builder,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
             self.upload_to_sheet(
                 spreadsheet_id=spreadsheet_id,
                 worksheet_name=worksheet_names["f1_other"],
@@ -1194,8 +1358,9 @@ class GoogleSheetsIntegration:
                 method_headers=headers,
                 table_description=quant_note,
                 success_prefix=f"✅ [{name_short}] F1 (прочее) → '{worksheet_names['f1_other']}'",
+                notes_builder=_quant_notes_builder,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
         if f_v:
             self.upload_validation_to_sheet(
                 spreadsheet_id=spreadsheet_id,
@@ -1207,8 +1372,9 @@ class GoogleSheetsIntegration:
                 method_headers=headers,
                 table_description=quant_note,
                 success_prefix=f"✅ [{name_short}] Валидация → '{worksheet_names['validation']}'",
+                notes_builder=_quant_notes_builder,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
         if f_t:
             self.upload_inference_time_to_sheet(
                 spreadsheet_id=spreadsheet_id,
@@ -1220,8 +1386,9 @@ class GoogleSheetsIntegration:
                 method_headers=headers,
                 table_description=quant_note,
                 success_prefix=f"✅ [{name_short}] Время ответа → '{worksheet_names['inference']}'",
+                notes_builder=_quant_notes_builder,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
         if f_g:
             self.upload_gpu_memory_to_sheet(
                 spreadsheet_id=spreadsheet_id,
@@ -1233,6 +1400,7 @@ class GoogleSheetsIntegration:
                 method_headers=headers,
                 table_description=quant_note,
                 success_prefix=f"✅ [{name_short}] VRAM → '{worksheet_names['gpu']}'",
+                notes_builder=_quant_notes_builder,
             )
 
     def export_to_csv(self, output_path: str, group: str = "массовая доля"):
@@ -1415,35 +1583,35 @@ def main():
             group="массовая доля",
             all_metrics=all_metrics,
         )
-        time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+        _sleep_between_sheet_uploads()
         integration.upload_to_sheet(
             spreadsheet_id=spreadsheet_id,
             worksheet_name=DEFAULT_WORKSHEET_OTHER,
             group="прочее",
             all_metrics=all_metrics,
         )
-        time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+        _sleep_between_sheet_uploads()
         if validation_data:
             integration.upload_validation_to_sheet(
                 spreadsheet_id=spreadsheet_id,
                 worksheet_name=DEFAULT_WORKSHEET_VALIDATION,
                 validation_data=validation_data,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
         if inference_time_data:
             integration.upload_inference_time_to_sheet(
                 spreadsheet_id=spreadsheet_id,
                 worksheet_name=DEFAULT_WORKSHEET_INFERENCE,
                 inference_time_data=inference_time_data,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
         if gpu_memory_data:
             integration.upload_gpu_memory_to_sheet(
                 spreadsheet_id=spreadsheet_id,
                 worksheet_name=DEFAULT_WORKSHEET_GPU_MEMORY,
                 gpu_memory_data=gpu_memory_data,
             )
-            time.sleep(SHEETS_UPLOAD_DELAY_SEC)
+            _sleep_between_sheet_uploads()
         integration.upload_quantization_backend_bundle(
             spreadsheet_id=spreadsheet_id,
             backend_prefix=OLLAMA_METHOD_PREFIX,
@@ -1455,6 +1623,7 @@ def main():
             worksheet_names=DEFAULT_QUANT_OLLAMA_WORKSHEETS,
             clear_existing=True,
         )
+        _sleep_between_sheet_uploads()
         integration.upload_quantization_backend_bundle(
             spreadsheet_id=spreadsheet_id,
             backend_prefix=VLLM_METHOD_PREFIX,
