@@ -960,7 +960,7 @@ class GoogleSheetsIntegration:
                 (m for m in methods if BASELINE_KEYWORD.upper() in m.upper()),
                 methods[0] if methods else None,
             )
-        title_str = "Доля ответов, прошедших парсинг и валидацию (формат: после парсинга / исходный вывод)"
+        title_str = "Доля ответов, прошедших парсинг и валидацию. Формат: после постобработки (исходный вывод)"
         title_row = [title_str] + [""] * len(methods)
         if header_row_for_methods is not None and len(header_row_for_methods) == len(methods):
             header_row = ["Модель"] + header_row_for_methods
